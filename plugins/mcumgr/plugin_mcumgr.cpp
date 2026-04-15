@@ -2477,8 +2477,6 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
     edit_SHELL_Output->set_line_mode(true);
     edit_SHELL_Output->set_vt100_mode(VT100_MODE_DECODE);
 
-    set_ars_tracker_controls_loading(false);
-
     colview_IMG_Images->setModel(&model_image_state);
     colview_IMG_Images->setColumnWidths(QList<int>() << 50 << 50 << 460);
 

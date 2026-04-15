@@ -2542,11 +2542,15 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						&plugin_mcumgr::ars_tracker_request_info_shell_command);
 		connect(ars_tracker, &ars_tracker_backend::request_cancel_tracker_info_shell_command, this,
 						&plugin_mcumgr::ars_tracker_request_cancel_info_shell_command);
-		connect(ars_tracker, &ars_tracker_backend::request_session_list_refresh_after_delete, this,
-						&plugin_mcumgr::ars_tracker_request_session_refresh_after_delete,
-						Qt::QueuedConnection);
-		connect(list_ars_tracker_sessions, SIGNAL(itemSelectionChanged()), this,
-						SLOT(on_list_ars_tracker_sessions_itemSelectionChanged()));
+    connect(ars_tracker, &ars_tracker_backend::request_session_list_refresh_after_delete, this,
+            &plugin_mcumgr::ars_tracker_request_session_refresh_after_delete,
+            Qt::QueuedConnection);
+    connect(ars_tracker, &ars_tracker_backend::request_file_hash_support, this,
+            &plugin_mcumgr::ars_tracker_request_file_hash_support);
+    connect(ars_tracker, &ars_tracker_backend::request_file_metadata, this,
+            &plugin_mcumgr::ars_tracker_request_file_metadata);
+    connect(list_ars_tracker_sessions, SIGNAL(itemSelectionChanged()), this,
+            SLOT(on_list_ars_tracker_sessions_itemSelectionChanged()));
 
 		set_ars_tracker_controls_loading(false);
 		ars_tracker_info_changed(ars_tracker->tracker_info());
@@ -2888,6 +2892,9 @@ void plugin_mcumgr::serial_closed()
 		case ACTION_FS_DOWNLOAD:
 		case ACTION_FS_STATUS:
 		case ACTION_FS_HASH_CHECKSUM:
+		case ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT:
+		case ACTION_ARS_TRACKER_EXPORT_METADATA:
+		case ACTION_ARS_TRACKER_EXPORT_DOWNLOAD:
 		case ACTION_FS_SUPPORTED_HASHES_CHECKSUMS: {
 				smp_groups.fs_mgmt->cancel();
 				break;
@@ -4015,16 +4022,33 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 		{
 				log_debug() << "fs sender";
 
-				if (user_data == ACTION_ARS_TRACKER_EXPORT_DOWNLOAD)
-				{
-						label_status = lbl_ars_tracker_status;
-						ars_tracker->handle_file_download_result(status, error_string);
-						skip_error_string = true;
-						finished = false;
-				}
-				else
-				{
-						label_status = lbl_FS_Status;
+		if (user_data == ACTION_ARS_TRACKER_EXPORT_DOWNLOAD)
+		{
+				label_status = lbl_ars_tracker_status;
+				ars_tracker->handle_file_download_result(status, error_string);
+				skip_error_string = true;
+				finished = false;
+		}
+		else if (user_data == ACTION_ARS_TRACKER_EXPORT_METADATA)
+		{
+				label_status = lbl_ars_tracker_status;
+				ars_tracker->handle_file_metadata_result(status, error_string,
+																								 fs_hash_checksum_response,
+																								 fs_size_response);
+				skip_error_string = true;
+				finished = false;
+		}
+		else if (user_data == ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT)
+		{
+				label_status = lbl_ars_tracker_status;
+				ars_tracker->handle_export_hash_support_result(status, error_string,
+																									 supported_hash_checksum_list);
+				skip_error_string = true;
+				finished = false;
+		}
+		else
+		{
+				label_status = lbl_FS_Status;
 
 						if (status == STATUS_COMPLETE)
 						{
@@ -5648,13 +5672,60 @@ void plugin_mcumgr::ars_tracker_request_cancel_info_shell_command()
 
 void plugin_mcumgr::ars_tracker_request_session_refresh_after_delete()
 {
-		ars_tracker_clear_selection_on_next_refresh = true;
-		on_btn_ars_tracker_refresh_clicked();
+    ars_tracker_clear_selection_on_next_refresh = true;
+    on_btn_ars_tracker_refresh_clicked();
+}
+
+void plugin_mcumgr::ars_tracker_request_file_hash_support()
+{
+    mode = ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT;
+    processor->set_transport(active_transport());
+    set_group_transport_settings(smp_groups.fs_mgmt);
+    supported_hash_checksum_list.clear();
+
+    bool started =
+        smp_groups.fs_mgmt->start_supported_hashes_checksums(&supported_hash_checksum_list);
+
+    if (started == false)
+    {
+        ars_tracker->handle_export_hash_support_result(
+            STATUS_PROCESSOR_TRANSPORT_ERROR, QString("Could not query tracker file hash support."),
+            QList<hash_checksum_t>());
+    }
+    else
+    {
+        btn_cancel->setEnabled(true);
+    }
+}
+
+void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file,
+                                                      const QString &hash_name)
+{
+    mode = ACTION_ARS_TRACKER_EXPORT_METADATA;
+    processor->set_transport(active_transport());
+    set_group_transport_settings(smp_groups.fs_mgmt);
+    fs_hash_checksum_response.clear();
+    fs_size_response = 0;
+
+    bool started = smp_groups.fs_mgmt->start_hash_checksum(remote_file, hash_name,
+                                                           &fs_hash_checksum_response,
+                                                           &fs_size_response);
+
+    if (started == false)
+    {
+        ars_tracker->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+                                                 QString("Could not start remote file verification."),
+                                                 QByteArray(), 0);
+    }
+    else
+    {
+        btn_cancel->setEnabled(true);
+    }
 }
 
 void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file)
 {
-		mode = ACTION_ARS_TRACKER_EXPORT_DOWNLOAD;
+    mode = ACTION_ARS_TRACKER_EXPORT_DOWNLOAD;
 		processor->set_transport(active_transport());
 		set_group_transport_settings(smp_groups.fs_mgmt);
 

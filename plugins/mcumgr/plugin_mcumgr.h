@@ -148,6 +148,8 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_INFO_REFRESH,
     ACTION_ARS_TRACKER_SESSION_LIST,
     ACTION_ARS_TRACKER_DELETE_SESSION,
+    ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT,
+    ACTION_ARS_TRACKER_EXPORT_METADATA,
     ACTION_ARS_TRACKER_EXPORT_DOWNLOAD,
 };
 
@@ -276,6 +278,8 @@ private slots:
     void ars_tracker_request_info_shell_command(const QStringList &arguments);
     void ars_tracker_request_cancel_info_shell_command();
     void ars_tracker_request_session_refresh_after_delete();
+    void ars_tracker_request_file_hash_support();
+    void ars_tracker_request_file_metadata(const QString &remote_file, const QString &hash_name);
     void ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file);
     void ars_tracker_request_cancel_file_download();
     void on_list_ars_tracker_sessions_itemSelectionChanged();

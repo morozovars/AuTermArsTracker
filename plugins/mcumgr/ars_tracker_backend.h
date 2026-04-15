@@ -2,12 +2,14 @@
 #define ARS_TRACKER_BACKEND_H
 
 #include <QObject>
+#include <QByteArray>
 #include <QString>
 #include <QList>
 #include <QStringList>
 #include <cstdint>
 
 #include "smp_group.h"
+#include "smp_group_fs_mgmt.h"
 
 struct ars_tracker_session_t {
     QString id;
@@ -47,6 +49,8 @@ enum ars_tracker_download_category_t : uint8_t {
 
 enum ars_tracker_download_status_t : uint8_t {
     ARS_TRACKER_STATUS_PENDING = 0,
+    ARS_TRACKER_STATUS_CHECKING_EXISTING,
+    ARS_TRACKER_STATUS_ALREADY_PRESENT,
     ARS_TRACKER_STATUS_DOWNLOADING,
     ARS_TRACKER_STATUS_DOWNLOADED,
     ARS_TRACKER_STATUS_MISSING,
@@ -64,6 +68,8 @@ struct ars_tracker_download_item_t {
     uint8_t retry_count;
     ars_tracker_download_category_t category;
     ars_tracker_download_status_t status;
+    uint32_t remote_file_size;
+    QByteArray remote_file_hash;
     QString error_text;
 };
 
@@ -90,6 +96,10 @@ public:
                                         int32_t shell_ret);
     bool begin_session_export(const QString &session_id, const QString &destination_path,
                               QString *error_message);
+    void handle_export_hash_support_result(group_status status, const QString &error_message,
+                                           const QList<hash_checksum_t> &supported_hashes);
+    void handle_file_metadata_result(group_status status, const QString &error_message,
+                                     const QByteArray &remote_hash, uint32_t remote_size);
     void handle_file_download_progress(uint8_t percent);
     void handle_file_download_result(group_status status, const QString &error_message);
     void cancel_all();
@@ -114,6 +124,8 @@ signals:
     void request_session_list_refresh_after_delete();
     void request_tracker_info_shell_command(const QStringList &arguments);
     void request_cancel_tracker_info_shell_command();
+    void request_file_hash_support();
+    void request_file_metadata(const QString &remote_file, const QString &hash_name);
     void request_file_download(const QString &remote_file, const QString &local_temp_file);
     void request_cancel_file_download();
 
@@ -142,9 +154,11 @@ private:
     bool export_cancel_requested;
     bool export_failed;
     bool sensors_enumeration_done;
+    bool export_hash_ready;
     QString active_session_id;
     QString active_session_remote_root;
     QString active_destination_path;
+    QString export_hash_name;
     int current_download_index;
     uint32_t next_sensor_index;
     QList<ars_tracker_download_item_t> download_queue;
@@ -158,6 +172,10 @@ private:
     QString build_remote_file_path(const QString &remote_root, const QString &filename) const;
     QString build_local_final_file_path(const QString &destination, const QString &filename) const;
     QString build_local_temp_file_path(const QString &destination, const QString &filename) const;
+    QString choose_export_hash_type(const QList<hash_checksum_t> &supported_hashes,
+                                    QString *error_message) const;
+    bool compute_local_file_hash(const QString &file_path, const QString &hash_name,
+                                 QByteArray *result, QString *error_message) const;
 
     void reset_tracker_info_state();
     ars_tracker_info_field_t *tracker_info_field_for_step(tracker_info_step_t step);
@@ -173,6 +191,7 @@ private:
     void enqueue_fixed_files();
     void enqueue_next_sensor_candidate();
     void request_next_download_or_finish();
+    void start_file_download(ars_tracker_download_item_t *item);
     void finish_export(bool success, bool cancelled, const QString &message);
     void publish_export_file_rows();
     void publish_progress_text(const QString &current_file = QString());

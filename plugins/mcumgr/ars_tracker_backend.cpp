@@ -1,6 +1,7 @@
 #include "ars_tracker_backend.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -10,6 +11,93 @@
 
 static const QStringList ars_tracker_fixed_files =
     QStringList() << "trace.csv" << "processedStr.csv" << "battery.csv";
+
+static QString normalize_hash_name(const QString& hash_name)
+{
+    QString normalized = hash_name.trimmed().toLower();
+    normalized.remove('_');
+    normalized.remove('-');
+    normalized.remove(' ');
+    normalized.remove('(');
+    normalized.remove(')');
+    normalized.remove('.');
+    return normalized;
+}
+
+static bool is_crc32_hash_name(const QString& hash_name)
+{
+    QString normalized = normalize_hash_name(hash_name);
+    return normalized == "crc32" || normalized == "ieeecrc32" ||
+           normalized == "crc32ieee" || normalized == "crc32ethernet";
+}
+
+static bool local_hash_algorithm_from_name(const QString& hash_name,
+                                           QCryptographicHash::Algorithm* algorithm)
+{
+    QString normalized = normalize_hash_name(hash_name);
+
+    if (normalized == "sha256")
+    {
+        *algorithm = QCryptographicHash::Sha256;
+        return true;
+    }
+
+    if (normalized == "sha384")
+    {
+        *algorithm = QCryptographicHash::Sha384;
+        return true;
+    }
+
+    if (normalized == "sha512")
+    {
+        *algorithm = QCryptographicHash::Sha512;
+        return true;
+    }
+
+    if (normalized == "sha1")
+    {
+        *algorithm = QCryptographicHash::Sha1;
+        return true;
+    }
+
+    if (normalized == "md5")
+    {
+        *algorithm = QCryptographicHash::Md5;
+        return true;
+    }
+
+    return false;
+}
+
+static uint32_t crc32_ieee_update(uint32_t crc, const char* data, qint64 length)
+{
+    static uint32_t table[256];
+    static bool     table_ready = false;
+
+    if (table_ready == false)
+    {
+        for (uint32_t i = 0; i < 256; ++i)
+        {
+            uint32_t value = i;
+
+            for (int bit = 0; bit < 8; ++bit)
+            {
+                value = (value & 1U) ? ((value >> 1U) ^ 0xEDB88320U) : (value >> 1U);
+            }
+
+            table[i] = value;
+        }
+
+        table_ready = true;
+    }
+
+    for (qint64 i = 0; i < length; ++i)
+    {
+        crc = table[(crc ^ uint8_t(data[i])) & 0xffU] ^ (crc >> 8U);
+    }
+
+    return crc;
+}
 
 ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
 {
@@ -51,9 +139,11 @@ void ars_tracker_backend::reset_export_state()
     export_cancel_requested  = false;
     export_failed            = false;
     sensors_enumeration_done = false;
+    export_hash_ready        = false;
     active_session_id.clear();
     active_session_remote_root.clear();
     active_destination_path.clear();
+    export_hash_name.clear();
     current_download_index = -1;
     next_sensor_index      = 0;
     download_queue.clear();
@@ -905,6 +995,160 @@ QString ars_tracker_backend::build_local_temp_file_path(const QString& destinati
     return QDir(destination).filePath(QString(".%1.part").arg(filename));
 }
 
+QString ars_tracker_backend::choose_export_hash_type(const QList<hash_checksum_t>& supported_hashes,
+                                                     QString* error_message) const
+{
+    static const QStringList preferred_hashes =
+        QStringList() << "sha256" << "sha384" << "sha512" << "sha1" << "md5" << "crc32";
+
+    QStringList advertised_hashes;
+    for (const hash_checksum_t& candidate : supported_hashes)
+    {
+        advertised_hashes.append(candidate.name);
+    }
+    log_debug() << "ArsTracker export advertised hash/checksum algorithms:" << advertised_hashes;
+
+    for (const QString& preferred_hash : preferred_hashes)
+    {
+        for (const hash_checksum_t& candidate : supported_hashes)
+        {
+            QString normalized_candidate = normalize_hash_name(candidate.name);
+
+            if (preferred_hash == "crc32" && is_crc32_hash_name(candidate.name))
+            {
+                log_debug() << "ArsTracker export selected CRC32 verification path using"
+                            << candidate.name;
+                return candidate.name;
+            }
+
+            QCryptographicHash::Algorithm algorithm;
+
+            if (normalized_candidate == preferred_hash &&
+                local_hash_algorithm_from_name(candidate.name, &algorithm))
+            {
+                Q_UNUSED(algorithm);
+                log_debug() << "ArsTracker export selected QCryptographicHash verification path using"
+                            << candidate.name;
+                return candidate.name;
+            }
+        }
+    }
+
+    if (error_message != nullptr)
+    {
+        *error_message =
+            QString("Tracker does not advertise a mutually supported hash/checksum for local verification.");
+    }
+
+    return QString();
+}
+
+bool ars_tracker_backend::compute_local_file_hash(const QString& file_path, const QString& hash_name,
+                                                  QByteArray* result, QString* error_message) const
+{
+    if (is_crc32_hash_name(hash_name))
+    {
+        QFile local_file(file_path);
+
+        if (local_file.open(QFile::ReadOnly) == false)
+        {
+            if (error_message != nullptr)
+            {
+                *error_message =
+                    QString("Could not open existing local file for CRC32 verification: %1")
+                        .arg(file_path);
+            }
+
+            return false;
+        }
+
+        log_debug() << "ArsTracker export verifying local file with IEEE CRC32:" << file_path;
+
+        uint32_t    crc = 0xFFFFFFFFU;
+        QByteArray  buffer;
+        const qint64 chunk_size = 64 * 1024;
+
+        while ((buffer = local_file.read(chunk_size)).isEmpty() == false)
+        {
+            crc = crc32_ieee_update(crc, buffer.constData(), buffer.size());
+        }
+
+        if (local_file.error() != QFileDevice::NoError)
+        {
+            if (error_message != nullptr)
+            {
+                *error_message =
+                    QString("Could not read existing local file for CRC32 verification: %1")
+                        .arg(file_path);
+            }
+
+            return false;
+        }
+
+        crc ^= 0xFFFFFFFFU;
+
+        if (result != nullptr)
+        {
+            QByteArray crc_bytes;
+            crc_bytes.append(char((crc >> 24U) & 0xffU));
+            crc_bytes.append(char((crc >> 16U) & 0xffU));
+            crc_bytes.append(char((crc >> 8U) & 0xffU));
+            crc_bytes.append(char(crc & 0xffU));
+            *result = crc_bytes;
+        }
+
+        return true;
+    }
+
+    QCryptographicHash::Algorithm algorithm;
+
+    if (local_hash_algorithm_from_name(hash_name, &algorithm) == false)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Local hash algorithm is not supported: %1").arg(hash_name);
+        }
+
+        return false;
+    }
+
+    QFile local_file(file_path);
+
+    if (local_file.open(QFile::ReadOnly) == false)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Could not open existing local file for verification: %1").arg(file_path);
+        }
+
+        return false;
+    }
+
+    log_debug() << "ArsTracker export verifying local file with QCryptographicHash:" << file_path
+                << "algorithm" << hash_name;
+
+    QCryptographicHash hasher(algorithm);
+
+    if (hasher.addData(&local_file) == false)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Could not hash existing local file for verification: %1").arg(file_path);
+        }
+
+        return false;
+    }
+
+    if (result != nullptr)
+    {
+        *result = hasher.result();
+    }
+
+    return true;
+}
+
 void ars_tracker_backend::enqueue_fixed_files()
 {
     for (const QString& file_name : ars_tracker_fixed_files)
@@ -918,6 +1162,8 @@ void ars_tracker_backend::enqueue_fixed_files()
         item.retry_count     = 0;
         item.category        = ARS_TRACKER_FILE_FIXED;
         item.status          = ARS_TRACKER_STATUS_PENDING;
+        item.remote_file_size = 0;
+        item.remote_file_hash.clear();
 
         download_queue.append(item);
     }
@@ -941,6 +1187,8 @@ void ars_tracker_backend::enqueue_next_sensor_candidate()
     item.retry_count     = 0;
     item.category        = ARS_TRACKER_FILE_SENSOR;
     item.status          = ARS_TRACKER_STATUS_PENDING;
+    item.remote_file_size = 0;
+    item.remote_file_hash.clear();
 
     ++next_sensor_index;
     download_queue.append(item);
@@ -1070,9 +1318,9 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
     emit export_loading_changed(true);
     publish_export_file_rows();
     publish_progress_text();
-    emit status_message(QString("Starting session export for '%1'.").arg(session.display_name));
-
-    request_next_download_or_finish();
+    emit status_message(
+        QString("Preparing session export for '%1'...").arg(session.display_name));
+    emit request_file_hash_support();
     return true;
 }
 
@@ -1134,6 +1382,10 @@ QString ars_tracker_backend::to_status_text(ars_tracker_download_status_t status
     {
     case ARS_TRACKER_STATUS_PENDING:
         return "Pending";
+    case ARS_TRACKER_STATUS_CHECKING_EXISTING:
+        return "Checking existing";
+    case ARS_TRACKER_STATUS_ALREADY_PRESENT:
+        return "Already present";
     case ARS_TRACKER_STATUS_DOWNLOADING:
         return "Downloading";
     case ARS_TRACKER_STATUS_DOWNLOADED:
@@ -1177,7 +1429,8 @@ void ars_tracker_backend::publish_progress_text(const QString& current_file)
 
     for (const ars_tracker_download_item_t& item : download_queue)
     {
-        if (item.status == ARS_TRACKER_STATUS_DOWNLOADED ||
+        if (item.status == ARS_TRACKER_STATUS_ALREADY_PRESENT ||
+            item.status == ARS_TRACKER_STATUS_DOWNLOADED ||
             item.status == ARS_TRACKER_STATUS_MISSING ||
             item.status == ARS_TRACKER_STATUS_SENSORS_END ||
             item.status == ARS_TRACKER_STATUS_FAILED || item.status == ARS_TRACKER_STATUS_CANCELLED)
@@ -1198,6 +1451,193 @@ void ars_tracker_backend::publish_progress_text(const QString& current_file)
     emit export_progress_changed(progress);
 }
 
+void ars_tracker_backend::handle_export_hash_support_result(
+    group_status status, const QString& error_message,
+    const QList<hash_checksum_t>& supported_hashes)
+{
+    if (export_loading == false)
+    {
+        return;
+    }
+
+    if (status == STATUS_CANCELLED || export_cancel_requested == true)
+    {
+        finish_export(false, true, "Session export cancelled.");
+        return;
+    }
+
+    if (status != STATUS_COMPLETE)
+    {
+        QString message = error_message.isEmpty() ?
+                              QString("Could not query tracker file hash support.") :
+                              error_message;
+        export_failed = true;
+        finish_export(false, false, message);
+        return;
+    }
+
+    QString hash_error;
+    QString selected_hash = choose_export_hash_type(supported_hashes, &hash_error);
+
+    if (selected_hash.isEmpty())
+    {
+        export_hash_name.clear();
+        export_hash_ready = true;
+        log_debug() << "ArsTracker export found no mutually supported verification algorithm;"
+                    << "falling back to download without pre-verification." << hash_error;
+        emit status_message(
+            QString("No shared local verification algorithm; downloading files without pre-checks."));
+        request_next_download_or_finish();
+        return;
+    }
+
+    export_hash_name = selected_hash;
+    export_hash_ready = true;
+
+    emit status_message(QString("Using %1 to verify existing local files before download.")
+                            .arg(export_hash_name));
+    request_next_download_or_finish();
+}
+
+void ars_tracker_backend::handle_file_metadata_result(group_status status, const QString& error_message,
+                                                      const QByteArray& remote_hash,
+                                                      uint32_t          remote_size)
+{
+    if (export_loading == false || current_download_index < 0 ||
+        current_download_index >= download_queue.length())
+    {
+        return;
+    }
+
+    ars_tracker_download_item_t& item = download_queue[current_download_index];
+
+    if (status == STATUS_CANCELLED || export_cancel_requested == true)
+    {
+        item.status     = ARS_TRACKER_STATUS_CANCELLED;
+        item.error_text = "Cancelled";
+        publish_export_file_rows();
+        finish_export(false, true, "Session export cancelled.");
+        return;
+    }
+
+    if (status == STATUS_COMPLETE)
+    {
+        item.remote_file_size = remote_size;
+        item.remote_file_hash = remote_hash;
+
+        QFileInfo local_info(item.local_file);
+
+        if (local_info.exists() == false)
+        {
+            start_file_download(&item);
+            return;
+        }
+
+        if (local_info.size() != qint64(remote_size))
+        {
+            start_file_download(&item);
+            return;
+        }
+
+        QByteArray local_hash;
+        QString    local_hash_error;
+
+        // If the existing local file cannot be read for hashing, treat it as a mismatch and
+        // download a fresh copy rather than skipping an unverifiable file.
+        if (compute_local_file_hash(item.local_file, export_hash_name, &local_hash,
+                                    &local_hash_error) == false)
+        {
+            emit status_message(
+                QString("Could not verify existing %1, downloading a fresh copy.")
+                    .arg(QFileInfo(item.remote_file).fileName()));
+            start_file_download(&item);
+            return;
+        }
+
+        if (local_hash == remote_hash)
+        {
+            item.status          = ARS_TRACKER_STATUS_ALREADY_PRESENT;
+            item.bytes_completed = remote_size;
+            item.total_bytes     = remote_size;
+            item.error_text =
+                QString("Already present (%1, size match)").arg(export_hash_name.toUpper());
+
+            if (item.category == ARS_TRACKER_FILE_SENSOR)
+            {
+                enqueue_next_sensor_candidate();
+            }
+
+            publish_export_file_rows();
+            publish_progress_text();
+            emit status_message(
+                QString("Skipping %1, identical local copy already present.")
+                    .arg(QFileInfo(item.remote_file).fileName()));
+            request_next_download_or_finish();
+            return;
+        }
+
+        start_file_download(&item);
+        return;
+    }
+
+    if (is_not_found_error(status, error_message))
+    {
+        if (item.category == ARS_TRACKER_FILE_SENSOR)
+        {
+            item.status              = ARS_TRACKER_STATUS_SENSORS_END;
+            item.error_text          = "No more sensor files";
+            sensors_enumeration_done = true;
+            publish_export_file_rows();
+            request_next_download_or_finish();
+            return;
+        }
+
+        item.status     = ARS_TRACKER_STATUS_MISSING;
+        item.error_text = "Remote file missing";
+        publish_export_file_rows();
+        request_next_download_or_finish();
+        return;
+    }
+
+    item.status = ARS_TRACKER_STATUS_FAILED;
+
+    if (status == STATUS_TRANSPORT_DISCONNECTED)
+    {
+        item.error_text = "Transport disconnected while verifying existing file";
+    } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
+    {
+        item.error_text = "Transport send failed while verifying existing file";
+    } else if (status == STATUS_TIMEOUT)
+    {
+        item.error_text = "Verification timed out";
+    } else
+    {
+        item.error_text =
+            error_message.isEmpty() ? "Remote verification failed" : error_message;
+    }
+
+    export_failed = true;
+    publish_export_file_rows();
+    finish_export(false, false,
+                  QString("Session export failed while verifying %1.")
+                      .arg(QFileInfo(item.remote_file).fileName()));
+}
+
+void ars_tracker_backend::start_file_download(ars_tracker_download_item_t* item)
+{
+    item->status = ARS_TRACKER_STATUS_DOWNLOADING;
+    item->error_text.clear();
+    item->bytes_completed = 0;
+    item->total_bytes     = 0;
+
+    QFile::remove(item->local_temp_file);
+    publish_export_file_rows();
+    publish_progress_text(item->remote_file);
+    emit status_message(
+        QString("Downloading %1...").arg(QFileInfo(item->remote_file).fileName()));
+    emit request_file_download(item->remote_file, item->local_temp_file);
+}
+
 void ars_tracker_backend::request_next_download_or_finish()
 {
     if (export_loading == false)
@@ -1211,24 +1651,34 @@ void ars_tracker_backend::request_next_download_or_finish()
         return;
     }
 
+    if (export_hash_ready == false)
+    {
+        return;
+    }
+
     for (int i = 0; i < download_queue.length(); ++i)
     {
         if (download_queue.at(i).status == ARS_TRACKER_STATUS_PENDING)
         {
             current_download_index            = i;
             ars_tracker_download_item_t& item = download_queue[i];
+            QFileInfo local_info(item.local_file);
 
-            item.status = ARS_TRACKER_STATUS_DOWNLOADING;
-            item.error_text.clear();
-            item.bytes_completed = 0;
-            item.total_bytes     = 0;
+            if (local_info.exists() && export_hash_name.isEmpty() == false)
+            {
+                item.status = ARS_TRACKER_STATUS_CHECKING_EXISTING;
+                item.error_text.clear();
+                item.bytes_completed = 0;
+                item.total_bytes     = 0;
+                publish_export_file_rows();
+                publish_progress_text(item.remote_file);
+                emit status_message(
+                    QString("Checking existing %1...").arg(QFileInfo(item.remote_file).fileName()));
+                emit request_file_metadata(item.remote_file, export_hash_name);
+                return;
+            }
 
-            QFile::remove(item.local_temp_file);
-            publish_export_file_rows();
-            publish_progress_text(item.remote_file);
-            emit status_message(
-                QString("Downloading %1...").arg(QFileInfo(item.remote_file).fileName()));
-            emit request_file_download(item.remote_file, item.local_temp_file);
+            start_file_download(&item);
             return;
         }
     }

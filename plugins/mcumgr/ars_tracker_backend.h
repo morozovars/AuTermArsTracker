@@ -18,6 +18,27 @@ struct ars_tracker_session_t {
 
 Q_DECLARE_METATYPE(ars_tracker_session_t)
 
+enum ars_tracker_info_field_status_t : uint8_t {
+    ARS_TRACKER_INFO_FIELD_IDLE = 0,
+    ARS_TRACKER_INFO_FIELD_LOADING,
+    ARS_TRACKER_INFO_FIELD_READY,
+    ARS_TRACKER_INFO_FIELD_ERROR,
+};
+
+struct ars_tracker_info_field_t {
+    QString value;
+    QString error;
+    ars_tracker_info_field_status_t status;
+};
+
+struct ars_tracker_info_t {
+    ars_tracker_info_field_t serial_number;
+    ars_tracker_info_field_t board_id;
+    ars_tracker_info_field_t tracker_type;
+};
+
+Q_DECLARE_METATYPE(ars_tracker_info_t)
+
 enum ars_tracker_download_category_t : uint8_t {
     ARS_TRACKER_FILE_FIXED = 0,
     ARS_TRACKER_FILE_SENSOR,
@@ -57,7 +78,11 @@ public:
     void handle_session_list_response(group_status status, const QString &shell_output, int32_t shell_ret);
 
     const QList<ars_tracker_session_t> &sessions() const;
+    const ars_tracker_info_t &tracker_info() const;
 
+    bool begin_tracker_info_refresh(QString *error_message);
+    void handle_tracker_info_response(group_status status, const QString &shell_output,
+                                      int32_t shell_ret);
     bool begin_session_delete(const QString &session_id, QString *session_name,
                               QString *error_message);
     void handle_session_delete_response(group_status status, const QString &shell_output,
@@ -74,6 +99,8 @@ public:
 
 signals:
     void session_list_ready(const QList<ars_tracker_session_t> &sessions);
+    void tracker_info_changed(const ars_tracker_info_t &info);
+    void tracker_info_loading_changed(bool loading);
     void loading_changed(bool loading);
     void status_message(const QString& message);
 
@@ -84,12 +111,24 @@ signals:
     void export_finished(bool success, bool cancelled, const QString &message);
 
     void request_session_list_refresh_after_delete();
+    void request_tracker_info_shell_command(const QStringList &arguments);
+    void request_cancel_tracker_info_shell_command();
     void request_file_download(const QString &remote_file, const QString &local_temp_file);
     void request_cancel_file_download();
 
 private:
+    enum tracker_info_step_t : uint8_t {
+        TRACKER_INFO_STEP_NONE = 0,
+        TRACKER_INFO_STEP_SN,
+        TRACKER_INFO_STEP_BID,
+        TRACKER_INFO_STEP_TYPE,
+    };
+
     bool loading;
     QList<ars_tracker_session_t> latest_sessions;
+    bool tracker_info_loading;
+    tracker_info_step_t active_tracker_info_step;
+    ars_tracker_info_t latest_tracker_info;
 
     bool delete_loading;
     QString active_delete_session_id;
@@ -110,6 +149,16 @@ private:
     QString build_remote_file_path(const QString &remote_root, const QString &filename) const;
     QString build_local_final_file_path(const QString &destination, const QString &filename) const;
     QString build_local_temp_file_path(const QString &destination, const QString &filename) const;
+
+    void reset_tracker_info_state();
+    ars_tracker_info_field_t *tracker_info_field_for_step(tracker_info_step_t step);
+    tracker_info_step_t next_tracker_info_step(tracker_info_step_t step) const;
+    QStringList tracker_info_command_arguments(tracker_info_step_t step) const;
+    QString tracker_info_step_name(tracker_info_step_t step) const;
+    void begin_tracker_info_step(tracker_info_step_t step);
+    void finish_tracker_info_refresh(const QString &message);
+    void set_tracker_info_field_error(tracker_info_step_t step, const QString &message);
+    int tracker_info_error_count() const;
 
     void reset_export_state();
     void enqueue_fixed_files();

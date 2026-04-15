@@ -12,8 +12,11 @@ static const QStringList ars_tracker_fixed_files =
 
 ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
 {
-    loading        = false;
-    delete_loading = false;
+    loading              = false;
+    tracker_info_loading = false;
+    active_tracker_info_step = TRACKER_INFO_STEP_NONE;
+    delete_loading       = false;
+    reset_tracker_info_state();
     reset_export_state();
 #ifndef SKIPPLUGIN_LOGGER
     logger = nullptr;
@@ -22,6 +25,19 @@ ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
 
 ars_tracker_backend::~ars_tracker_backend()
 {
+}
+
+void ars_tracker_backend::reset_tracker_info_state()
+{
+    latest_tracker_info.serial_number.value.clear();
+    latest_tracker_info.serial_number.error.clear();
+    latest_tracker_info.serial_number.status = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.board_id.value.clear();
+    latest_tracker_info.board_id.error.clear();
+    latest_tracker_info.board_id.status      = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.tracker_type.value.clear();
+    latest_tracker_info.tracker_type.error.clear();
+    latest_tracker_info.tracker_type.status  = ARS_TRACKER_INFO_FIELD_IDLE;
 }
 
 void ars_tracker_backend::reset_export_state()
@@ -40,6 +56,16 @@ void ars_tracker_backend::reset_export_state()
 
 bool ars_tracker_backend::begin_session_list_request(QString* error_message)
 {
+    if (tracker_info_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker info refresh is already in progress.");
+        }
+
+        return false;
+    }
+
     if (delete_loading == true)
     {
         if (error_message != nullptr)
@@ -136,10 +162,320 @@ const QList<ars_tracker_session_t>& ars_tracker_backend::sessions() const
     return latest_sessions;
 }
 
+const ars_tracker_info_t& ars_tracker_backend::tracker_info() const
+{
+    return latest_tracker_info;
+}
+
+ars_tracker_info_field_t* ars_tracker_backend::tracker_info_field_for_step(
+    tracker_info_step_t step)
+{
+    if (step == TRACKER_INFO_STEP_SN)
+    {
+        return &latest_tracker_info.serial_number;
+    } else if (step == TRACKER_INFO_STEP_BID)
+    {
+        return &latest_tracker_info.board_id;
+    } else if (step == TRACKER_INFO_STEP_TYPE)
+    {
+        return &latest_tracker_info.tracker_type;
+    }
+
+    return nullptr;
+}
+
+ars_tracker_backend::tracker_info_step_t ars_tracker_backend::next_tracker_info_step(
+    tracker_info_step_t step) const
+{
+    if (step == TRACKER_INFO_STEP_SN)
+    {
+        return TRACKER_INFO_STEP_BID;
+    } else if (step == TRACKER_INFO_STEP_BID)
+    {
+        return TRACKER_INFO_STEP_TYPE;
+    }
+
+    return TRACKER_INFO_STEP_NONE;
+}
+
+QStringList ars_tracker_backend::tracker_info_command_arguments(tracker_info_step_t step) const
+{
+    if (step == TRACKER_INFO_STEP_SN)
+    {
+        return QStringList() << "param" << "sn";
+    } else if (step == TRACKER_INFO_STEP_BID)
+    {
+        return QStringList() << "param" << "bid";
+    } else if (step == TRACKER_INFO_STEP_TYPE)
+    {
+        return QStringList() << "param" << "type";
+    }
+
+    return QStringList();
+}
+
+QString ars_tracker_backend::tracker_info_step_name(tracker_info_step_t step) const
+{
+    if (step == TRACKER_INFO_STEP_SN)
+    {
+        return "serial number";
+    } else if (step == TRACKER_INFO_STEP_BID)
+    {
+        return "board id";
+    } else if (step == TRACKER_INFO_STEP_TYPE)
+    {
+        return "tracker type";
+    }
+
+    return "tracker info";
+}
+
+void ars_tracker_backend::set_tracker_info_field_error(tracker_info_step_t step,
+                                                       const QString&      message)
+{
+    ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
+
+    if (field == nullptr)
+    {
+        return;
+    }
+
+    field->status = ARS_TRACKER_INFO_FIELD_ERROR;
+    field->error  = message;
+    field->value  = QString("Error: %1").arg(message);
+}
+
+void ars_tracker_backend::begin_tracker_info_step(tracker_info_step_t step)
+{
+    ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
+
+    active_tracker_info_step = step;
+
+    if (field != nullptr)
+    {
+        field->status = ARS_TRACKER_INFO_FIELD_LOADING;
+        field->error.clear();
+    }
+
+    emit tracker_info_changed(latest_tracker_info);
+    emit request_tracker_info_shell_command(tracker_info_command_arguments(step));
+}
+
+int ars_tracker_backend::tracker_info_error_count() const
+{
+    int error_count = 0;
+
+    if (latest_tracker_info.serial_number.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
+    if (latest_tracker_info.board_id.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
+    if (latest_tracker_info.tracker_type.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
+    return error_count;
+}
+
+void ars_tracker_backend::finish_tracker_info_refresh(const QString& message)
+{
+    tracker_info_loading    = false;
+    active_tracker_info_step = TRACKER_INFO_STEP_NONE;
+    emit tracker_info_changed(latest_tracker_info);
+    emit tracker_info_loading_changed(false);
+    emit status_message(message);
+}
+
+bool ars_tracker_backend::begin_tracker_info_refresh(QString* error_message)
+{
+    if (tracker_info_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker info refresh is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session list request is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (delete_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session delete is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (export_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session export is already in progress.");
+        }
+
+        return false;
+    }
+
+    tracker_info_loading = true;
+    emit tracker_info_loading_changed(true);
+    emit status_message(QString("Loading tracker info..."));
+    begin_tracker_info_step(TRACKER_INFO_STEP_SN);
+    return true;
+}
+
+void ars_tracker_backend::handle_tracker_info_response(group_status   status,
+                                                       const QString& shell_output,
+                                                       int32_t        shell_ret)
+{
+    if (tracker_info_loading == false || active_tracker_info_step == TRACKER_INFO_STEP_NONE)
+    {
+        return;
+    }
+
+    tracker_info_step_t step          = active_tracker_info_step;
+    tracker_info_step_t next_step     = next_tracker_info_step(step);
+    bool                continue_flow = false;
+    QString             parsed_value;
+    QString             parse_error;
+    QString             final_message;
+
+    if (status == STATUS_COMPLETE)
+    {
+        if (shell_ret != 0)
+        {
+            set_tracker_info_field_error(
+                step, QString("Command failed, shell ret: %1").arg(QString::number(shell_ret)));
+            continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
+        } else
+        {
+            bool parsed_ok = false;
+
+            if (step == TRACKER_INFO_STEP_SN)
+            {
+                parsed_ok = ars_tracker_parser::parse_param_sn_output(shell_output, &parsed_value,
+                                                                     &parse_error);
+            } else if (step == TRACKER_INFO_STEP_BID)
+            {
+                parsed_ok = ars_tracker_parser::parse_param_bid_output(shell_output, &parsed_value,
+                                                                      &parse_error);
+            } else if (step == TRACKER_INFO_STEP_TYPE)
+            {
+                parsed_ok = ars_tracker_parser::parse_param_type_output(shell_output, &parsed_value,
+                                                                       &parse_error);
+            }
+
+            if (parsed_ok == true)
+            {
+                ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
+
+                if (field != nullptr)
+                {
+                    field->value  = parsed_value;
+                    field->error.clear();
+                    field->status = ARS_TRACKER_INFO_FIELD_READY;
+                }
+            } else
+            {
+                set_tracker_info_field_error(step, parse_error);
+            }
+
+            continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
+        }
+    } else if (status == STATUS_TIMEOUT)
+    {
+        set_tracker_info_field_error(step,
+                                     QString("%1 request timed out.")
+                                         .arg(tracker_info_step_name(step)));
+        final_message =
+            QString("Tracker info refresh timed out while loading %1.")
+                .arg(tracker_info_step_name(step));
+    } else if (status == STATUS_CANCELLED)
+    {
+        set_tracker_info_field_error(step,
+                                     QString("%1 request cancelled.")
+                                         .arg(tracker_info_step_name(step)));
+        final_message =
+            QString("Tracker info refresh cancelled while loading %1.")
+                .arg(tracker_info_step_name(step));
+    } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
+    {
+        set_tracker_info_field_error(step, QString("Transport send failed."));
+        final_message =
+            QString("Tracker info refresh failed due to transport error while loading %1.")
+                .arg(tracker_info_step_name(step));
+    } else if (status == STATUS_TRANSPORT_DISCONNECTED)
+    {
+        set_tracker_info_field_error(step, QString("Transport disconnected."));
+        final_message =
+            QString("Tracker info refresh failed: transport disconnected while loading %1.")
+                .arg(tracker_info_step_name(step));
+    } else
+    {
+        set_tracker_info_field_error(
+            step, shell_output.isEmpty() ? QString("Request failed.") : shell_output);
+        final_message =
+            QString("Tracker info refresh failed while loading %1.")
+                .arg(tracker_info_step_name(step));
+    }
+
+    emit tracker_info_changed(latest_tracker_info);
+
+    if (continue_flow == true)
+    {
+        begin_tracker_info_step(next_step);
+        return;
+    }
+
+    if (final_message.isEmpty())
+    {
+        int error_count = tracker_info_error_count();
+
+        if (error_count == 0)
+        {
+            final_message = QString("Tracker info refreshed.");
+        } else
+        {
+            final_message =
+                QString("Tracker info refreshed with %1 field error(s).")
+                    .arg(QString::number(error_count));
+        }
+    }
+
+    finish_tracker_info_refresh(final_message);
+}
+
 bool ars_tracker_backend::begin_session_delete(const QString& session_id,
                                                QString*       session_name,
                                                QString*       error_message)
 {
+    if (tracker_info_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker info refresh is already in progress.");
+        }
+
+        return false;
+    }
+
     if (delete_loading == true)
     {
         if (error_message != nullptr)
@@ -379,6 +715,16 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
                                                const QString& destination_path,
                                                QString*       error_message)
 {
+    if (tracker_info_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker info refresh is already in progress.");
+        }
+
+        return false;
+    }
+
     if (delete_loading == true)
     {
         if (error_message != nullptr)
@@ -773,9 +1119,16 @@ void ars_tracker_backend::set_logger(debug_logger* object)
 
 void ars_tracker_backend::cancel_all()
 {
+    if (tracker_info_loading == true)
+    {
+        emit status_message("Cancelling tracker info refresh...");
+        emit request_cancel_tracker_info_shell_command();
+        return;
+    }
+
     if (export_loading == false)
     {
-        emit status_message("No session export is currently running.");
+        emit status_message("No ArsTracker operation is currently running.");
         return;
     }
 

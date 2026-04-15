@@ -145,6 +145,7 @@ enum mcumgr_action_t {
     ACTION_ENUM_DETAILS,
 
     ACTION_CUSTOM,
+    ACTION_ARS_TRACKER_INFO_REFRESH,
     ACTION_ARS_TRACKER_SESSION_LIST,
     ACTION_ARS_TRACKER_DELETE_SESSION,
     ACTION_ARS_TRACKER_EXPORT_DOWNLOAD,
@@ -255,12 +256,15 @@ private slots:
     void on_tree_IMG_Slot_Info_itemDoubleClicked(QTreeWidgetItem *item, int column);
     void on_btn_error_lookup_clicked();
     void on_btn_cancel_clicked();
+    void on_btn_ars_tracker_info_refresh_clicked();
     void on_btn_ars_tracker_refresh_clicked();
     void on_btn_ars_tracker_delete_clicked();
     void on_btn_ars_tracker_download_clicked();
     void on_btn_ars_tracker_destination_clicked();
     void on_btn_ars_tracker_cancel_clicked();
     void ars_tracker_status_message(const QString &message);
+    void ars_tracker_info_changed(const ars_tracker_info_t &info);
+    void ars_tracker_info_loading_changed(bool loading);
     void ars_tracker_sessions_ready(const QList<ars_tracker_session_t> &sessions);
     void ars_tracker_loading_changed(bool loading);
     void ars_tracker_delete_loading_changed(bool loading);
@@ -268,6 +272,8 @@ private slots:
     void ars_tracker_export_progress_changed(const QString &progress_text);
     void ars_tracker_export_file_list_changed(const QStringList &rows);
     void ars_tracker_export_finished(bool success, bool cancelled, const QString &message);
+    void ars_tracker_request_info_shell_command(const QStringList &arguments);
+    void ars_tracker_request_cancel_info_shell_command();
     void ars_tracker_request_session_refresh_after_delete();
     void ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file);
     void ars_tracker_request_cancel_file_download();
@@ -578,6 +584,16 @@ private:
     QSpacerItem *horizontalSpacer_24;
     QWidget *tab_ars_tracker;
     QGridLayout *gridLayout_ars_tracker;
+    QFrame *frame_ars_tracker_info;
+    QGridLayout *gridLayout_ars_tracker_info;
+    QLabel *label_ars_tracker_info_header;
+    QPushButton *btn_ars_tracker_info_refresh;
+    QLabel *label_ars_tracker_serial_number;
+    QLineEdit *edit_ars_tracker_serial_number;
+    QLabel *label_ars_tracker_board_id;
+    QLineEdit *edit_ars_tracker_board_id;
+    QLabel *label_ars_tracker_type;
+    QLineEdit *edit_ars_tracker_type;
     QPushButton *btn_ars_tracker_refresh;
     QLabel *label_ars_tracker_sessions;
     QListWidget *list_ars_tracker_sessions;
@@ -629,6 +645,7 @@ private:
     QList<memory_pool_t> memory_list;
     int32_t shell_rc;
     int32_t ars_tracker_shell_rc;
+    bool ars_tracker_info_loading;
     bool ars_tracker_loading;
     bool ars_tracker_delete_loading;
     bool ars_tracker_export_loading;

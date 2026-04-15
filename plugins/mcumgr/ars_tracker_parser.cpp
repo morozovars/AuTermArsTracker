@@ -37,6 +37,33 @@ static bool ignore_line(const QString &line)
     return false;
 }
 
+
+static QString extract_session_token(const QString &line)
+{
+    QString trimmed = line.trimmed();
+
+    if (trimmed.isEmpty())
+    {
+        return trimmed;
+    }
+
+    QStringList parts = trimmed.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+
+    if (parts.isEmpty())
+    {
+        return trimmed;
+    }
+
+    QString candidate = parts.last();
+
+    while (candidate.endsWith(':') || candidate.endsWith(',') || candidate.endsWith(';'))
+    {
+        candidate.chop(1);
+    }
+
+    return candidate;
+}
+
 bool ars_tracker_parser::parse_meas_ls_output(const QString &shell_output,
                                               QList<ars_tracker_session_t> *sessions,
                                               QString *error_message)
@@ -58,17 +85,25 @@ bool ars_tracker_parser::parse_meas_ls_output(const QString &shell_output,
             continue;
         }
 
-        if (unique_ids.contains(row))
+        QString session_token = extract_session_token(row);
+
+        if (session_token.isEmpty())
         {
             continue;
         }
 
-        unique_ids.insert(row);
+        if (unique_ids.contains(session_token))
+        {
+            continue;
+        }
+
+        unique_ids.insert(session_token);
 
         ars_tracker_session_t session;
-        session.id = row;
-        session.display_name = row;
-        session.remote_path_or_name = row;
+        session.id = session_token;
+        session.display_name = session_token;
+        session.session_name = session_token;
+        session.remote_fs_root = session_token;
         session.raw_source_line = row;
         sessions->append(session);
     }

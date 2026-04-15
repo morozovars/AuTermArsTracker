@@ -146,6 +146,7 @@ enum mcumgr_action_t {
 
     ACTION_CUSTOM,
     ACTION_ARS_TRACKER_SESSION_LIST,
+    ACTION_ARS_TRACKER_EXPORT_DOWNLOAD,
 };
 
 class plugin_mcumgr : public QObject, AutPlugin
@@ -255,9 +256,17 @@ private slots:
     void on_btn_cancel_clicked();
     void on_btn_ars_tracker_refresh_clicked();
     void on_btn_ars_tracker_download_clicked();
+    void on_btn_ars_tracker_destination_clicked();
+    void on_btn_ars_tracker_cancel_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_sessions_ready(const QList<ars_tracker_session_t> &sessions);
     void ars_tracker_loading_changed(bool loading);
+    void ars_tracker_export_loading_changed(bool loading);
+    void ars_tracker_export_progress_changed(const QString &progress_text);
+    void ars_tracker_export_file_list_changed(const QStringList &rows);
+    void ars_tracker_export_finished(bool success, bool cancelled, const QString &message);
+    void ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file);
+    void ars_tracker_request_cancel_file_download();
     void on_list_ars_tracker_sessions_itemSelectionChanged();
 
 private:
@@ -573,10 +582,12 @@ private:
     QLineEdit *edit_ars_tracker_destination;
     QToolButton *btn_ars_tracker_destination;
     QLabel *label_ars_tracker_files;
-    QPlainTextEdit *edit_ars_tracker_files;
+    QListWidget *list_ars_tracker_files;
     QHBoxLayout *horizontalLayout_ars_tracker_actions;
     QSpacerItem *horizontalSpacer_ars_tracker_actions;
     QPushButton *btn_ars_tracker_download;
+    QPushButton *btn_ars_tracker_cancel;
+    QLabel *lbl_ars_tracker_progress;
     QLabel *lbl_ars_tracker_status;
     QSpacerItem *verticalSpacer_ars_tracker_status;
     QWidget *tab_2;
@@ -615,6 +626,7 @@ private:
     int32_t shell_rc;
     int32_t ars_tracker_shell_rc;
     bool ars_tracker_loading;
+    bool ars_tracker_export_loading;
     QStringList group_list;
     QList<stat_value_t> stat_list;
     QStandardItemModel model_image_state;

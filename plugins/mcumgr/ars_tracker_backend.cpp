@@ -34,7 +34,7 @@ bool ars_tracker_backend::begin_session_list_request(QString *error_message)
 
 void ars_tracker_backend::handle_session_list_response(group_status status, const QString &shell_output, int32_t shell_ret)
 {
-    log_debug() << "[ArsTracker] Raw meas ls output:" << shell_output;
+    // log_debug() << "[ArsTracker] Raw meas ls output:" << shell_output;
 
     loading = false;
     emit loading_changed(loading);
@@ -59,7 +59,7 @@ void ars_tracker_backend::handle_session_list_response(group_status status, cons
         }
 
         latest_sessions = parsed_sessions;
-        log_debug() << "[ArsTracker] Parsed sessions:" << latest_sessions.length();
+        // log_debug() << "[ArsTracker] Parsed sessions:" << latest_sessions.length();
 
         emit session_list_ready(latest_sessions);
         emit status_message(QString("Loaded %1 sessions.").arg(QString::number(latest_sessions.length())));
@@ -92,6 +92,13 @@ const QList<ars_tracker_session_t> &ars_tracker_backend::sessions() const
 {
     return latest_sessions;
 }
+
+#ifndef SKIPPLUGIN_LOGGER
+void ars_tracker_backend::set_logger(debug_logger* object)
+{
+    logger = object;
+}
+#endif
 
 void ars_tracker_backend::queue_session_download(const QString &session_id, const QString &destination_path)
 {

@@ -40,15 +40,21 @@ public:
 
     void queue_session_download(const QString &session_id, const QString &destination_path);
     void cancel_all();
+#ifndef SKIPPLUGIN_LOGGER
+    void set_logger(debug_logger* object);
+#endif
 
 signals:
     void session_list_ready(const QList<ars_tracker_session_t> &sessions);
     void loading_changed(bool loading);
-    void status_message(const QString &message);
+    void status_message(const QString& message);
 
 private:
     bool loading;
     QList<ars_tracker_session_t> latest_sessions;
+#ifndef SKIPPLUGIN_LOGGER
+    debug_logger* logger;
+#endif
 };
 
 #endif // ARS_TRACKER_BACKEND_H

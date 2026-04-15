@@ -12,7 +12,8 @@ static const QStringList ars_tracker_fixed_files =
 
 ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
 {
-    loading = false;
+    loading        = false;
+    delete_loading = false;
     reset_export_state();
 #ifndef SKIPPLUGIN_LOGGER
     logger = nullptr;
@@ -39,6 +40,26 @@ void ars_tracker_backend::reset_export_state()
 
 bool ars_tracker_backend::begin_session_list_request(QString* error_message)
 {
+    if (delete_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session delete is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (export_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session export is already in progress.");
+        }
+
+        return false;
+    }
+
     if (loading == true)
     {
         if (error_message != nullptr)
@@ -113,6 +134,155 @@ void ars_tracker_backend::handle_session_list_response(group_status   status,
 const QList<ars_tracker_session_t>& ars_tracker_backend::sessions() const
 {
     return latest_sessions;
+}
+
+bool ars_tracker_backend::begin_session_delete(const QString& session_id,
+                                               QString*       session_name,
+                                               QString*       error_message)
+{
+    if (delete_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session delete is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session list request is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (export_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session export is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (session_id.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Select a session first.");
+        }
+
+        return false;
+    }
+
+    ars_tracker_session_t session;
+
+    if (resolve_session(session_id, &session) == false)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Selected session is no longer available.");
+        }
+
+        return false;
+    }
+
+    if (session.id.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Selected session has no delete identifier.");
+        }
+
+        return false;
+    }
+
+    delete_loading          = true;
+    active_delete_session_id = session.id;
+    // The parser currently maps session.id to the raw `meas ls` token, so use it for
+    // `meas rm <session_name>`.
+    active_delete_session_name = session.id;
+
+    if (session_name != nullptr)
+    {
+        *session_name = active_delete_session_name;
+    }
+
+    emit delete_loading_changed(true);
+    emit status_message(QString("Deleting session '%1'...").arg(session.display_name));
+    return true;
+}
+
+void ars_tracker_backend::handle_session_delete_response(group_status   status,
+                                                         const QString& shell_output,
+                                                         int32_t        shell_ret)
+{
+    if (delete_loading == false)
+    {
+        return;
+    }
+
+    QString deleted_session_id   = active_delete_session_id;
+    QString deleted_session_name = active_delete_session_name;
+    QString final_message;
+    bool    refresh_requested = false;
+
+    delete_loading = false;
+    emit delete_loading_changed(false);
+
+    if (status == STATUS_COMPLETE)
+    {
+        if (shell_ret == 0)
+        {
+            for (int i = 0; i < latest_sessions.length(); ++i)
+            {
+                if (latest_sessions.at(i).id == deleted_session_id)
+                {
+                    latest_sessions.removeAt(i);
+                    break;
+                }
+            }
+
+            final_message =
+                QString("Deleted session '%1'. Refreshing sessions...").arg(deleted_session_name);
+            refresh_requested = true;
+        } else
+        {
+            final_message =
+                QString("Delete session command failed, shell ret: %1").arg(QString::number(shell_ret));
+        }
+    } else if (status == STATUS_TIMEOUT)
+    {
+        final_message = QString("Delete session request timed out.");
+    } else if (status == STATUS_CANCELLED)
+    {
+        final_message = QString("Delete session request cancelled.");
+    } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
+    {
+        final_message = QString("Delete session failed due to transport error.");
+    } else if (status == STATUS_TRANSPORT_DISCONNECTED)
+    {
+        final_message = QString("Delete session failed: transport disconnected.");
+    } else
+    {
+        final_message =
+            shell_output.isEmpty() ? QString("Delete session request failed.") : shell_output;
+    }
+
+    active_delete_session_id.clear();
+    active_delete_session_name.clear();
+
+    emit status_message(final_message);
+
+    if (refresh_requested == true)
+    {
+        emit request_session_list_refresh_after_delete();
+    }
 }
 
 bool ars_tracker_backend::resolve_session(const QString&         session_id,
@@ -209,6 +379,26 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
                                                const QString& destination_path,
                                                QString*       error_message)
 {
+    if (delete_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session delete is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session list request is already in progress.");
+        }
+
+        return false;
+    }
+
     if (export_loading == true)
     {
         if (error_message != nullptr)

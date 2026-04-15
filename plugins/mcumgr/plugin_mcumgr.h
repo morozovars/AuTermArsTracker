@@ -146,6 +146,7 @@ enum mcumgr_action_t {
 
     ACTION_CUSTOM,
     ACTION_ARS_TRACKER_SESSION_LIST,
+    ACTION_ARS_TRACKER_DELETE_SESSION,
     ACTION_ARS_TRACKER_EXPORT_DOWNLOAD,
 };
 
@@ -255,16 +256,19 @@ private slots:
     void on_btn_error_lookup_clicked();
     void on_btn_cancel_clicked();
     void on_btn_ars_tracker_refresh_clicked();
+    void on_btn_ars_tracker_delete_clicked();
     void on_btn_ars_tracker_download_clicked();
     void on_btn_ars_tracker_destination_clicked();
     void on_btn_ars_tracker_cancel_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_sessions_ready(const QList<ars_tracker_session_t> &sessions);
     void ars_tracker_loading_changed(bool loading);
+    void ars_tracker_delete_loading_changed(bool loading);
     void ars_tracker_export_loading_changed(bool loading);
     void ars_tracker_export_progress_changed(const QString &progress_text);
     void ars_tracker_export_file_list_changed(const QStringList &rows);
     void ars_tracker_export_finished(bool success, bool cancelled, const QString &message);
+    void ars_tracker_request_session_refresh_after_delete();
     void ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file);
     void ars_tracker_request_cancel_file_download();
     void on_list_ars_tracker_sessions_itemSelectionChanged();
@@ -283,7 +287,8 @@ private:
     void set_group_transport_settings(smp_group *group, uint32_t timeout);
     void update_img_state_table();
     void set_ars_tracker_controls_loading(bool loading);
-    void handle_ars_tracker_shell_status(group_status status, QString *error_string);
+    void handle_ars_tracker_shell_status(uint8_t user_data, group_status status,
+                                         QString *error_string);
 
     //Form items
 ///AUTOGEN_START_OBJECTS
@@ -573,8 +578,6 @@ private:
     QSpacerItem *horizontalSpacer_24;
     QWidget *tab_ars_tracker;
     QGridLayout *gridLayout_ars_tracker;
-    QLabel *label_ars_tracker_command;
-    QLineEdit *edit_ars_tracker_command;
     QPushButton *btn_ars_tracker_refresh;
     QLabel *label_ars_tracker_sessions;
     QListWidget *list_ars_tracker_sessions;
@@ -585,6 +588,7 @@ private:
     QListWidget *list_ars_tracker_files;
     QHBoxLayout *horizontalLayout_ars_tracker_actions;
     QSpacerItem *horizontalSpacer_ars_tracker_actions;
+    QPushButton *btn_ars_tracker_delete;
     QPushButton *btn_ars_tracker_download;
     QPushButton *btn_ars_tracker_cancel;
     QLabel *lbl_ars_tracker_progress;
@@ -626,7 +630,9 @@ private:
     int32_t shell_rc;
     int32_t ars_tracker_shell_rc;
     bool ars_tracker_loading;
+    bool ars_tracker_delete_loading;
     bool ars_tracker_export_loading;
+    bool ars_tracker_clear_selection_on_next_refresh;
     QStringList group_list;
     QList<stat_value_t> stat_list;
     QStandardItemModel model_image_state;

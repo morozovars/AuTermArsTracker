@@ -58,6 +58,10 @@ public:
 
     const QList<ars_tracker_session_t> &sessions() const;
 
+    bool begin_session_delete(const QString &session_id, QString *session_name,
+                              QString *error_message);
+    void handle_session_delete_response(group_status status, const QString &shell_output,
+                                        int32_t shell_ret);
     bool begin_session_export(const QString &session_id, const QString &destination_path,
                               QString *error_message);
     void handle_file_download_progress(uint8_t percent);
@@ -73,17 +77,23 @@ signals:
     void loading_changed(bool loading);
     void status_message(const QString& message);
 
+    void delete_loading_changed(bool loading);
     void export_loading_changed(bool loading);
     void export_progress_changed(const QString &progress_text);
     void export_file_list_changed(const QStringList &rows);
     void export_finished(bool success, bool cancelled, const QString &message);
 
+    void request_session_list_refresh_after_delete();
     void request_file_download(const QString &remote_file, const QString &local_temp_file);
     void request_cancel_file_download();
 
 private:
     bool loading;
     QList<ars_tracker_session_t> latest_sessions;
+
+    bool delete_loading;
+    QString active_delete_session_id;
+    QString active_delete_session_name;
 
     bool export_loading;
     bool export_cancel_requested;

@@ -1,5 +1,6 @@
 #include "ars_tracker_backend.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -739,6 +740,141 @@ bool ars_tracker_backend::resolve_session(const QString&         session_id,
     return false;
 }
 
+QString ars_tracker_backend::resolve_destination_path(const QString& raw_destination_path) const
+{
+    QString trimmed_path = raw_destination_path.trimmed();
+
+    if (trimmed_path.isEmpty())
+    {
+        return QString();
+    }
+
+    QFileInfo destination_info(trimmed_path);
+
+    if (destination_info.isAbsolute())
+    {
+        return QDir::cleanPath(trimmed_path);
+    }
+
+    // ArsTracker exports treat manual relative paths as relative to the AuTerm executable,
+    // not the process working directory.
+    QDir application_dir(QCoreApplication::applicationDirPath());
+    return QDir::cleanPath(application_dir.filePath(trimmed_path));
+}
+
+QString ars_tracker_backend::build_tracker_export_name(QString* error_message) const
+{
+    QString serial_value = latest_tracker_info.serial_number.value.trimmed();
+
+    if (serial_value.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker serial number is not loaded.");
+        }
+
+        return QString();
+    }
+
+    int third_dot_index = -1;
+    int search_from     = 0;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        third_dot_index = serial_value.indexOf('.', search_from);
+
+        if (third_dot_index < 0)
+        {
+            break;
+        }
+
+        search_from = third_dot_index + 1;
+    }
+
+    if (third_dot_index < 0 || third_dot_index + 1 >= serial_value.length())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Tracker serial number has unexpected format: %1").arg(serial_value);
+        }
+
+        return QString();
+    }
+
+    QString serial_suffix = serial_value.mid(third_dot_index + 1).trimmed();
+
+    if (serial_suffix.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Tracker serial number has no unique suffix: %1").arg(serial_value);
+        }
+
+        return QString();
+    }
+
+    QString type_value = latest_tracker_info.tracker_type.value.trimmed();
+
+    if (type_value.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker type is not loaded.");
+        }
+
+        return QString();
+    }
+
+    QString type_suffix = type_value.left(1).trimmed().toUpper();
+
+    // Export folder names must end with the raw tracker side suffix. Reject unknown values
+    // instead of guessing, so files are not written into an ambiguous tracker directory.
+    if (type_suffix != "R" && type_suffix != "L")
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker type has unexpected format: %1").arg(type_value);
+        }
+
+        return QString();
+    }
+
+    return serial_suffix + type_suffix;
+}
+
+QString ars_tracker_backend::build_session_export_root_path(const QString&              destination,
+                                                            const ars_tracker_session_t& session,
+                                                            QString*                    error_message) const
+{
+    QString session_name = QFileInfo(session.display_name.trimmed()).fileName();
+
+    if (session_name.isEmpty())
+    {
+        session_name = QFileInfo(session.id.trimmed()).fileName();
+    }
+
+    if (session_name.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Selected session has no usable export directory name.");
+        }
+
+        return QString();
+    }
+
+    QString tracker_name = build_tracker_export_name(error_message);
+
+    if (tracker_name.isEmpty())
+    {
+        return QString();
+    }
+
+    return QDir::cleanPath(QDir(QDir(destination).filePath(session_name)).filePath(tracker_name));
+}
+
 QString ars_tracker_backend::build_remote_file_path(const QString& remote_root,
                                                     const QString& filename) const
 {
@@ -814,6 +950,8 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
                                                const QString& destination_path,
                                                QString*       error_message)
 {
+    QString resolved_destination_path = resolve_destination_path(destination_path);
+
     if (tracker_info_loading == true)
     {
         if (error_message != nullptr)
@@ -864,7 +1002,7 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
         return false;
     }
 
-    if (destination_path.isEmpty())
+    if (resolved_destination_path.isEmpty())
     {
         if (error_message != nullptr)
         {
@@ -874,13 +1012,14 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
         return false;
     }
 
-    QFileInfo destination_info(destination_path);
+    QFileInfo destination_info(resolved_destination_path);
 
     if (!destination_info.exists() || !destination_info.isDir())
     {
         if (error_message != nullptr)
         {
-            *error_message = QString("Destination folder does not exist.");
+            *error_message =
+                QString("Destination folder does not exist: %1").arg(resolved_destination_path);
         }
 
         return false;
@@ -898,12 +1037,55 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
         return false;
     }
 
+    QString export_root_path =
+        build_session_export_root_path(resolved_destination_path, session, error_message);
+
+    if (export_root_path.isEmpty())
+    {
+        return false;
+    }
+
+    if (QDir().mkpath(export_root_path) == false)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Could not create export directory: %1").arg(export_root_path);
+        }
+
+        return false;
+    }
+
+    QFileInfo export_root_info(export_root_path);
+
+    if (!export_root_info.exists() || !export_root_info.isDir())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Export directory is not usable: %1").arg(export_root_path);
+        }
+
+        return false;
+    }
+
+    if (export_root_info.isWritable() == false)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Export directory is not writable: %1").arg(export_root_path);
+        }
+
+        return false;
+    }
+
     reset_export_state();
 
     export_loading             = true;
     active_session_id          = session.id;
     active_session_remote_root = session.remote_path_or_name;
-    active_destination_path    = destination_path;
+    active_destination_path    = export_root_path;
 
     enqueue_fixed_files();
     enqueue_next_sensor_candidate();

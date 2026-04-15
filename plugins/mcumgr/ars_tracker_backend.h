@@ -150,6 +150,11 @@ private:
     QList<ars_tracker_download_item_t> download_queue;
 
     bool resolve_session(const QString &session_id, ars_tracker_session_t *session) const;
+    QString resolve_destination_path(const QString &raw_destination_path) const;
+    QString build_tracker_export_name(QString *error_message) const;
+    QString build_session_export_root_path(const QString &destination,
+                                           const ars_tracker_session_t &session,
+                                           QString *error_message) const;
     QString build_remote_file_path(const QString &remote_root, const QString &filename) const;
     QString build_local_final_file_path(const QString &destination, const QString &filename) const;
     QString build_local_temp_file_path(const QString &destination, const QString &filename) const;

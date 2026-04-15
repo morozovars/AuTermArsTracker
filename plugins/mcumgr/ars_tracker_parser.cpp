@@ -73,6 +73,39 @@ static QStringList extract_relevant_lines(const QString &shell_output, const QSt
     return filtered_rows;
 }
 
+static QStringList extract_status_lines(const QString &shell_output)
+{
+    QStringList rows = shell_output.split('\n');
+    QStringList filtered_rows;
+
+    for (QString row : rows)
+    {
+        row = row.trimmed();
+
+        if (row.isEmpty() || is_prompt_line(row) || row == "status")
+        {
+            continue;
+        }
+
+        QString lowered = row.toLower();
+        if (lowered.startsWith("ok") || lowered.startsWith("loading") ||
+            lowered.startsWith("done"))
+        {
+            continue;
+        }
+
+        static const QRegularExpression noise_line("^[\\-=*_\\s]+$");
+        if (noise_line.match(row).hasMatch())
+        {
+            continue;
+        }
+
+        filtered_rows.append(row);
+    }
+
+    return filtered_rows;
+}
+
 bool ars_tracker_parser::parse_meas_ls_output(const QString &shell_output,
                                               QList<ars_tracker_session_t> *sessions,
                                               QString *error_message)
@@ -246,6 +279,67 @@ bool ars_tracker_parser::parse_param_type_output(const QString &shell_output, QS
         {
             *tracker_type = token;
         }
+    }
+
+    return true;
+}
+
+bool ars_tracker_parser::parse_status_output(const QString &shell_output, QString *tracker_status,
+                                             QString *error_message)
+{
+    QStringList rows = extract_status_lines(shell_output);
+
+    if (rows.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker status response was empty.");
+        }
+
+        return false;
+    }
+
+    // Assumption: the tracker `status` command may return either a direct state line or
+    // key/value lines. Prefer explicit `status`/`state` keys; otherwise fall back to a concise
+    // summary of the first useful lines.
+    static const QRegularExpression state_line("^(?:status|state)\\s*[:=]\\s*(.+)$",
+                                               QRegularExpression::CaseInsensitiveOption);
+
+    for (const QString& row : rows)
+    {
+        QRegularExpressionMatch match = state_line.match(row);
+
+        if (match.hasMatch())
+        {
+            if (tracker_status != nullptr)
+            {
+                *tracker_status = match.captured(1).trimmed();
+            }
+
+            return true;
+        }
+    }
+
+    if (rows.length() == 1)
+    {
+        if (tracker_status != nullptr)
+        {
+            *tracker_status = rows.first();
+        }
+
+        return true;
+    }
+
+    QStringList summary_rows;
+
+    for (int i = 0; i < rows.length() && i < 2; ++i)
+    {
+        summary_rows.append(rows.at(i));
+    }
+
+    if (tracker_status != nullptr)
+    {
+        *tracker_status = summary_rows.join(" | ");
     }
 
     return true;

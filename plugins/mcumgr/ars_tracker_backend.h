@@ -35,6 +35,7 @@ struct ars_tracker_info_t {
     ars_tracker_info_field_t serial_number;
     ars_tracker_info_field_t board_id;
     ars_tracker_info_field_t tracker_type;
+    ars_tracker_info_field_t tracker_status;
 };
 
 Q_DECLARE_METATYPE(ars_tracker_info_t)
@@ -122,6 +123,8 @@ private:
         TRACKER_INFO_STEP_SN,
         TRACKER_INFO_STEP_BID,
         TRACKER_INFO_STEP_TYPE,
+        TRACKER_INFO_STEP_STATUS,
+        TRACKER_INFO_STEP_SESSION_LIST,
     };
 
     bool loading;
@@ -129,6 +132,7 @@ private:
     bool tracker_info_loading;
     tracker_info_step_t active_tracker_info_step;
     ars_tracker_info_t latest_tracker_info;
+    bool tracker_info_session_list_failed;
 
     bool delete_loading;
     QString active_delete_session_id;

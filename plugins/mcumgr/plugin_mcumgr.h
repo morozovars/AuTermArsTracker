@@ -256,6 +256,7 @@ private slots:
     void on_tree_IMG_Slot_Info_itemDoubleClicked(QTreeWidgetItem *item, int column);
     void on_btn_error_lookup_clicked();
     void on_btn_cancel_clicked();
+    void on_selector_tab_currentChanged(int index);
     void on_btn_ars_tracker_info_refresh_clicked();
     void on_btn_ars_tracker_refresh_clicked();
     void on_btn_ars_tracker_delete_clicked();
@@ -289,6 +290,9 @@ private:
     void show_transport_open_status();
     void size_abbreviation(uint32_t size, QString *output);
     void close_transport_windows();
+    bool ars_tracker_transport_usable();
+    bool ars_tracker_tab_is_active() const;
+    void maybe_auto_refresh_ars_tracker();
     void set_group_transport_settings(smp_group *group);
     void set_group_transport_settings(smp_group *group, uint32_t timeout);
     void update_img_state_table();
@@ -582,6 +586,7 @@ private:
     QSpacerItem *horizontalSpacer_23;
     QPushButton *btn_custom_go;
     QSpacerItem *horizontalSpacer_24;
+    QTabWidget *selector_tab_root;
     QWidget *tab_ars_tracker;
     QGridLayout *gridLayout_ars_tracker;
     QFrame *frame_ars_tracker_info;
@@ -594,7 +599,8 @@ private:
     QLineEdit *edit_ars_tracker_board_id;
     QLabel *label_ars_tracker_type;
     QLineEdit *edit_ars_tracker_type;
-    QPushButton *btn_ars_tracker_refresh;
+    QLabel *label_ars_tracker_status_value;
+    QLineEdit *edit_ars_tracker_status_value;
     QLabel *label_ars_tracker_sessions;
     QListWidget *list_ars_tracker_sessions;
     QLabel *label_ars_tracker_destination;

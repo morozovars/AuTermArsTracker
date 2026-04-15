@@ -12,10 +12,11 @@ static const QStringList ars_tracker_fixed_files =
 
 ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
 {
-    loading              = false;
-    tracker_info_loading = false;
+    loading                  = false;
+    tracker_info_loading     = false;
     active_tracker_info_step = TRACKER_INFO_STEP_NONE;
-    delete_loading       = false;
+    tracker_info_session_list_failed = false;
+    delete_loading           = false;
     reset_tracker_info_state();
     reset_export_state();
 #ifndef SKIPPLUGIN_LOGGER
@@ -38,6 +39,9 @@ void ars_tracker_backend::reset_tracker_info_state()
     latest_tracker_info.tracker_type.value.clear();
     latest_tracker_info.tracker_type.error.clear();
     latest_tracker_info.tracker_type.status  = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.tracker_status.value.clear();
+    latest_tracker_info.tracker_status.error.clear();
+    latest_tracker_info.tracker_status.status = ARS_TRACKER_INFO_FIELD_IDLE;
 }
 
 void ars_tracker_backend::reset_export_state()
@@ -179,6 +183,9 @@ ars_tracker_info_field_t* ars_tracker_backend::tracker_info_field_for_step(
     } else if (step == TRACKER_INFO_STEP_TYPE)
     {
         return &latest_tracker_info.tracker_type;
+    } else if (step == TRACKER_INFO_STEP_STATUS)
+    {
+        return &latest_tracker_info.tracker_status;
     }
 
     return nullptr;
@@ -193,6 +200,12 @@ ars_tracker_backend::tracker_info_step_t ars_tracker_backend::next_tracker_info_
     } else if (step == TRACKER_INFO_STEP_BID)
     {
         return TRACKER_INFO_STEP_TYPE;
+    } else if (step == TRACKER_INFO_STEP_TYPE)
+    {
+        return TRACKER_INFO_STEP_STATUS;
+    } else if (step == TRACKER_INFO_STEP_STATUS)
+    {
+        return TRACKER_INFO_STEP_SESSION_LIST;
     }
 
     return TRACKER_INFO_STEP_NONE;
@@ -209,6 +222,12 @@ QStringList ars_tracker_backend::tracker_info_command_arguments(tracker_info_ste
     } else if (step == TRACKER_INFO_STEP_TYPE)
     {
         return QStringList() << "param" << "type";
+    } else if (step == TRACKER_INFO_STEP_STATUS)
+    {
+        return QStringList() << "status";
+    } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
+    {
+        return QStringList() << "meas" << "ls";
     }
 
     return QStringList();
@@ -225,6 +244,12 @@ QString ars_tracker_backend::tracker_info_step_name(tracker_info_step_t step) co
     } else if (step == TRACKER_INFO_STEP_TYPE)
     {
         return "tracker type";
+    } else if (step == TRACKER_INFO_STEP_STATUS)
+    {
+        return "tracker status";
+    } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
+    {
+        return "session list";
     }
 
     return "tracker info";
@@ -280,12 +305,22 @@ int ars_tracker_backend::tracker_info_error_count() const
         ++error_count;
     }
 
+    if (latest_tracker_info.tracker_status.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
+    if (tracker_info_session_list_failed == true)
+    {
+        ++error_count;
+    }
+
     return error_count;
 }
 
 void ars_tracker_backend::finish_tracker_info_refresh(const QString& message)
 {
-    tracker_info_loading    = false;
+    tracker_info_loading     = false;
     active_tracker_info_step = TRACKER_INFO_STEP_NONE;
     emit tracker_info_changed(latest_tracker_info);
     emit tracker_info_loading_changed(false);
@@ -334,9 +369,10 @@ bool ars_tracker_backend::begin_tracker_info_refresh(QString* error_message)
         return false;
     }
 
-    tracker_info_loading = true;
+    tracker_info_loading             = true;
+    tracker_info_session_list_failed = false;
     emit tracker_info_loading_changed(true);
-    emit status_message(QString("Loading tracker info..."));
+    emit status_message(QString("Loading tracker info and sessions..."));
     begin_tracker_info_step(TRACKER_INFO_STEP_SN);
     return true;
 }
@@ -361,8 +397,20 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
     {
         if (shell_ret != 0)
         {
-            set_tracker_info_field_error(
-                step, QString("Command failed, shell ret: %1").arg(QString::number(shell_ret)));
+            QString shell_error =
+                QString("Command failed, shell ret: %1").arg(QString::number(shell_ret));
+
+            if (step == TRACKER_INFO_STEP_SESSION_LIST)
+            {
+                tracker_info_session_list_failed = true;
+                final_message =
+                    QString("Session list refresh command failed, shell ret: %1")
+                        .arg(QString::number(shell_ret));
+            } else
+            {
+                set_tracker_info_field_error(step, shell_error);
+            }
+
             continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
         } else
         {
@@ -380,9 +428,27 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
             {
                 parsed_ok = ars_tracker_parser::parse_param_type_output(shell_output, &parsed_value,
                                                                        &parse_error);
+            } else if (step == TRACKER_INFO_STEP_STATUS)
+            {
+                parsed_ok = ars_tracker_parser::parse_status_output(shell_output, &parsed_value,
+                                                                    &parse_error);
+            } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
+            {
+                QList<ars_tracker_session_t> parsed_sessions;
+                parsed_ok = ars_tracker_parser::parse_meas_ls_output(shell_output, &parsed_sessions,
+                                                                     &parse_error);
+
+                if (parsed_ok == true)
+                {
+                    latest_sessions = parsed_sessions;
+                    emit session_list_ready(latest_sessions);
+                } else
+                {
+                    tracker_info_session_list_failed = true;
+                }
             }
 
-            if (parsed_ok == true)
+            if (parsed_ok == true && step != TRACKER_INFO_STEP_SESSION_LIST)
             {
                 ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
 
@@ -394,43 +460,76 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
                 }
             } else
             {
-                set_tracker_info_field_error(step, parse_error);
+                if (step != TRACKER_INFO_STEP_SESSION_LIST)
+                {
+                    set_tracker_info_field_error(step, parse_error);
+                }
             }
 
             continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
         }
     } else if (status == STATUS_TIMEOUT)
     {
-        set_tracker_info_field_error(step,
-                                     QString("%1 request timed out.")
-                                         .arg(tracker_info_step_name(step)));
+        if (step == TRACKER_INFO_STEP_SESSION_LIST)
+        {
+            tracker_info_session_list_failed = true;
+        } else
+        {
+            set_tracker_info_field_error(step,
+                                         QString("%1 request timed out.")
+                                             .arg(tracker_info_step_name(step)));
+        }
         final_message =
             QString("Tracker info refresh timed out while loading %1.")
                 .arg(tracker_info_step_name(step));
     } else if (status == STATUS_CANCELLED)
     {
-        set_tracker_info_field_error(step,
-                                     QString("%1 request cancelled.")
-                                         .arg(tracker_info_step_name(step)));
+        if (step == TRACKER_INFO_STEP_SESSION_LIST)
+        {
+            tracker_info_session_list_failed = true;
+        } else
+        {
+            set_tracker_info_field_error(step,
+                                         QString("%1 request cancelled.")
+                                             .arg(tracker_info_step_name(step)));
+        }
         final_message =
             QString("Tracker info refresh cancelled while loading %1.")
                 .arg(tracker_info_step_name(step));
     } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
     {
-        set_tracker_info_field_error(step, QString("Transport send failed."));
+        if (step == TRACKER_INFO_STEP_SESSION_LIST)
+        {
+            tracker_info_session_list_failed = true;
+        } else
+        {
+            set_tracker_info_field_error(step, QString("Transport send failed."));
+        }
         final_message =
             QString("Tracker info refresh failed due to transport error while loading %1.")
                 .arg(tracker_info_step_name(step));
     } else if (status == STATUS_TRANSPORT_DISCONNECTED)
     {
-        set_tracker_info_field_error(step, QString("Transport disconnected."));
+        if (step == TRACKER_INFO_STEP_SESSION_LIST)
+        {
+            tracker_info_session_list_failed = true;
+        } else
+        {
+            set_tracker_info_field_error(step, QString("Transport disconnected."));
+        }
         final_message =
             QString("Tracker info refresh failed: transport disconnected while loading %1.")
                 .arg(tracker_info_step_name(step));
     } else
     {
-        set_tracker_info_field_error(
-            step, shell_output.isEmpty() ? QString("Request failed.") : shell_output);
+        if (step == TRACKER_INFO_STEP_SESSION_LIST)
+        {
+            tracker_info_session_list_failed = true;
+        } else
+        {
+            set_tracker_info_field_error(
+                step, shell_output.isEmpty() ? QString("Request failed.") : shell_output);
+        }
         final_message =
             QString("Tracker info refresh failed while loading %1.")
                 .arg(tracker_info_step_name(step));
@@ -454,7 +553,7 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
         } else
         {
             final_message =
-                QString("Tracker info refreshed with %1 field error(s).")
+                QString("Tracker info and sessions refreshed with %1 issue(s).")
                     .arg(QString::number(error_count));
         }
     }

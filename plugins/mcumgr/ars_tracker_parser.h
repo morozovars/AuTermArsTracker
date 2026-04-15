@@ -16,6 +16,8 @@ bool parse_param_bid_output(const QString &shell_output, QString *board_id,
                             QString *error_message);
 bool parse_param_type_output(const QString &shell_output, QString *tracker_type,
                              QString *error_message);
+bool parse_status_output(const QString &shell_output, QString *tracker_status,
+                         QString *error_message);
 
 }
 

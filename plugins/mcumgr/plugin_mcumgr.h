@@ -48,6 +48,7 @@
 #include "error_lookup.h"
 #include "debug_logger.h"
 #include "smp_json.h"
+#include "ars_tracker_backend.h"
 
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
 #include "smp_udp.h"
@@ -78,6 +79,7 @@
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QListWidget>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QProgressBar>
 #include <QtWidgets/QPushButton>
@@ -143,6 +145,7 @@ enum mcumgr_action_t {
     ACTION_ENUM_DETAILS,
 
     ACTION_CUSTOM,
+    ACTION_ARS_TRACKER_SESSION_LIST,
 };
 
 class plugin_mcumgr : public QObject, AutPlugin
@@ -250,6 +253,12 @@ private slots:
     void on_tree_IMG_Slot_Info_itemDoubleClicked(QTreeWidgetItem *item, int column);
     void on_btn_error_lookup_clicked();
     void on_btn_cancel_clicked();
+    void on_btn_ars_tracker_refresh_clicked();
+    void on_btn_ars_tracker_download_clicked();
+    void ars_tracker_status_message(const QString &message);
+    void ars_tracker_sessions_ready(const QList<ars_tracker_session_t> &sessions);
+    void ars_tracker_loading_changed(bool loading);
+    void on_list_ars_tracker_sessions_itemSelectionChanged();
 
 private:
     bool handleStream_shell(QCborStreamReader &reader, int32_t *new_rc, int32_t *new_ret, QString *new_data);
@@ -264,6 +273,8 @@ private:
     void set_group_transport_settings(smp_group *group);
     void set_group_transport_settings(smp_group *group, uint32_t timeout);
     void update_img_state_table();
+    void set_ars_tracker_controls_loading(bool loading);
+    void handle_ars_tracker_shell_status(group_status status, QString *error_string);
 
     //Form items
 ///AUTOGEN_START_OBJECTS
@@ -551,6 +562,23 @@ private:
     QSpacerItem *horizontalSpacer_23;
     QPushButton *btn_custom_go;
     QSpacerItem *horizontalSpacer_24;
+    QWidget *tab_ars_tracker;
+    QGridLayout *gridLayout_ars_tracker;
+    QLabel *label_ars_tracker_command;
+    QLineEdit *edit_ars_tracker_command;
+    QPushButton *btn_ars_tracker_refresh;
+    QLabel *label_ars_tracker_sessions;
+    QListWidget *list_ars_tracker_sessions;
+    QLabel *label_ars_tracker_destination;
+    QLineEdit *edit_ars_tracker_destination;
+    QToolButton *btn_ars_tracker_destination;
+    QLabel *label_ars_tracker_files;
+    QPlainTextEdit *edit_ars_tracker_files;
+    QHBoxLayout *horizontalLayout_ars_tracker_actions;
+    QSpacerItem *horizontalSpacer_ars_tracker_actions;
+    QPushButton *btn_ars_tracker_download;
+    QLabel *lbl_ars_tracker_status;
+    QSpacerItem *verticalSpacer_ars_tracker_status;
     QWidget *tab_2;
     QWidget *verticalLayoutWidget;
     QVBoxLayout *verticalLayout;
@@ -585,6 +613,8 @@ private:
     QList<task_list_t> task_list;
     QList<memory_pool_t> memory_list;
     int32_t shell_rc;
+    int32_t ars_tracker_shell_rc;
+    bool ars_tracker_loading;
     QStringList group_list;
     QList<stat_value_t> stat_list;
     QStandardItemModel model_image_state;
@@ -627,6 +657,7 @@ private:
     smp_json *log_json;
     uint32_t os_buffer_size;
     uint32_t os_buffer_count;
+    ars_tracker_backend *ars_tracker;
 };
 
 #endif // PLUGIN_MCUMGR_H

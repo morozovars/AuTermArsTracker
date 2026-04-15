@@ -1002,29 +1002,6 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
         return false;
     }
 
-    if (resolved_destination_path.isEmpty())
-    {
-        if (error_message != nullptr)
-        {
-            *error_message = QString("Choose a destination folder first.");
-        }
-
-        return false;
-    }
-
-    QFileInfo destination_info(resolved_destination_path);
-
-    if (!destination_info.exists() || !destination_info.isDir())
-    {
-        if (error_message != nullptr)
-        {
-            *error_message =
-                QString("Destination folder does not exist: %1").arg(resolved_destination_path);
-        }
-
-        return false;
-    }
-
     ars_tracker_session_t session;
 
     if (resolve_session(session_id, &session) == false)

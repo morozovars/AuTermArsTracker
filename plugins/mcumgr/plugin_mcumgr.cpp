@@ -1692,7 +1692,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
     selector_group->addTab(tab_custom, QString());
 
-    tab_ars_tracker = new QWidget();
+    tab_ars_tracker = new QWidget(tabWidget_orig);
     tab_ars_tracker->setObjectName("tab_ars_tracker");
     gridLayout_ars_tracker = new QGridLayout(tab_ars_tracker);
     gridLayout_ars_tracker->setSpacing(2);
@@ -1777,7 +1777,6 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
     gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 6, 0, 1, 1);
 
-    selector_group->addTab(tab_ars_tracker, QString());
 
     verticalLayout_2->addWidget(selector_group);
 
@@ -2222,8 +2221,6 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
         QCoreApplication::translate("Form", "Download selected session", nullptr));
     lbl_ars_tracker_status->setText(
         QCoreApplication::translate("Form", "Press Refresh to load sessions.", nullptr));
-    selector_group->setTabText(selector_group->indexOf(tab_ars_tracker),
-                               QCoreApplication::translate("Form", "ArsTracker", nullptr));
     //    tabWidget->setTabText(tabWidget->indexOf(tab), QCoreApplication::translate("Form",
     //    "MCUmgr", nullptr));
     label_7->setText(QCoreApplication::translate("Form", "Hash:", nullptr));
@@ -2240,6 +2237,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
     // Add code
     tabWidget_orig->addTab(tab, QString("MCUmgr"));
+    tabWidget_orig->addTab(tab_ars_tracker, QString("ArsTracker"));
 
     // Signals
     connect(this, SIGNAL(plugin_set_status(bool, bool, bool*)), parent_window,

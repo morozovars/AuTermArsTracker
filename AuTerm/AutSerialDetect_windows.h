@@ -24,40 +24,38 @@
 #define AUTSERIALDETECT_WINDOWS_H
 
 /******************************************************************************/
-// Include Files
+/* Include Files */
 /******************************************************************************/
 #include "AutSerialDetect_base.h"
 #include <QObject>
 #include <QAbstractNativeEventFilter>
-#include <Windows.h>
-#include <WinUser.h>
-#include <Dbt.h>
-#include <devguid.h>
 
 /******************************************************************************/
-// Class definitions
+/* Class definitions */
 /******************************************************************************/
 class AutSerialDetect : public AutSerialDetect_base, public QAbstractNativeEventFilter
 {
     Q_OBJECT
 
 public:
-    explicit AutSerialDetect(QObject *parent = nullptr);
-    ~AutSerialDetect();
-    void start(QString port);
-    void stop();
+    explicit AutSerialDetect(QObject* parent = nullptr);
+    ~AutSerialDetect() override;
+
+    void start(QString port) override;
+    void stop() override;
+
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    virtual bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) Q_DECL_OVERRIDE;
+    bool nativeEventFilter(const QByteArray& eventType, void* message, qintptr* result) override;
 #else
-    virtual bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) Q_DECL_OVERRIDE;
+    bool nativeEventFilter(const QByteArray& eventType, void* message, long* result) override;
 #endif
 
 private:
-    HDEVNOTIFY access;
+    void* access = nullptr;
 };
 
 #endif // AUTSERIALDETECT_WINDOWS_H
 
 /******************************************************************************/
-// END OF FILE
+/* END OF FILE */
 /******************************************************************************/

@@ -93,6 +93,17 @@ const QList<ars_tracker_session_t> &ars_tracker_backend::sessions() const
     return latest_sessions;
 }
 
+#ifndef SKIPPLUGIN_LOGGER
+void ars_tracker_backend::set_logger(debug_logger* object)
+{
+    logger = object;
+}
+#endif
+
+void ars_tracker_backend::queue_session_download(const QString &session_id, const QString &destination_path)
+{
+    Q_UNUSED(session_id);
+    Q_UNUSED(destination_path);
 void ars_tracker_backend::queue_session_download(const QString &session_id, const QString &destination_path)
 {
     Q_UNUSED(session_id);
@@ -103,6 +114,13 @@ void ars_tracker_backend::queue_session_download(const QString &session_id, cons
     // TODO(AuTerm-ArsTracker): Persist resume state per file/chunk and continue from
     // the last confirmed chunk after retry/reconnect.
     emit status_message("TODO: ArsTracker session download queue is not implemented yet.");
+}
+
+void ars_tracker_backend::cancel_all()
+{
+    // TODO(AuTerm-ArsTracker): Cancel in-flight tracker command/file transfers and
+    // keep any persisted resume state for future retries.
+    emit status_message("TODO: ArsTracker cancellation is not implemented yet.");
 }
 
 void ars_tracker_backend::cancel_all()

@@ -10,8 +10,7 @@
 static const QStringList ars_tracker_fixed_files =
     QStringList() << "trace.csv" << "processedStr.csv" << "battery.csv";
 
-ars_tracker_backend::ars_tracker_backend(QObject *parent) :
-    QObject(parent)
+ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
 {
     loading = false;
     reset_export_state();
@@ -26,10 +25,10 @@ ars_tracker_backend::~ars_tracker_backend()
 
 void ars_tracker_backend::reset_export_state()
 {
-    export_loading            = false;
-    export_cancel_requested   = false;
-    export_failed             = false;
-    sensors_enumeration_done  = false;
+    export_loading           = false;
+    export_cancel_requested  = false;
+    export_failed            = false;
+    sensors_enumeration_done = false;
     active_session_id.clear();
     active_session_remote_root.clear();
     active_destination_path.clear();
@@ -38,7 +37,7 @@ void ars_tracker_backend::reset_export_state()
     download_queue.clear();
 }
 
-bool ars_tracker_backend::begin_session_list_request(QString *error_message)
+bool ars_tracker_backend::begin_session_list_request(QString* error_message)
 {
     if (loading == true)
     {
@@ -57,8 +56,9 @@ bool ars_tracker_backend::begin_session_list_request(QString *error_message)
     return true;
 }
 
-void ars_tracker_backend::handle_session_list_response(group_status status, const QString &shell_output,
-                                                       int32_t shell_ret)
+void ars_tracker_backend::handle_session_list_response(group_status   status,
+                                                       const QString& shell_output,
+                                                       int32_t        shell_ret)
 {
     loading = false;
     emit loading_changed(loading);
@@ -72,10 +72,11 @@ void ars_tracker_backend::handle_session_list_response(group_status status, cons
             return;
         }
 
-        QString parse_error;
+        QString                      parse_error;
         QList<ars_tracker_session_t> parsed_sessions;
 
-        if (ars_tracker_parser::parse_meas_ls_output(shell_output, &parsed_sessions, &parse_error) == false)
+        if (ars_tracker_parser::parse_meas_ls_output(shell_output, &parsed_sessions,
+                                                     &parse_error) == false)
         {
             latest_sessions.clear();
             emit session_list_ready(latest_sessions);
@@ -85,38 +86,37 @@ void ars_tracker_backend::handle_session_list_response(group_status status, cons
 
         latest_sessions = parsed_sessions;
         emit session_list_ready(latest_sessions);
-        emit status_message(QString("Loaded %1 sessions.").arg(QString::number(latest_sessions.length())));
+        emit status_message(
+            QString("Loaded %1 sessions.").arg(QString::number(latest_sessions.length())));
         return;
     }
 
     if (status == STATUS_TIMEOUT)
     {
         emit status_message(QString("Session list request timed out."));
-    }
-    else if (status == STATUS_CANCELLED)
+    } else if (status == STATUS_CANCELLED)
     {
         emit status_message(QString("Session list request cancelled."));
-    }
-    else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
+    } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
     {
         emit status_message(QString("Session list failed due to transport error."));
-    }
-    else if (status == STATUS_TRANSPORT_DISCONNECTED)
+    } else if (status == STATUS_TRANSPORT_DISCONNECTED)
     {
         emit status_message(QString("Session list failed: transport disconnected."));
-    }
-    else
+    } else
     {
-        emit status_message(shell_output.isEmpty() ? QString("Session list request failed.") : shell_output);
+        emit status_message(shell_output.isEmpty() ? QString("Session list request failed.") :
+                                                     shell_output);
     }
 }
 
-const QList<ars_tracker_session_t> &ars_tracker_backend::sessions() const
+const QList<ars_tracker_session_t>& ars_tracker_backend::sessions() const
 {
     return latest_sessions;
 }
 
-bool ars_tracker_backend::resolve_session(const QString &session_id, ars_tracker_session_t *session) const
+bool ars_tracker_backend::resolve_session(const QString&         session_id,
+                                          ars_tracker_session_t* session) const
 {
     for (const ars_tracker_session_t& existing_session : latest_sessions)
     {
@@ -134,7 +134,8 @@ bool ars_tracker_backend::resolve_session(const QString &session_id, ars_tracker
     return false;
 }
 
-QString ars_tracker_backend::build_remote_file_path(const QString &remote_root, const QString &filename) const
+QString ars_tracker_backend::build_remote_file_path(const QString& remote_root,
+                                                    const QString& filename) const
 {
     if (remote_root.isEmpty())
     {
@@ -148,15 +149,17 @@ QString ars_tracker_backend::build_remote_file_path(const QString &remote_root, 
         fixed_root.chop(1);
     }
 
-    return fixed_root + "/" + filename;
+    return "/NAND:/" + fixed_root + "/" + filename;
 }
 
-QString ars_tracker_backend::build_local_final_file_path(const QString &destination, const QString &filename) const
+QString ars_tracker_backend::build_local_final_file_path(const QString& destination,
+                                                         const QString& filename) const
 {
     return QDir(destination).filePath(filename);
 }
 
-QString ars_tracker_backend::build_local_temp_file_path(const QString &destination, const QString &filename) const
+QString ars_tracker_backend::build_local_temp_file_path(const QString& destination,
+                                                        const QString& filename) const
 {
     return QDir(destination).filePath(QString(".%1.part").arg(filename));
 }
@@ -166,14 +169,14 @@ void ars_tracker_backend::enqueue_fixed_files()
     for (const QString& file_name : ars_tracker_fixed_files)
     {
         ars_tracker_download_item_t item;
-        item.remote_file = build_remote_file_path(active_session_remote_root, file_name);
-        item.local_file = build_local_final_file_path(active_destination_path, file_name);
+        item.remote_file     = build_remote_file_path(active_session_remote_root, file_name);
+        item.local_file      = build_local_final_file_path(active_destination_path, file_name);
         item.local_temp_file = build_local_temp_file_path(active_destination_path, file_name);
         item.bytes_completed = 0;
-        item.total_bytes = 0;
-        item.retry_count = 0;
-        item.category = ARS_TRACKER_FILE_FIXED;
-        item.status = ARS_TRACKER_STATUS_PENDING;
+        item.total_bytes     = 0;
+        item.retry_count     = 0;
+        item.category        = ARS_TRACKER_FILE_FIXED;
+        item.status          = ARS_TRACKER_STATUS_PENDING;
 
         download_queue.append(item);
     }
@@ -189,21 +192,22 @@ void ars_tracker_backend::enqueue_next_sensor_candidate()
     QString sensor_filename = QString("sensors_%1.bin").arg(QString::number(next_sensor_index));
 
     ars_tracker_download_item_t item;
-    item.remote_file = build_remote_file_path(active_session_remote_root, sensor_filename);
-    item.local_file = build_local_final_file_path(active_destination_path, sensor_filename);
+    item.remote_file     = build_remote_file_path(active_session_remote_root, sensor_filename);
+    item.local_file      = build_local_final_file_path(active_destination_path, sensor_filename);
     item.local_temp_file = build_local_temp_file_path(active_destination_path, sensor_filename);
     item.bytes_completed = 0;
-    item.total_bytes = 0;
-    item.retry_count = 0;
-    item.category = ARS_TRACKER_FILE_SENSOR;
-    item.status = ARS_TRACKER_STATUS_PENDING;
+    item.total_bytes     = 0;
+    item.retry_count     = 0;
+    item.category        = ARS_TRACKER_FILE_SENSOR;
+    item.status          = ARS_TRACKER_STATUS_PENDING;
 
     ++next_sensor_index;
     download_queue.append(item);
 }
 
-bool ars_tracker_backend::begin_session_export(const QString &session_id, const QString &destination_path,
-                                               QString *error_message)
+bool ars_tracker_backend::begin_session_export(const QString& session_id,
+                                               const QString& destination_path,
+                                               QString*       error_message)
 {
     if (export_loading == true)
     {
@@ -261,10 +265,10 @@ bool ars_tracker_backend::begin_session_export(const QString &session_id, const 
 
     reset_export_state();
 
-    export_loading = true;
-    active_session_id = session.id;
+    export_loading             = true;
+    active_session_id          = session.id;
     active_session_remote_root = session.remote_path_or_name;
-    active_destination_path = destination_path;
+    active_destination_path    = destination_path;
 
     enqueue_fixed_files();
     enqueue_next_sensor_candidate();
@@ -278,7 +282,8 @@ bool ars_tracker_backend::begin_session_export(const QString &session_id, const 
     return true;
 }
 
-bool ars_tracker_backend::is_not_found_error(group_status status, const QString &error_message) const
+bool ars_tracker_backend::is_not_found_error(group_status   status,
+                                             const QString& error_message) const
 {
     if (status == STATUS_COMPLETE)
     {
@@ -292,7 +297,8 @@ bool ars_tracker_backend::is_not_found_error(group_status status, const QString 
            lowered.contains("enoent");
 }
 
-bool ars_tracker_backend::finalize_downloaded_file(ars_tracker_download_item_t *item, QString *error_message)
+bool ars_tracker_backend::finalize_downloaded_file(ars_tracker_download_item_t* item,
+                                                   QString*                     error_message)
 {
     QFile temp_file(item->local_temp_file);
 
@@ -357,8 +363,8 @@ void ars_tracker_backend::publish_export_file_rows()
 
     for (const ars_tracker_download_item_t& item : download_queue)
     {
-        QString row = QString("%1 — %2")
-                          .arg(QFileInfo(item.remote_file).fileName(), to_status_text(item.status));
+        QString row = QString("%1 — %2").arg(QFileInfo(item.remote_file).fileName(),
+                                             to_status_text(item.status));
 
         if (item.error_text.isEmpty() == false)
         {
@@ -371,22 +377,24 @@ void ars_tracker_backend::publish_export_file_rows()
     emit export_file_list_changed(rows);
 }
 
-void ars_tracker_backend::publish_progress_text(const QString &current_file)
+void ars_tracker_backend::publish_progress_text(const QString& current_file)
 {
     uint32_t finished_count = 0;
 
     for (const ars_tracker_download_item_t& item : download_queue)
     {
-        if (item.status == ARS_TRACKER_STATUS_DOWNLOADED || item.status == ARS_TRACKER_STATUS_MISSING ||
-            item.status == ARS_TRACKER_STATUS_SENSORS_END || item.status == ARS_TRACKER_STATUS_FAILED ||
-            item.status == ARS_TRACKER_STATUS_CANCELLED)
+        if (item.status == ARS_TRACKER_STATUS_DOWNLOADED ||
+            item.status == ARS_TRACKER_STATUS_MISSING ||
+            item.status == ARS_TRACKER_STATUS_SENSORS_END ||
+            item.status == ARS_TRACKER_STATUS_FAILED || item.status == ARS_TRACKER_STATUS_CANCELLED)
         {
             ++finished_count;
         }
     }
 
-    QString progress = QString("Files finished: %1/%2")
-                           .arg(QString::number(finished_count), QString::number(download_queue.length()));
+    QString progress =
+        QString("Files finished: %1/%2")
+            .arg(QString::number(finished_count), QString::number(download_queue.length()));
 
     if (current_file.isEmpty() == false)
     {
@@ -413,18 +421,19 @@ void ars_tracker_backend::request_next_download_or_finish()
     {
         if (download_queue.at(i).status == ARS_TRACKER_STATUS_PENDING)
         {
-            current_download_index = i;
-            ars_tracker_download_item_t &item = download_queue[i];
+            current_download_index            = i;
+            ars_tracker_download_item_t& item = download_queue[i];
 
             item.status = ARS_TRACKER_STATUS_DOWNLOADING;
             item.error_text.clear();
             item.bytes_completed = 0;
-            item.total_bytes = 0;
+            item.total_bytes     = 0;
 
             QFile::remove(item.local_temp_file);
             publish_export_file_rows();
             publish_progress_text(item.remote_file);
-            emit status_message(QString("Downloading %1...").arg(QFileInfo(item.remote_file).fileName()));
+            emit status_message(
+                QString("Downloading %1...").arg(QFileInfo(item.remote_file).fileName()));
             emit request_file_download(item.remote_file, item.local_temp_file);
             return;
         }
@@ -433,14 +442,13 @@ void ars_tracker_backend::request_next_download_or_finish()
     if (export_failed == true)
     {
         finish_export(false, false, "Session export failed.");
-    }
-    else
+    } else
     {
         finish_export(true, false, "Session export completed.");
     }
 }
 
-void ars_tracker_backend::finish_export(bool success, bool cancelled, const QString &message)
+void ars_tracker_backend::finish_export(bool success, bool cancelled, const QString& message)
 {
     if (export_loading == false)
     {
@@ -457,26 +465,29 @@ void ars_tracker_backend::finish_export(bool success, bool cancelled, const QStr
 
 void ars_tracker_backend::handle_file_download_progress(uint8_t percent)
 {
-    if (export_loading == false || current_download_index < 0 || current_download_index >= download_queue.length())
+    if (export_loading == false || current_download_index < 0 ||
+        current_download_index >= download_queue.length())
     {
         return;
     }
 
-    ars_tracker_download_item_t &item = download_queue[current_download_index];
-    item.bytes_completed = percent;
-    item.total_bytes = 100;
+    ars_tracker_download_item_t& item = download_queue[current_download_index];
+    item.bytes_completed              = percent;
+    item.total_bytes                  = 100;
 
     publish_progress_text(item.remote_file + QString(" (%1%)").arg(QString::number(percent)));
 }
 
-void ars_tracker_backend::handle_file_download_result(group_status status, const QString &error_message)
+void ars_tracker_backend::handle_file_download_result(group_status   status,
+                                                      const QString& error_message)
 {
-    if (export_loading == false || current_download_index < 0 || current_download_index >= download_queue.length())
+    if (export_loading == false || current_download_index < 0 ||
+        current_download_index >= download_queue.length())
     {
         return;
     }
 
-    ars_tracker_download_item_t &item = download_queue[current_download_index];
+    ars_tracker_download_item_t& item = download_queue[current_download_index];
 
     if (status == STATUS_COMPLETE)
     {
@@ -484,9 +495,9 @@ void ars_tracker_backend::handle_file_download_result(group_status status, const
 
         if (finalize_downloaded_file(&item, &finalise_error) == false)
         {
-            item.status = ARS_TRACKER_STATUS_FAILED;
+            item.status     = ARS_TRACKER_STATUS_FAILED;
             item.error_text = finalise_error;
-            export_failed = true;
+            export_failed   = true;
             publish_export_file_rows();
             finish_export(false, false, finalise_error);
             return;
@@ -507,7 +518,7 @@ void ars_tracker_backend::handle_file_download_result(group_status status, const
 
     if (status == STATUS_CANCELLED || export_cancel_requested == true)
     {
-        item.status = ARS_TRACKER_STATUS_CANCELLED;
+        item.status     = ARS_TRACKER_STATUS_CANCELLED;
         item.error_text = "Cancelled";
         publish_export_file_rows();
         finish_export(false, true, "Session export cancelled.");
@@ -518,15 +529,15 @@ void ars_tracker_backend::handle_file_download_result(group_status status, const
     {
         if (item.category == ARS_TRACKER_FILE_SENSOR)
         {
-            item.status = ARS_TRACKER_STATUS_SENSORS_END;
-            item.error_text = "No more sensor files";
+            item.status              = ARS_TRACKER_STATUS_SENSORS_END;
+            item.error_text          = "No more sensor files";
             sensors_enumeration_done = true;
             publish_export_file_rows();
             request_next_download_or_finish();
             return;
         }
 
-        item.status = ARS_TRACKER_STATUS_MISSING;
+        item.status     = ARS_TRACKER_STATUS_MISSING;
         item.error_text = "Remote file missing";
         publish_export_file_rows();
         request_next_download_or_finish();
@@ -535,22 +546,19 @@ void ars_tracker_backend::handle_file_download_result(group_status status, const
 
     if (status == STATUS_TRANSPORT_DISCONNECTED)
     {
-        item.status = ARS_TRACKER_STATUS_FAILED;
+        item.status     = ARS_TRACKER_STATUS_FAILED;
         item.error_text = "Transport disconnected";
-    }
-    else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
+    } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
     {
-        item.status = ARS_TRACKER_STATUS_FAILED;
+        item.status     = ARS_TRACKER_STATUS_FAILED;
         item.error_text = "Transport send failed";
-    }
-    else if (status == STATUS_TIMEOUT)
+    } else if (status == STATUS_TIMEOUT)
     {
-        item.status = ARS_TRACKER_STATUS_FAILED;
+        item.status     = ARS_TRACKER_STATUS_FAILED;
         item.error_text = "Transfer timed out";
-    }
-    else
+    } else
     {
-        item.status = ARS_TRACKER_STATUS_FAILED;
+        item.status     = ARS_TRACKER_STATUS_FAILED;
         item.error_text = error_message.isEmpty() ? "Transfer failed" : error_message;
     }
 

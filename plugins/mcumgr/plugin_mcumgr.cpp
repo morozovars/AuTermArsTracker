@@ -70,6 +70,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
     smp_groups.stat_mgmt = new smp_group_stat_mgmt(processor);
     smp_groups.zephyr_mgmt = new smp_group_zephyr_mgmt(processor);
     smp_groups.enum_mgmt = new smp_group_enum_mgmt(processor);
+    ars_tracker = new ars_tracker_backend(this);
     error_lookup_form = new error_lookup(parent_window, &smp_groups);
 
     processor->set_json(log_json);
@@ -86,6 +87,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
     parent_column = -1;
     child_row = -1;
     child_column = -1;
+    ars_tracker_shell_rc = 0;
+    ars_tracker_loading = false;
 
     QTabWidget *tabWidget_orig = parent_window->findChild<QTabWidget *>("selector_Tab");
 //    QPushButton *other = main_window->findChild<QPushButton *>("btn_TermClose");
@@ -1680,6 +1683,89 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
     selector_group->addTab(tab_custom, QString());
 
+    tab_ars_tracker = new QWidget();
+    tab_ars_tracker->setObjectName("tab_ars_tracker");
+    gridLayout_ars_tracker = new QGridLayout(tab_ars_tracker);
+    gridLayout_ars_tracker->setSpacing(2);
+    gridLayout_ars_tracker->setObjectName("gridLayout_ars_tracker");
+    gridLayout_ars_tracker->setContentsMargins(6, 6, 6, 6);
+    label_ars_tracker_command = new QLabel(tab_ars_tracker);
+    label_ars_tracker_command->setObjectName("label_ars_tracker_command");
+
+    gridLayout_ars_tracker->addWidget(label_ars_tracker_command, 0, 0, 1, 1);
+
+    edit_ars_tracker_command = new QLineEdit(tab_ars_tracker);
+    edit_ars_tracker_command->setObjectName("edit_ars_tracker_command");
+    edit_ars_tracker_command->setReadOnly(true);
+
+    gridLayout_ars_tracker->addWidget(edit_ars_tracker_command, 0, 1, 1, 1);
+
+    btn_ars_tracker_refresh = new QPushButton(tab_ars_tracker);
+    btn_ars_tracker_refresh->setObjectName("btn_ars_tracker_refresh");
+
+    gridLayout_ars_tracker->addWidget(btn_ars_tracker_refresh, 0, 2, 1, 1);
+
+    label_ars_tracker_sessions = new QLabel(tab_ars_tracker);
+    label_ars_tracker_sessions->setObjectName("label_ars_tracker_sessions");
+
+    gridLayout_ars_tracker->addWidget(label_ars_tracker_sessions, 1, 0, 1, 1);
+
+    list_ars_tracker_sessions = new QListWidget(tab_ars_tracker);
+    list_ars_tracker_sessions->setObjectName("list_ars_tracker_sessions");
+
+    gridLayout_ars_tracker->addWidget(list_ars_tracker_sessions, 1, 1, 1, 2);
+
+    label_ars_tracker_destination = new QLabel(tab_ars_tracker);
+    label_ars_tracker_destination->setObjectName("label_ars_tracker_destination");
+
+    gridLayout_ars_tracker->addWidget(label_ars_tracker_destination, 2, 0, 1, 1);
+
+    edit_ars_tracker_destination = new QLineEdit(tab_ars_tracker);
+    edit_ars_tracker_destination->setObjectName("edit_ars_tracker_destination");
+    edit_ars_tracker_destination->setPlaceholderText(QString("TODO: Choose export folder"));
+
+    gridLayout_ars_tracker->addWidget(edit_ars_tracker_destination, 2, 1, 1, 1);
+
+    btn_ars_tracker_destination = new QToolButton(tab_ars_tracker);
+    btn_ars_tracker_destination->setObjectName("btn_ars_tracker_destination");
+    btn_ars_tracker_destination->setEnabled(false);
+
+    gridLayout_ars_tracker->addWidget(btn_ars_tracker_destination, 2, 2, 1, 1);
+
+    label_ars_tracker_files = new QLabel(tab_ars_tracker);
+    label_ars_tracker_files->setObjectName("label_ars_tracker_files");
+
+    gridLayout_ars_tracker->addWidget(label_ars_tracker_files, 3, 0, 1, 1);
+
+    edit_ars_tracker_files = new QPlainTextEdit(tab_ars_tracker);
+    edit_ars_tracker_files->setObjectName("edit_ars_tracker_files");
+    edit_ars_tracker_files->setReadOnly(true);
+
+    gridLayout_ars_tracker->addWidget(edit_ars_tracker_files, 3, 1, 1, 2);
+
+    horizontalLayout_ars_tracker_actions = new QHBoxLayout();
+    horizontalLayout_ars_tracker_actions->setSpacing(2);
+    horizontalLayout_ars_tracker_actions->setObjectName("horizontalLayout_ars_tracker_actions");
+    horizontalSpacer_ars_tracker_actions = new QSpacerItem(20, 20, QSizePolicy::Policy::Expanding, QSizePolicy::Policy::Minimum);
+
+    horizontalLayout_ars_tracker_actions->addItem(horizontalSpacer_ars_tracker_actions);
+
+    btn_ars_tracker_download = new QPushButton(tab_ars_tracker);
+    btn_ars_tracker_download->setObjectName("btn_ars_tracker_download");
+
+    horizontalLayout_ars_tracker_actions->addWidget(btn_ars_tracker_download);
+
+    gridLayout_ars_tracker->addLayout(horizontalLayout_ars_tracker_actions, 4, 0, 1, 3);
+
+    lbl_ars_tracker_status = new QLabel(tab_ars_tracker);
+    lbl_ars_tracker_status->setObjectName("lbl_ars_tracker_status");
+
+    gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 5, 0, 1, 3);
+
+    verticalSpacer_ars_tracker_status = new QSpacerItem(20, 40, QSizePolicy::Policy::Minimum, QSizePolicy::Policy::Expanding);
+
+    gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 6, 0, 1, 1);
+
     verticalLayout_2->addWidget(selector_group);
 
 //    tabWidget->addTab(tab, QString());
@@ -2077,6 +2163,16 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
     lbl_custom_status->setText(QCoreApplication::translate("Form", "[Status]", nullptr));
     btn_custom_go->setText(QCoreApplication::translate("Form", "Go", nullptr));
     selector_group->setTabText(selector_group->indexOf(tab_custom), QCoreApplication::translate("Form", "Custom", nullptr));
+    label_ars_tracker_command->setText(QCoreApplication::translate("Form", "Session list command:", nullptr));
+    edit_ars_tracker_command->setText(QCoreApplication::translate("Form", "meas ls", nullptr));
+    btn_ars_tracker_refresh->setText(QCoreApplication::translate("Form", "Refresh", nullptr));
+    label_ars_tracker_sessions->setText(QCoreApplication::translate("Form", "Sessions:", nullptr));
+    label_ars_tracker_destination->setText(QCoreApplication::translate("Form", "Destination:", nullptr));
+    btn_ars_tracker_destination->setText(QCoreApplication::translate("Form", "...", nullptr));
+    label_ars_tracker_files->setText(QCoreApplication::translate("Form", "Required files:", nullptr));
+    edit_ars_tracker_files->setPlainText(QCoreApplication::translate("Form", "sensors_<i>.bin\ntrace.csv\nprocessedStr.csv\nbattery.csv", nullptr));
+    btn_ars_tracker_download->setText(QCoreApplication::translate("Form", "Download selected session", nullptr));
+    lbl_ars_tracker_status->setText(QCoreApplication::translate("Form", "Press Refresh to load sessions.", nullptr));
 //    tabWidget->setTabText(tabWidget->indexOf(tab), QCoreApplication::translate("Form", "MCUmgr", nullptr));
     label_7->setText(QCoreApplication::translate("Form", "Hash:", nullptr));
     label_8->setText(QCoreApplication::translate("Form", "Version:", nullptr));
@@ -2091,6 +2187,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
     //Add code
     tabWidget_orig->addTab(tab, QString("MCUmgr"));
+    tabWidget_orig->addTab(tab_ars_tracker, QString("ArsTracker"));
 
     //Signals
     connect(this, SIGNAL(plugin_set_status(bool,bool,bool*)), parent_window, SLOT(plugin_set_status(bool,bool,bool*)));
@@ -2208,6 +2305,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
     connect(tree_IMG_Slot_Info, SIGNAL(itemDoubleClicked(QTreeWidgetItem*,int)), this, SLOT(on_tree_IMG_Slot_Info_itemDoubleClicked(QTreeWidgetItem*,int)));
     connect(btn_error_lookup, SIGNAL(clicked()), this, SLOT(on_btn_error_lookup_clicked()));
     connect(btn_cancel, SIGNAL(clicked()), this, SLOT(on_btn_cancel_clicked()));
+    connect(btn_ars_tracker_refresh, SIGNAL(clicked()), this, SLOT(on_btn_ars_tracker_refresh_clicked()));
+    connect(btn_ars_tracker_download, SIGNAL(clicked()), this, SLOT(on_btn_ars_tracker_download_clicked()));
+    connect(ars_tracker, &ars_tracker_backend::status_message, this, &plugin_mcumgr::ars_tracker_status_message);
+    connect(ars_tracker, &ars_tracker_backend::session_list_ready, this, &plugin_mcumgr::ars_tracker_sessions_ready);
+    connect(ars_tracker, &ars_tracker_backend::loading_changed, this, &plugin_mcumgr::ars_tracker_loading_changed);
+    connect(list_ars_tracker_sessions, SIGNAL(itemSelectionChanged()), this, SLOT(on_list_ars_tracker_sessions_itemSelectionChanged()));
 
     //Use monospace font for shell
     QFont shell_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -2220,6 +2323,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
     edit_SHELL_Output->setup_scrollback(32);
     edit_SHELL_Output->set_line_mode(true);
     edit_SHELL_Output->set_vt100_mode(VT100_MODE_DECODE);
+
+    set_ars_tracker_controls_loading(false);
 
     colview_IMG_Images->setModel(&model_image_state);
     colview_IMG_Images->setColumnWidths(QList<int>() << 50 << 50 << 460);
@@ -3577,7 +3682,7 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
     else if (sender() == smp_groups.shell_mgmt)
     {
         log_debug() << "shell sender";
-        label_status = lbl_SHELL_Status;
+        label_status = (user_data == ACTION_ARS_TRACKER_SESSION_LIST ? lbl_ars_tracker_status : lbl_SHELL_Status);
 
         if (status == STATUS_COMPLETE)
         {
@@ -3596,6 +3701,14 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
                     error_string = QString("Finished, error (ret): ").append(QString::number(shell_rc));
                 }
             }
+            else if (user_data == ACTION_ARS_TRACKER_SESSION_LIST)
+            {
+                handle_ars_tracker_shell_status(status, &error_string);
+            }
+        }
+        else if (user_data == ACTION_ARS_TRACKER_SESSION_LIST)
+        {
+            handle_ars_tracker_shell_status(status, &error_string);
         }
     }
     else if (sender() == smp_groups.stat_mgmt)
@@ -4901,6 +5014,97 @@ void plugin_mcumgr::on_btn_error_lookup_clicked()
 void plugin_mcumgr::on_btn_cancel_clicked()
 {
     processor->cancel();
+}
+
+void plugin_mcumgr::on_btn_ars_tracker_refresh_clicked()
+{
+    QString backend_error;
+
+    if (ars_tracker->begin_session_list_request(&backend_error) == false)
+    {
+        lbl_ars_tracker_status->setText(backend_error);
+        return;
+    }
+
+    list_ars_tracker_sessions->clear();
+
+    if (claim_transport(lbl_ars_tracker_status) == false)
+    {
+        ars_tracker->handle_session_list_response(STATUS_ERROR, QString("Error: Could not claim transport"), -1);
+        return;
+    }
+
+    mode = ACTION_ARS_TRACKER_SESSION_LIST;
+    processor->set_transport(active_transport());
+    set_group_transport_settings(smp_groups.shell_mgmt);
+
+    QStringList list_arguments = QStringList() << "meas" << "ls";
+    bool started = smp_groups.shell_mgmt->start_execute(&list_arguments, &ars_tracker_shell_rc);
+
+    if (started == false)
+    {
+        relase_transport();
+        ars_tracker->handle_session_list_response(STATUS_ERROR, QString("Failed to start shell command."), -1);
+    }
+}
+
+void plugin_mcumgr::on_btn_ars_tracker_download_clicked()
+{
+    QListWidgetItem *selected_item = list_ars_tracker_sessions->currentItem();
+
+    if (selected_item == nullptr)
+    {
+        lbl_ars_tracker_status->setText(QString("Select a session first."));
+        return;
+    }
+
+    ars_tracker->queue_session_download(selected_item->data(Qt::UserRole).toString(), edit_ars_tracker_destination->text());
+}
+
+void plugin_mcumgr::ars_tracker_status_message(const QString &message)
+{
+    lbl_ars_tracker_status->setText(message);
+}
+
+void plugin_mcumgr::ars_tracker_sessions_ready(const QList<ars_tracker_session_t> &sessions)
+{
+    list_ars_tracker_sessions->clear();
+
+    for (const ars_tracker_session_t &session : sessions)
+    {
+        QListWidgetItem *item = new QListWidgetItem(session.display_name, list_ars_tracker_sessions);
+        item->setData(Qt::UserRole, session.id);
+    }
+
+    if (sessions.length() > 0)
+    {
+        list_ars_tracker_sessions->setCurrentRow(0);
+    }
+}
+
+void plugin_mcumgr::ars_tracker_loading_changed(bool loading)
+{
+    ars_tracker_loading = loading;
+    set_ars_tracker_controls_loading(loading);
+}
+
+void plugin_mcumgr::on_list_ars_tracker_sessions_itemSelectionChanged()
+{
+    set_ars_tracker_controls_loading(ars_tracker_loading);
+}
+
+void plugin_mcumgr::handle_ars_tracker_shell_status(group_status status, QString *error_string)
+{
+    ars_tracker->handle_session_list_response(status, *error_string, ars_tracker_shell_rc);
+    *error_string = nullptr;
+}
+
+void plugin_mcumgr::set_ars_tracker_controls_loading(bool loading)
+{
+    btn_ars_tracker_refresh->setEnabled(!loading);
+
+    bool has_selection = list_ars_tracker_sessions->currentItem() != nullptr;
+    btn_ars_tracker_download->setEnabled(!loading && has_selection);
 }
 
 AutPlugin::PluginType plugin_mcumgr::plugin_type()

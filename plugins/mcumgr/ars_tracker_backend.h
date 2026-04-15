@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QList>
+#include <QStringList>
 #include <cstdint>
 
 #include "smp_group.h"
@@ -17,12 +18,31 @@ struct ars_tracker_session_t {
 
 Q_DECLARE_METATYPE(ars_tracker_session_t)
 
+enum ars_tracker_download_category_t : uint8_t {
+    ARS_TRACKER_FILE_FIXED = 0,
+    ARS_TRACKER_FILE_SENSOR,
+};
+
+enum ars_tracker_download_status_t : uint8_t {
+    ARS_TRACKER_STATUS_PENDING = 0,
+    ARS_TRACKER_STATUS_DOWNLOADING,
+    ARS_TRACKER_STATUS_DOWNLOADED,
+    ARS_TRACKER_STATUS_MISSING,
+    ARS_TRACKER_STATUS_SENSORS_END,
+    ARS_TRACKER_STATUS_FAILED,
+    ARS_TRACKER_STATUS_CANCELLED,
+};
+
 struct ars_tracker_download_item_t {
     QString remote_file;
+    QString local_temp_file;
     QString local_file;
     qint64 bytes_completed;
     qint64 total_bytes;
     uint8_t retry_count;
+    ars_tracker_download_category_t category;
+    ars_tracker_download_status_t status;
+    QString error_text;
 };
 
 class ars_tracker_backend : public QObject
@@ -38,8 +58,12 @@ public:
 
     const QList<ars_tracker_session_t> &sessions() const;
 
-    void queue_session_download(const QString &session_id, const QString &destination_path);
+    bool begin_session_export(const QString &session_id, const QString &destination_path,
+                              QString *error_message);
+    void handle_file_download_progress(uint8_t percent);
+    void handle_file_download_result(group_status status, const QString &error_message);
     void cancel_all();
+    bool export_in_progress() const;
 #ifndef SKIPPLUGIN_LOGGER
     void set_logger(debug_logger* object);
 #endif
@@ -49,9 +73,45 @@ signals:
     void loading_changed(bool loading);
     void status_message(const QString& message);
 
+    void export_loading_changed(bool loading);
+    void export_progress_changed(const QString &progress_text);
+    void export_file_list_changed(const QStringList &rows);
+    void export_finished(bool success, bool cancelled, const QString &message);
+
+    void request_file_download(const QString &remote_file, const QString &local_temp_file);
+    void request_cancel_file_download();
+
 private:
     bool loading;
     QList<ars_tracker_session_t> latest_sessions;
+
+    bool export_loading;
+    bool export_cancel_requested;
+    bool export_failed;
+    bool sensors_enumeration_done;
+    QString active_session_id;
+    QString active_session_remote_root;
+    QString active_destination_path;
+    int current_download_index;
+    uint32_t next_sensor_index;
+    QList<ars_tracker_download_item_t> download_queue;
+
+    bool resolve_session(const QString &session_id, ars_tracker_session_t *session) const;
+    QString build_remote_file_path(const QString &remote_root, const QString &filename) const;
+    QString build_local_final_file_path(const QString &destination, const QString &filename) const;
+    QString build_local_temp_file_path(const QString &destination, const QString &filename) const;
+
+    void reset_export_state();
+    void enqueue_fixed_files();
+    void enqueue_next_sensor_candidate();
+    void request_next_download_or_finish();
+    void finish_export(bool success, bool cancelled, const QString &message);
+    void publish_export_file_rows();
+    void publish_progress_text(const QString &current_file = QString());
+
+    bool is_not_found_error(group_status status, const QString &error_message) const;
+    bool finalize_downloaded_file(ars_tracker_download_item_t *item, QString *error_message);
+    QString to_status_text(ars_tracker_download_status_t status) const;
 #ifndef SKIPPLUGIN_LOGGER
     debug_logger* logger;
 #endif

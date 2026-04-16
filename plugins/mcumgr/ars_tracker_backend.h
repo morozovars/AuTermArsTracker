@@ -172,6 +172,7 @@ private:
     QString build_remote_file_path(const QString &remote_root, const QString &filename) const;
     QString build_local_final_file_path(const QString &destination, const QString &filename) const;
     QString build_local_temp_file_path(const QString &destination, const QString &filename) const;
+    bool ensure_download_temp_file(ars_tracker_download_item_t *item, QString *error_message) const;
     QString choose_export_hash_type(const QList<hash_checksum_t> &supported_hashes,
                                     QString *error_message) const;
     bool compute_local_file_hash(const QString &file_path, const QString &hash_name,

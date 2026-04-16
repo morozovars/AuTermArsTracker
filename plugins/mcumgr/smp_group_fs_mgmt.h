@@ -79,12 +79,16 @@ private:
 //    bool parse_file_close_response(QCborStreamReader &reader, int32_t *ret, QString *response);
     bool upload_chunk();
     bool download_chunk();
+    bool restart_download_from_zero();
+    bool fail_download(const QString &message);
     void flip_endian(uint8_t *data, uint8_t size);
 
     //
     QFile local_file;
     uint32_t local_file_size;
     uint32_t file_upload_area;
+    uint32_t download_initial_offset;
+    bool download_restart_from_zero_attempted;
     QElapsedTimer upload_tmr;
     QString device_file_name;
     QList<hash_checksum_t> *hash_checksum_object;

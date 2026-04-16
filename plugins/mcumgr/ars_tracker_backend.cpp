@@ -995,6 +995,47 @@ QString ars_tracker_backend::build_local_temp_file_path(const QString& destinati
     return QDir(destination).filePath(QString(".%1.part").arg(filename));
 }
 
+bool ars_tracker_backend::ensure_download_temp_file(ars_tracker_download_item_t* item,
+                                                    QString* error_message) const
+{
+    QFileInfo temp_info(item->local_temp_file);
+
+    if (temp_info.exists())
+    {
+        return true;
+    }
+
+    QFileInfo final_info(item->local_file);
+
+    if (final_info.exists() == false)
+    {
+        return true;
+    }
+
+    log_debug() << "ArsTracker export moving existing local file to partial download path for"
+                << item->remote_file << "from" << item->local_file << "to" << item->local_temp_file;
+
+    if (QFile::rename(item->local_file, item->local_temp_file))
+    {
+        return true;
+    }
+
+    if (QFile::copy(item->local_file, item->local_temp_file) && QFile::remove(item->local_file))
+    {
+        log_warning() << "ArsTracker export used copy/remove fallback to prepare partial file for"
+                      << item->remote_file;
+        return true;
+    }
+
+    if (error_message != nullptr)
+    {
+        *error_message =
+            QString("Could not prepare partial file for resume: %1").arg(item->local_temp_file);
+    }
+
+    return false;
+}
+
 QString ars_tracker_backend::choose_export_hash_type(const QList<hash_checksum_t>& supported_hashes,
                                                      QString* error_message) const
 {
@@ -1409,7 +1450,7 @@ void ars_tracker_backend::publish_export_file_rows()
 
     for (const ars_tracker_download_item_t& item : download_queue)
     {
-        QString row = QString("%1 — %2").arg(QFileInfo(item.remote_file).fileName(),
+        QString row = QString("%1 - %2").arg(QFileInfo(item.remote_file).fileName(),
                                              to_status_text(item.status));
 
         if (item.error_text.isEmpty() == false)
@@ -1525,6 +1566,18 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         item.remote_file_size = remote_size;
         item.remote_file_hash = remote_hash;
 
+        QFileInfo partial_info(item.local_temp_file);
+
+        if (partial_info.exists())
+        {
+            emit status_message(
+                QString("Resuming partial %1 from saved offset %2.")
+                    .arg(QFileInfo(item.remote_file).fileName(),
+                         QString::number(partial_info.size())));
+            start_file_download(&item);
+            return;
+        }
+
         QFileInfo local_info(item.local_file);
 
         if (local_info.exists() == false)
@@ -1548,7 +1601,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
                                     &local_hash_error) == false)
         {
             emit status_message(
-                QString("Could not verify existing %1, downloading a fresh copy.")
+                QString("Could not verify existing %1, resuming download from current file size.")
                     .arg(QFileInfo(item.remote_file).fileName()));
             start_file_download(&item);
             return;
@@ -1599,42 +1652,47 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         return;
     }
 
-    item.status = ARS_TRACKER_STATUS_FAILED;
-
-    if (status == STATUS_TRANSPORT_DISCONNECTED)
-    {
-        item.error_text = "Transport disconnected while verifying existing file";
-    } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
-    {
-        item.error_text = "Transport send failed while verifying existing file";
-    } else if (status == STATUS_TIMEOUT)
-    {
-        item.error_text = "Verification timed out";
-    } else
-    {
-        item.error_text =
-            error_message.isEmpty() ? "Remote verification failed" : error_message;
-    }
-
-    export_failed = true;
-    publish_export_file_rows();
-    finish_export(false, false,
-                  QString("Session export failed while verifying %1.")
-                      .arg(QFileInfo(item.remote_file).fileName()));
+    emit status_message(
+        QString("Could not verify %1 remotely, resuming download from current file size.")
+            .arg(QFileInfo(item.remote_file).fileName()));
+    start_file_download(&item);
 }
 
 void ars_tracker_backend::start_file_download(ars_tracker_download_item_t* item)
 {
+    QString prepare_error;
+
+    if (ensure_download_temp_file(item, &prepare_error) == false)
+    {
+        item->status     = ARS_TRACKER_STATUS_FAILED;
+        item->error_text = prepare_error;
+        export_failed    = true;
+        publish_export_file_rows();
+        finish_export(false, false, prepare_error);
+        return;
+    }
+
+    QFileInfo partial_info(item->local_temp_file);
     item->status = ARS_TRACKER_STATUS_DOWNLOADING;
     item->error_text.clear();
-    item->bytes_completed = 0;
-    item->total_bytes     = 0;
+    item->bytes_completed = partial_info.exists() ? partial_info.size() : 0;
+    item->total_bytes     = item->remote_file_size;
 
-    QFile::remove(item->local_temp_file);
     publish_export_file_rows();
     publish_progress_text(item->remote_file);
-    emit status_message(
-        QString("Downloading %1...").arg(QFileInfo(item->remote_file).fileName()));
+    if (partial_info.exists() && partial_info.size() > 0)
+    {
+        emit status_message(
+            QString("Resuming %1 from offset %2...")
+                .arg(QFileInfo(item->remote_file).fileName(), QString::number(partial_info.size())));
+    }
+    else
+    {
+        emit status_message(
+            QString("Downloading %1 from offset 0...")
+                .arg(QFileInfo(item->remote_file).fileName()));
+    }
+
     emit request_file_download(item->remote_file, item->local_temp_file);
 }
 
@@ -1662,7 +1720,14 @@ void ars_tracker_backend::request_next_download_or_finish()
         {
             current_download_index            = i;
             ars_tracker_download_item_t& item = download_queue[i];
+            QFileInfo partial_info(item.local_temp_file);
             QFileInfo local_info(item.local_file);
+
+            if (partial_info.exists())
+            {
+                start_file_download(&item);
+                return;
+            }
 
             if (local_info.exists() && export_hash_name.isEmpty() == false)
             {
@@ -1735,6 +1800,54 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
 
     if (status == STATUS_COMPLETE)
     {
+        QFileInfo partial_info(item.local_temp_file);
+        qint64    completed_size = partial_info.size();
+
+        if (partial_info.exists() == false)
+        {
+            item.status     = ARS_TRACKER_STATUS_FAILED;
+            item.error_text = "Downloaded file is missing on disk";
+            export_failed   = true;
+            publish_export_file_rows();
+            finish_export(false, false,
+                          QString("Session export failed while finalizing %1.")
+                              .arg(QFileInfo(item.remote_file).fileName()));
+            return;
+        }
+
+        if (item.remote_file_size > 0)
+        {
+            if (completed_size < qint64(item.remote_file_size))
+            {
+                item.status          = ARS_TRACKER_STATUS_DOWNLOADING;
+                item.bytes_completed = completed_size;
+                item.total_bytes     = item.remote_file_size;
+                item.error_text.clear();
+                publish_export_file_rows();
+                publish_progress_text(item.remote_file);
+                emit status_message(
+                    QString("Continuing %1 from offset %2...")
+                        .arg(QFileInfo(item.remote_file).fileName(),
+                             QString::number(completed_size)));
+                start_file_download(&item);
+                return;
+            }
+
+            if (completed_size > qint64(item.remote_file_size))
+            {
+                item.status     = ARS_TRACKER_STATUS_FAILED;
+                item.error_text = QString("Downloaded file grew beyond expected size (%1 > %2)")
+                                      .arg(QString::number(completed_size),
+                                           QString::number(item.remote_file_size));
+                export_failed   = true;
+                publish_export_file_rows();
+                finish_export(false, false,
+                              QString("Session export failed while validating %1.")
+                                  .arg(QFileInfo(item.remote_file).fileName()));
+                return;
+            }
+        }
+
         QString finalise_error;
 
         if (finalize_downloaded_file(&item, &finalise_error) == false)
@@ -1747,7 +1860,9 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
             return;
         }
 
-        item.status = ARS_TRACKER_STATUS_DOWNLOADED;
+        item.status          = ARS_TRACKER_STATUS_DOWNLOADED;
+        item.bytes_completed = completed_size;
+        item.total_bytes     = completed_size;
         item.error_text.clear();
 
         if (item.category == ARS_TRACKER_FILE_SENSOR)

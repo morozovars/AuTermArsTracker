@@ -26,6 +26,9 @@
 /******************************************************************************/
 #include "smp_group_fs_mgmt.h"
 
+#include <QFileInfo>
+#include <limits>
+
 /******************************************************************************/
 // Enum typedefs
 /******************************************************************************/
@@ -112,6 +115,10 @@ static const QStringList smp_error_values = QStringList() <<
 smp_group_fs_mgmt::smp_group_fs_mgmt(smp_processor *parent) : smp_group(parent, "FS", SMP_GROUP_ID_FS, error_lookup, error_define_lookup)
 {
     mode = MODE_IDLE;
+    local_file_size = 0;
+    file_upload_area = 0;
+    download_initial_offset = 0;
+    download_restart_from_zero_attempted = false;
 }
 
 bool smp_group_fs_mgmt::parse_upload_response(QCborStreamReader &reader, uint32_t *off, bool *off_found)
@@ -673,38 +680,135 @@ void smp_group_fs_mgmt::receive_ok(uint8_t version, uint8_t op, uint16_t group, 
         else if (mode == MODE_DOWNLOAD && command == COMMAND_UPLOAD_DOWNLOAD)
         {
             //Response to download
-            uint32_t off;
+            uint32_t off = 0;
             uint32_t len = 0;
             QByteArray file_data;
             QCborStreamReader cbor_reader(data);
             bool good = parse_download_response(cbor_reader, &off, &len, &file_data);
 
+            Q_UNUSED(good);
+
+            bool remote_size_reported = (len > 0);
+
             if (len > 0)
             {
+                if (local_file_size != 0 && local_file_size != len)
+                {
+                    fail_download(QString("Remote file size changed during download (%1 -> %2).")
+                                      .arg(QString::number(local_file_size),
+                                           QString::number(len)));
+                    return;
+                }
+
                 local_file_size = len;
             }
 
-            if (file_upload_area != off)
+            if (off != file_upload_area)
             {
-                log_error() << "Error: mismatch!";
+                log_error() << "FS download offset mismatch, expected" << file_upload_area
+                            << "but device returned" << off;
+                fail_download(QString("Download offset mismatch, expected %1 but device returned %2.")
+                                  .arg(QString::number(file_upload_area),
+                                       QString::number(off)));
+                return;
+            }
+
+            if (local_file_size != 0 && file_upload_area > local_file_size)
+            {
+                if (download_initial_offset > 0 && download_restart_from_zero_attempted == false)
+                {
+                    log_warning() << "FS download local partial size" << file_upload_area
+                                  << "is larger than remote size" << local_file_size
+                                  << "- restarting from zero";
+
+                    if (restart_download_from_zero() == true)
+                    {
+                        return;
+                    }
+                }
+
+                fail_download(QString("Local file offset %1 is larger than remote size %2.")
+                                  .arg(QString::number(file_upload_area),
+                                       QString::number(local_file_size)));
+                return;
+            }
+
+            if (local_file.pos() != qint64(file_upload_area) && local_file.seek(file_upload_area) == false)
+            {
+                fail_download(QString("Could not seek local file to offset %1.")
+                                  .arg(QString::number(file_upload_area)));
+                return;
             }
 
             if (file_data.isEmpty() == false)
             {
-                local_file.write(file_data);
+                qint64 bytes_written = local_file.write(file_data);
+
+                if (bytes_written != file_data.length())
+                {
+                    fail_download(QString("Could not write downloaded chunk at offset %1.")
+                                      .arg(QString::number(file_upload_area)));
+                    return;
+                }
+
+                if (local_file.flush() == false)
+                {
+                    fail_download(QString("Could not flush downloaded chunk to disk at offset %1.")
+                                      .arg(QString::number(file_upload_area)));
+                    return;
+                }
+            }
+            else if (local_file_size > 0 && file_upload_area < local_file_size)
+            {
+                fail_download(QString("Device returned no data before end of file at offset %1.")
+                                  .arg(QString::number(file_upload_area)));
+                return;
             }
 
-            file_upload_area += file_data.length();
+            file_upload_area = off + uint32_t(file_data.length());
 
-            if (file_upload_area < local_file_size)
+            if (local_file_size != 0 && file_upload_area > local_file_size)
+            {
+                fail_download(QString("Downloaded beyond remote file size (%1 > %2).")
+                                  .arg(QString::number(file_upload_area),
+                                       QString::number(local_file_size)));
+                return;
+            }
+
+            if (local_file_size != 0 && file_upload_area < local_file_size)
             {
                 //Download next chunk
                 download_chunk();
                 emit progress(smp_user_data, file_upload_area * 100 / local_file_size);
             }
+            else if (local_file_size == 0 && file_data.isEmpty() == false)
+            {
+                // Some targets omit the total remote size in download responses. In that case,
+                // keep reading until the device returns an empty chunk at EOF rather than
+                // treating the first successful read as a complete file.
+                log_debug() << "FS download size not reported yet for" << device_file_name
+                            << "- continuing from offset" << file_upload_area;
+                download_chunk();
+            }
             else
             {
                 //Download complete
+                if (local_file_size == 0)
+                {
+                    local_file_size = file_upload_area;
+                }
+
+                if (local_file.size() != qint64(local_file_size))
+                {
+                    fail_download(QString("Downloaded file size on disk (%1) does not match expected size %2.")
+                                      .arg(QString::number(local_file.size()),
+                                           QString::number(local_file_size)));
+                    return;
+                }
+
+                log_debug() << "FS download complete for" << device_file_name << "at size"
+                            << file_upload_area << "(size reported:"
+                            << (remote_size_reported ? "yes" : "no") << ")";
                 cleanup();
                 emit progress(smp_user_data, 100);
                 emit status(smp_user_data, STATUS_COMPLETE, "Download complete");
@@ -778,8 +882,27 @@ void smp_group_fs_mgmt::receive_error(uint8_t version, uint8_t op, uint16_t grou
     }
     else if (command == COMMAND_UPLOAD_DOWNLOAD && mode == MODE_DOWNLOAD)
     {
-        //TODO
+        if (error.type == SMP_ERROR_RET && error.group == SMP_GROUP_ID_FS &&
+            error.rc == FS_MGMT_ERR_FILE_OFFSET_LARGER_THAN_FILE && download_initial_offset > 0 &&
+            download_restart_from_zero_attempted == false)
+        {
+            log_warning() << "FS download resume offset" << file_upload_area
+                          << "is larger than remote file, restarting from zero";
+
+            if (restart_download_from_zero() == true)
+            {
+                run_cleanup = false;
+            }
+            else
+            {
+                emit status(smp_user_data, STATUS_ERROR,
+                            "Could not restart download from zero after invalid resume offset");
+            }
+        }
+        else
+        {
         emit status(smp_user_data, status_error_return(error), smp_error::error_lookup_string(&error));
+        }
     }
     else if (command == COMMAND_STATUS && mode == MODE_STATUS)
     {
@@ -873,10 +996,14 @@ bool smp_group_fs_mgmt::download_chunk()
     smp_message *tmp_message = new smp_message();
     tmp_message->start_message(SMP_OP_READ, smp_version, SMP_GROUP_ID_FS, COMMAND_UPLOAD_DOWNLOAD, 2);
 
-/*    if (local_file.pos() != file_upload_area)
+    if (local_file.pos() != qint64(file_upload_area))
     {
-        local_file.seek(file_upload_area);
-    }*/
+        if (local_file.seek(file_upload_area) == false)
+        {
+            return fail_download(QString("Could not seek local file to offset %1 before download.")
+                                     .arg(QString::number(file_upload_area)));
+        }
+    }
 
     //TODO: Deal with size
     tmp_message->writer()->append("name");
@@ -916,22 +1043,107 @@ bool smp_group_fs_mgmt::start_upload(QString file_name, QString destination_name
 
 bool smp_group_fs_mgmt::start_download(QString file_name, QString destination_name)
 {
+    QFileInfo destination_info(destination_name);
+    qint64 existing_size = 0;
+
     local_file.setFileName(destination_name);
 
-    if (!local_file.open(QFile::WriteOnly | QFile::Truncate))
+    if (destination_info.exists())
     {
-        emit status(smp_user_data, STATUS_ERROR, "File could not be opened in write mode");
+        existing_size = destination_info.size();
+    }
+
+    if (existing_size < 0)
+    {
+        emit status(smp_user_data, STATUS_ERROR, "Could not determine local file size");
+        return false;
+    }
+
+    if (existing_size > std::numeric_limits<uint32_t>::max())
+    {
+        emit status(smp_user_data, STATUS_ERROR,
+                    "Local file is too large for MCUmgr FS resume offsets");
+        return false;
+    }
+
+    QIODevice::OpenMode open_mode = QIODevice::WriteOnly;
+
+    if (existing_size == 0)
+    {
+        open_mode |= QIODevice::Truncate;
+    }
+    else
+    {
+        open_mode |= QIODevice::Append;
+    }
+
+    if (!local_file.open(open_mode))
+    {
+        emit status(smp_user_data, STATUS_ERROR, "File could not be opened for download resume");
         return false;
     }
 
     mode = MODE_DOWNLOAD;
     device_file_name = file_name;
-    file_upload_area = 0;
+    local_file_size = 0;
+    file_upload_area = uint32_t(existing_size);
+    download_initial_offset = file_upload_area;
+    download_restart_from_zero_attempted = false;
     upload_tmr.start();
 
-    //	    qDebug() << "len: " << message.length();
+    if (file_upload_area > 0)
+    {
+        log_debug() << "FS download resume start for" << device_file_name << "->"
+                    << local_file.fileName() << "local partial size" << file_upload_area
+                    << "offset" << file_upload_area;
+    }
+    else
+    {
+        log_debug() << "FS download fresh start for" << device_file_name << "->"
+                    << local_file.fileName() << "offset 0";
+    }
 
     return download_chunk();
+}
+
+bool smp_group_fs_mgmt::restart_download_from_zero()
+{
+    QString destination_name = local_file.fileName();
+
+    if (destination_name.isEmpty())
+    {
+        return false;
+    }
+
+    if (local_file.isOpen())
+    {
+        local_file.close();
+    }
+
+    local_file.setFileName(destination_name);
+
+    if (local_file.open(QIODevice::ReadWrite | QIODevice::Truncate) == false)
+    {
+        return false;
+    }
+
+    download_restart_from_zero_attempted = true;
+    download_initial_offset = 0;
+    local_file_size = 0;
+    file_upload_area = 0;
+
+    log_warning() << "FS download restarting from offset 0 for" << device_file_name << "->"
+                  << destination_name;
+
+    return download_chunk();
+}
+
+bool smp_group_fs_mgmt::fail_download(const QString &message)
+{
+    log_error() << message;
+    cleanup();
+    emit status(smp_user_data, STATUS_ERROR, message);
+    return false;
 }
 
 //TODO
@@ -1115,6 +1327,8 @@ void smp_group_fs_mgmt::cleanup()
 
     local_file_size = 0;
     file_upload_area = 0;
+    download_initial_offset = 0;
+    download_restart_from_zero_attempted = false;
 
     if (upload_tmr.isValid())
     {

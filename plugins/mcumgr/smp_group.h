@@ -189,7 +189,7 @@ public:
 
         log_error() << "MCUmgr command cancelled";
         cleanup();
-        emit status(smp_user_data, STATUS_TRANSPORT_DISCONNECTED, response);
+        emit status(smp_user_data, STATUS_CANCELLED, response);
     }
 
 #ifndef SKIPPLUGIN_LOGGER

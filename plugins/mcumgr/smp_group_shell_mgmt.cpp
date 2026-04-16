@@ -232,9 +232,15 @@ void smp_group_shell_mgmt::cancel()
 {
     if (mode != MODE_IDLE)
     {
-        mode = MODE_IDLE;
-
-        emit status(smp_user_data, STATUS_CANCELLED, nullptr);
+        if (processor->is_busy())
+        {
+            processor->cancel();
+        }
+        else
+        {
+            mode = MODE_IDLE;
+            emit status(smp_user_data, STATUS_CANCELLED, nullptr);
+        }
     }
 }
 

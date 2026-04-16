@@ -954,8 +954,15 @@ void smp_group_fs_mgmt::cancel()
 {
     if (mode != MODE_IDLE)
     {
-        cleanup();
-        emit status(smp_user_data, STATUS_CANCELLED, nullptr);
+        if (processor->is_busy())
+        {
+            processor->cancel();
+        }
+        else
+        {
+            cleanup();
+            emit status(smp_user_data, STATUS_CANCELLED, nullptr);
+        }
     }
 }
 

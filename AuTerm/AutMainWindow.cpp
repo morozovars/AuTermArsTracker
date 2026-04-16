@@ -1427,7 +1427,7 @@ void AutMainWindow::on_btn_TermClose_clicked(bool from_plugin)
         uint8_t i = 0;
         while (i < list_plugin_open_close_buttons.length())
         {
-            list_plugin_open_close_buttons[i]->setText("&Open Port");
+            update_plugin_open_close_button(list_plugin_open_close_buttons[i], false);
             ++i;
         }
 #endif
@@ -2495,7 +2495,7 @@ void AutMainWindow::OpenDevice(bool from_plugin)
         uint8_t i = 0;
         while (i < list_plugin_open_close_buttons.length())
         {
-            list_plugin_open_close_buttons[i]->setText("C&lose Port");
+            update_plugin_open_close_button(list_plugin_open_close_buttons[i], true);
             ++i;
         }
 #endif
@@ -2599,6 +2599,11 @@ void AutMainWindow::OpenDevice(bool from_plugin)
 
         gtmrPortOpened.start();
         gintLastSerialTimeUpdate = 0;
+
+#ifndef SKIPPLUGINS
+        // Notify plugins from the actual successful open path instead of relying on NoError emissions.
+        emit plugin_serial_opened();
+#endif
     }
 }
 
@@ -5266,8 +5271,16 @@ void AutMainWindow::plugin_serial_transmit(QByteArray *data)
 void AutMainWindow::plugin_add_open_close_button(QPushButton *button)
 {
     list_plugin_open_close_buttons.append(button);
-    connect(button, SIGNAL(clicked(bool)), this, SLOT(on_btn_TermClose_clicked()));
-    button->setText((transport_isOpen() == true || transport_isOpening() == true) ? "C&lose Port" : "&Open Port");
+
+    if (button->property("auterm_open_close_connect_click").isValid() == false ||
+        button->property("auterm_open_close_connect_click").toBool() == true)
+    {
+        connect(button, &QPushButton::clicked, this,
+                [this](bool) { plugin_serial_open_close(2); });
+    }
+
+    update_plugin_open_close_button(
+        button, transport_isOpen() == true || transport_isOpening() == true);
 }
 
 void AutMainWindow::plugin_serial_open_close(uint8_t mode)
@@ -5306,6 +5319,77 @@ void AutMainWindow::plugin_serial_open_close(uint8_t mode)
 void AutMainWindow::plugin_serial_is_open(bool *open)
 {
     *open = transport_isOpen();
+}
+
+void AutMainWindow::plugin_serial_ports(QStringList *ports, QString *selected_port)
+{
+    RefreshSerialDevices();
+
+    if (ports != nullptr)
+    {
+        ports->clear();
+
+        for (int i = 0; i < ui->combo_COM->count(); ++i)
+        {
+            ports->append(ui->combo_COM->itemText(i));
+        }
+    }
+
+    if (selected_port != nullptr)
+    {
+        *selected_port = ui->combo_COM->currentText();
+    }
+}
+
+void AutMainWindow::plugin_serial_select(QString port)
+{
+    if (port.isEmpty())
+    {
+        return;
+    }
+
+    RefreshSerialDevices();
+
+    int index = ui->combo_COM->findText(port);
+
+    if (index >= 0)
+    {
+        ui->combo_COM->setCurrentIndex(index);
+    }
+    else
+    {
+        ui->combo_COM->setCurrentText(port);
+        on_combo_COM_currentIndexChanged(0);
+    }
+}
+
+void AutMainWindow::update_plugin_open_close_button(QPushButton *button, bool open)
+{
+    if (button == nullptr)
+    {
+        return;
+    }
+
+    QString text_style = button->property("auterm_open_close_text_style").toString();
+
+    if (text_style == "connect")
+    {
+        button->setText(open == true ? "Disconnect" : "Connect");
+    }
+    else
+    {
+        button->setText(open == true ? "C&lose Port" : "&Open Port");
+    }
+}
+
+void AutMainWindow::update_plugin_open_close_buttons(bool open)
+{
+    uint8_t i = 0;
+    while (i < list_plugin_open_close_buttons.length())
+    {
+        update_plugin_open_close_button(list_plugin_open_close_buttons[i], open);
+        ++i;
+    }
 }
 
 void AutMainWindow::plugin_to_hex(QByteArray *data)
@@ -5607,10 +5691,14 @@ bool AutMainWindow::transport_open(QIODeviceBase::OpenMode mode)
 bool AutMainWindow::transport_open(QIODevice::OpenMode mode)
 #endif
 {
-    //TODO:
     if (ui->selector_transport->currentIndex() == 0)
     {
         return gspSerialPort.open(mode);
+    }
+
+    if (plugin_active_transport == nullptr)
+    {
+        return false;
     }
 
     return plugin_active_transport->open(mode);

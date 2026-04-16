@@ -1703,6 +1703,31 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		gridLayout_ars_tracker->setSpacing(2);
 		gridLayout_ars_tracker->setObjectName("gridLayout_ars_tracker");
 		gridLayout_ars_tracker->setContentsMargins(6, 6, 6, 6);
+		frame_ars_tracker_connection = new QFrame(tab_ars_tracker);
+		frame_ars_tracker_connection->setObjectName("frame_ars_tracker_connection");
+		frame_ars_tracker_connection->setFrameShape(QFrame::Shape::StyledPanel);
+		gridLayout_ars_tracker_connection = new QGridLayout(frame_ars_tracker_connection);
+		gridLayout_ars_tracker_connection->setSpacing(2);
+		gridLayout_ars_tracker_connection->setObjectName("gridLayout_ars_tracker_connection");
+		gridLayout_ars_tracker_connection->setContentsMargins(6, 6, 6, 6);
+
+		label_ars_tracker_port = new QLabel(frame_ars_tracker_connection);
+		label_ars_tracker_port->setObjectName("label_ars_tracker_port");
+
+		gridLayout_ars_tracker_connection->addWidget(label_ars_tracker_port, 1, 0, 1, 1);
+
+		combo_ars_tracker_port = new ars_tracker_port_combo_box(frame_ars_tracker_connection);
+		combo_ars_tracker_port->setObjectName("combo_ars_tracker_port");
+
+		gridLayout_ars_tracker_connection->addWidget(combo_ars_tracker_port, 1, 1, 1, 1);
+
+		btn_ars_tracker_connect = new QPushButton(frame_ars_tracker_connection);
+		btn_ars_tracker_connect->setObjectName("btn_ars_tracker_connect");
+
+		gridLayout_ars_tracker_connection->addWidget(btn_ars_tracker_connect, 1, 2, 1, 2);
+
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_connection, 0, 0, 1, 3);
+
 		frame_ars_tracker_info = new QFrame(tab_ars_tracker);
 		frame_ars_tracker_info->setObjectName("frame_ars_tracker_info");
 		frame_ars_tracker_info->setFrameShape(QFrame::Shape::StyledPanel);
@@ -1774,32 +1799,32 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		gridLayout_ars_tracker_info->addWidget(list_ars_tracker_sessions, 2, 2, 3, 2);
 
-		gridLayout_ars_tracker->addWidget(frame_ars_tracker_info, 0, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_info, 1, 0, 1, 3);
 
 		label_ars_tracker_destination = new QLabel(tab_ars_tracker);
 		label_ars_tracker_destination->setObjectName("label_ars_tracker_destination");
 
-		gridLayout_ars_tracker->addWidget(label_ars_tracker_destination, 1, 0, 1, 1);
+		gridLayout_ars_tracker->addWidget(label_ars_tracker_destination, 2, 0, 1, 1);
 
 		edit_ars_tracker_destination = new QLineEdit(tab_ars_tracker);
 		edit_ars_tracker_destination->setObjectName("edit_ars_tracker_destination");
 
-		gridLayout_ars_tracker->addWidget(edit_ars_tracker_destination, 1, 1, 1, 1);
+		gridLayout_ars_tracker->addWidget(edit_ars_tracker_destination, 2, 1, 1, 1);
 
 		btn_ars_tracker_destination = new QToolButton(tab_ars_tracker);
 		btn_ars_tracker_destination->setObjectName("btn_ars_tracker_destination");
 
-		gridLayout_ars_tracker->addWidget(btn_ars_tracker_destination, 1, 2, 1, 1);
+		gridLayout_ars_tracker->addWidget(btn_ars_tracker_destination, 2, 2, 1, 1);
 
 		label_ars_tracker_files = new QLabel(tab_ars_tracker);
 		label_ars_tracker_files->setObjectName("label_ars_tracker_files");
 
-		gridLayout_ars_tracker->addWidget(label_ars_tracker_files, 2, 0, 1, 1);
+		gridLayout_ars_tracker->addWidget(label_ars_tracker_files, 3, 0, 1, 1);
 
 		list_ars_tracker_files = new QListWidget(tab_ars_tracker);
 		list_ars_tracker_files->setObjectName("list_ars_tracker_files");
 
-		gridLayout_ars_tracker->addWidget(list_ars_tracker_files, 2, 1, 1, 2);
+		gridLayout_ars_tracker->addWidget(list_ars_tracker_files, 3, 1, 1, 2);
 
 		horizontalLayout_ars_tracker_actions = new QHBoxLayout();
 		horizontalLayout_ars_tracker_actions->setSpacing(2);
@@ -1827,22 +1852,22 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		horizontalLayout_ars_tracker_actions->addWidget(btn_ars_tracker_cancel);
 
-		gridLayout_ars_tracker->addLayout(horizontalLayout_ars_tracker_actions, 3, 0, 1, 3);
+		gridLayout_ars_tracker->addLayout(horizontalLayout_ars_tracker_actions, 4, 0, 1, 3);
 
 		lbl_ars_tracker_progress = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_progress->setObjectName("lbl_ars_tracker_progress");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 4, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 5, 0, 1, 3);
 
 		lbl_ars_tracker_status = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_status->setObjectName("lbl_ars_tracker_status");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 5, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 6, 0, 1, 3);
 
 		verticalSpacer_ars_tracker_status =
 				new QSpacerItem(20, 40, QSizePolicy::Policy::Minimum, QSizePolicy::Policy::Expanding);
 
-		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 6, 0, 1, 1);
+		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 7, 0, 1, 1);
 
 
 		verticalLayout_2->addWidget(selector_group);
@@ -2276,6 +2301,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 				QCoreApplication::translate("Form", "Tracker info:", nullptr));
 		btn_ars_tracker_info_refresh->setText(
 				QCoreApplication::translate("Form", "Refresh tracker info", nullptr));
+		label_ars_tracker_port->setText(
+				QCoreApplication::translate("Form", "COM port:", nullptr));
+		btn_ars_tracker_connect->setText(
+				QCoreApplication::translate("Form", "Connect", nullptr));
 		label_ars_tracker_serial_number->setText(
 				QCoreApplication::translate("Form", "Serial number:", nullptr));
 		edit_ars_tracker_serial_number->setText(
@@ -2331,6 +2360,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						SLOT(plugin_to_hex(QByteArray*)));
 		connect(this, SIGNAL(plugin_serial_open_close(uint8_t)), parent_window,
 						SLOT(plugin_serial_open_close(uint8_t)));
+		connect(this, SIGNAL(plugin_serial_ports(QStringList*,QString*)), parent_window,
+						SLOT(plugin_serial_ports(QStringList*,QString*)));
+		connect(this, SIGNAL(plugin_serial_select(QString)), parent_window,
+						SLOT(plugin_serial_select(QString)));
 
 		connect(parent_window, SIGNAL(plugin_serial_receive(QByteArray*)), this,
 						SLOT(serial_receive(QByteArray*)));
@@ -2512,6 +2545,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						SLOT(on_btn_ars_tracker_download_clicked()));
 		connect(btn_ars_tracker_destination, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_destination_clicked()));
+		connect(combo_ars_tracker_port, &ars_tracker_port_combo_box::popup_about_to_show, this,
+						&plugin_mcumgr::refresh_ars_tracker_serial_ports);
 		connect(btn_ars_tracker_cancel, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_cancel_clicked()));
 		connect(ars_tracker, &ars_tracker_backend::status_message, this,
@@ -2542,16 +2577,27 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						&plugin_mcumgr::ars_tracker_request_info_shell_command);
 		connect(ars_tracker, &ars_tracker_backend::request_cancel_tracker_info_shell_command, this,
 						&plugin_mcumgr::ars_tracker_request_cancel_info_shell_command);
-    connect(ars_tracker, &ars_tracker_backend::request_session_list_refresh_after_delete, this,
-            &plugin_mcumgr::ars_tracker_request_session_refresh_after_delete,
-            Qt::QueuedConnection);
-    connect(ars_tracker, &ars_tracker_backend::request_file_hash_support, this,
-            &plugin_mcumgr::ars_tracker_request_file_hash_support);
-    connect(ars_tracker, &ars_tracker_backend::request_file_metadata, this,
-            &plugin_mcumgr::ars_tracker_request_file_metadata);
-    connect(list_ars_tracker_sessions, SIGNAL(itemSelectionChanged()), this,
-            SLOT(on_list_ars_tracker_sessions_itemSelectionChanged()));
+		connect(ars_tracker, &ars_tracker_backend::request_session_list_refresh_after_delete, this,
+						&plugin_mcumgr::ars_tracker_request_session_refresh_after_delete,
+						Qt::QueuedConnection);
+		connect(ars_tracker, &ars_tracker_backend::request_file_hash_support, this,
+						&plugin_mcumgr::ars_tracker_request_file_hash_support);
+		connect(ars_tracker, &ars_tracker_backend::request_file_metadata, this,
+						&plugin_mcumgr::ars_tracker_request_file_metadata);
+		connect(list_ars_tracker_sessions, SIGNAL(itemSelectionChanged()), this,
+						SLOT(on_list_ars_tracker_sessions_itemSelectionChanged()));
+		connect(combo_ars_tracker_port, &QComboBox::currentTextChanged, this,
+						[this](const QString& text) {
+								if (text.trimmed().isEmpty() == false)
+								{
+										emit plugin_serial_select(text);
+								}
+						});
 
+		btn_ars_tracker_connect->setProperty("auterm_open_close_text_style", "connect");
+		emit plugin_add_open_close_button(btn_ars_tracker_connect);
+
+		refresh_ars_tracker_serial_ports();
 		set_ars_tracker_controls_loading(false);
 		ars_tracker_info_changed(ars_tracker->tracker_info());
 		maybe_auto_refresh_ars_tracker();
@@ -2656,6 +2702,10 @@ plugin_mcumgr::~plugin_mcumgr()
 							 SLOT(plugin_to_hex(QByteArray*)));
 		disconnect(this, SIGNAL(plugin_serial_open_close(uint8_t)), parent_window,
 							 SLOT(plugin_serial_open_close(uint8_t)));
+		disconnect(this, SIGNAL(plugin_serial_ports(QStringList*,QString*)), parent_window,
+							 SLOT(plugin_serial_ports(QStringList*,QString*)));
+		disconnect(this, SIGNAL(plugin_serial_select(QString)), parent_window,
+							 SLOT(plugin_serial_select(QString)));
 		disconnect(uart_transport, SIGNAL(serial_write(QByteArray*)), parent_window,
 							 SLOT(plugin_serial_transmit(QByteArray*)));
 
@@ -2839,11 +2889,20 @@ void plugin_mcumgr::serial_about_to_close()
 void plugin_mcumgr::serial_opened()
 {
 		btn_transport_connect->setText("Close");
+		refresh_ars_tracker_serial_ports();
+		sync_ars_tracker_serial_controls(
+				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+				ars_tracker_export_loading);
 		maybe_auto_refresh_ars_tracker();
 }
 
 void plugin_mcumgr::serial_closed()
 {
+		refresh_ars_tracker_serial_ports();
+		sync_ars_tracker_serial_controls(
+				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+				ars_tracker_export_loading);
+
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP) || defined(PLUGIN_MCUMGR_TRANSPORT_BLUETOOTH) || defined(PLUGIN_MCUMGR_TRANSPORT_LORAWAN)
 		if (active_transport() != uart_transport)
 		{
@@ -5292,7 +5351,65 @@ void plugin_mcumgr::on_btn_cancel_clicked()
 void plugin_mcumgr::on_selector_tab_currentChanged(int index)
 {
 		Q_UNUSED(index);
+		if (ars_tracker_tab_is_active())
+		{
+				refresh_ars_tracker_serial_ports();
+				sync_ars_tracker_serial_controls(
+						ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+						ars_tracker_export_loading);
+		}
 		maybe_auto_refresh_ars_tracker();
+}
+
+void plugin_mcumgr::refresh_ars_tracker_serial_ports()
+{
+		if (combo_ars_tracker_port == nullptr)
+		{
+				return;
+		}
+
+		QStringList ports;
+		QString     selected_port;
+		QString     previous_selection = combo_ars_tracker_port->currentText();
+
+		emit plugin_serial_ports(&ports, &selected_port);
+
+		bool blocked = combo_ars_tracker_port->blockSignals(true);
+		combo_ars_tracker_port->clear();
+		combo_ars_tracker_port->addItems(ports);
+
+		QString target_port = selected_port.isEmpty() == false ? selected_port : previous_selection;
+		int index = combo_ars_tracker_port->findText(target_port);
+
+		if (index >= 0)
+		{
+				combo_ars_tracker_port->setCurrentIndex(index);
+		}
+		else if (combo_ars_tracker_port->count() > 0)
+		{
+				combo_ars_tracker_port->setCurrentIndex(0);
+		}
+
+		combo_ars_tracker_port->blockSignals(blocked);
+		sync_ars_tracker_serial_controls(
+				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+				ars_tracker_export_loading);
+}
+
+void plugin_mcumgr::sync_ars_tracker_serial_controls(bool loading)
+{
+		if (combo_ars_tracker_port == nullptr)
+		{
+				return;
+		}
+
+		bool serial_open = false;
+		emit plugin_serial_is_open(&serial_open);
+
+		bool has_port = combo_ars_tracker_port->count() > 0;
+
+		combo_ars_tracker_port->setEnabled(!loading && !serial_open);
+		btn_ars_tracker_connect->setEnabled(!loading && (serial_open || has_port));
 }
 
 bool plugin_mcumgr::ars_tracker_transport_usable()
@@ -5672,71 +5789,71 @@ void plugin_mcumgr::ars_tracker_request_cancel_info_shell_command()
 
 void plugin_mcumgr::ars_tracker_request_session_refresh_after_delete()
 {
-    ars_tracker_clear_selection_on_next_refresh = true;
-    on_btn_ars_tracker_refresh_clicked();
+		ars_tracker_clear_selection_on_next_refresh = true;
+		on_btn_ars_tracker_refresh_clicked();
 }
 
 void plugin_mcumgr::ars_tracker_request_file_hash_support()
 {
-    mode = ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT;
-    processor->set_transport(active_transport());
-    set_group_transport_settings(smp_groups.fs_mgmt);
-    supported_hash_checksum_list.clear();
+		mode = ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT;
+		processor->set_transport(active_transport());
+		set_group_transport_settings(smp_groups.fs_mgmt);
+		supported_hash_checksum_list.clear();
 
-    bool started =
-        smp_groups.fs_mgmt->start_supported_hashes_checksums(&supported_hash_checksum_list);
+		bool started =
+				smp_groups.fs_mgmt->start_supported_hashes_checksums(&supported_hash_checksum_list);
 
-    if (started == false)
-    {
-        ars_tracker->handle_export_hash_support_result(
-            STATUS_PROCESSOR_TRANSPORT_ERROR, QString("Could not query tracker file hash support."),
-            QList<hash_checksum_t>());
-    }
-    else
-    {
-        btn_cancel->setEnabled(true);
-    }
+		if (started == false)
+		{
+				ars_tracker->handle_export_hash_support_result(
+						STATUS_PROCESSOR_TRANSPORT_ERROR, QString("Could not query tracker file hash support."),
+						QList<hash_checksum_t>());
+		}
+		else
+		{
+				btn_cancel->setEnabled(true);
+		}
 }
 
 void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file,
-                                                      const QString &hash_name)
+																											const QString &hash_name)
 {
-    mode = ACTION_ARS_TRACKER_EXPORT_METADATA;
-    processor->set_transport(active_transport());
-    set_group_transport_settings(smp_groups.fs_mgmt);
-    fs_hash_checksum_response.clear();
-    fs_size_response = 0;
+		mode = ACTION_ARS_TRACKER_EXPORT_METADATA;
+		processor->set_transport(active_transport());
+		set_group_transport_settings(smp_groups.fs_mgmt);
+		fs_hash_checksum_response.clear();
+		fs_size_response = 0;
 
-    bool started = false;
+		bool started = false;
 
-    if (hash_name.isEmpty())
-    {
-        started = smp_groups.fs_mgmt->start_status(remote_file, &fs_size_response);
-    }
-    else
-    {
-        started = smp_groups.fs_mgmt->start_hash_checksum(remote_file, hash_name,
-                                                          &fs_hash_checksum_response,
-                                                          &fs_size_response);
-    }
+		if (hash_name.isEmpty())
+		{
+				started = smp_groups.fs_mgmt->start_status(remote_file, &fs_size_response);
+		}
+		else
+		{
+				started = smp_groups.fs_mgmt->start_hash_checksum(remote_file, hash_name,
+																													&fs_hash_checksum_response,
+																													&fs_size_response);
+		}
 
-    if (started == false)
-    {
-        ars_tracker->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
-                                                 hash_name.isEmpty() ?
-                                                     QString("Could not start remote file check.") :
-                                                     QString("Could not start remote file verification."),
-                                                 QByteArray(), 0);
-    }
-    else
-    {
-        btn_cancel->setEnabled(true);
-    }
+		if (started == false)
+		{
+				ars_tracker->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+																								 hash_name.isEmpty() ?
+																										 QString("Could not start remote file check.") :
+																										 QString("Could not start remote file verification."),
+																								 QByteArray(), 0);
+		}
+		else
+		{
+				btn_cancel->setEnabled(true);
+		}
 }
 
 void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file)
 {
-    mode = ACTION_ARS_TRACKER_EXPORT_DOWNLOAD;
+		mode = ACTION_ARS_TRACKER_EXPORT_DOWNLOAD;
 		processor->set_transport(active_transport());
 		set_group_transport_settings(smp_groups.fs_mgmt);
 
@@ -5781,6 +5898,7 @@ void plugin_mcumgr::set_ars_tracker_controls_loading(bool loading)
 		list_ars_tracker_sessions->setEnabled(!loading);
 		edit_ars_tracker_destination->setEnabled(!loading);
 		btn_ars_tracker_destination->setEnabled(!loading);
+		sync_ars_tracker_serial_controls(loading);
 
 		bool has_selection = list_ars_tracker_sessions->currentItem() != nullptr;
 

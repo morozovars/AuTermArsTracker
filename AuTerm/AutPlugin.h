@@ -210,6 +210,10 @@ public slots:
     void plugin_serial_open_close(uint8_t mode);
     /* Used to check if a transport is open, open will be updated with true if it is or false otherwise */
     void plugin_serial_is_open(bool *open);
+    /* Used to get the currently available serial ports and active COM selection from the main window */
+    void plugin_serial_ports(QStringList *ports, QString *selected_port);
+    /* Used to set the selected serial port in the main window before opening it */
+    void plugin_serial_select(QString port);
     /* Used to convert hex data into hex-encoded ASCII representation (which can be displayed to the user) */
     void plugin_to_hex(QByteArray *data);
     /* Used to save a plugin-specific setting, name is the value of the configuration item (unique per transport) and data is the setting */

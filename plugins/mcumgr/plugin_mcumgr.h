@@ -153,6 +153,24 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_EXPORT_DOWNLOAD,
 };
 
+class ars_tracker_port_combo_box : public QComboBox
+{
+    Q_OBJECT
+
+public:
+    using QComboBox::QComboBox;
+
+signals:
+    void popup_about_to_show();
+
+protected:
+    void showPopup() override
+    {
+        emit popup_about_to_show();
+        QComboBox::showPopup();
+    }
+};
+
 class plugin_mcumgr : public QObject, AutPlugin
 {
     Q_OBJECT
@@ -176,6 +194,8 @@ signals:
     void plugin_to_hex(QByteArray *data);
     void plugin_serial_open_close(uint8_t mode);
     void plugin_serial_is_open(bool *open);
+    void plugin_serial_ports(QStringList *ports, QString *selected_port);
+    void plugin_serial_select(QString port);
 
 private slots:
     void serial_receive(QByteArray *data);
@@ -297,6 +317,8 @@ private:
     bool ars_tracker_transport_usable();
     bool ars_tracker_tab_is_active() const;
     void maybe_auto_refresh_ars_tracker();
+    void refresh_ars_tracker_serial_ports();
+    void sync_ars_tracker_serial_controls(bool loading);
     void set_group_transport_settings(smp_group *group);
     void set_group_transport_settings(smp_group *group, uint32_t timeout);
     void update_img_state_table();
@@ -593,10 +615,15 @@ private:
     QTabWidget *selector_tab_root;
     QWidget *tab_ars_tracker;
     QGridLayout *gridLayout_ars_tracker;
+    QFrame *frame_ars_tracker_connection;
+    QGridLayout*    gridLayout_ars_tracker_connection;
     QFrame *frame_ars_tracker_info;
     QGridLayout *gridLayout_ars_tracker_info;
     QLabel *label_ars_tracker_info_header;
     QPushButton *btn_ars_tracker_info_refresh;
+    QLabel *label_ars_tracker_port;
+    ars_tracker_port_combo_box *combo_ars_tracker_port;
+    QPushButton *btn_ars_tracker_connect;
     QLabel *label_ars_tracker_serial_number;
     QLineEdit *edit_ars_tracker_serial_number;
     QLabel *label_ars_tracker_board_id;

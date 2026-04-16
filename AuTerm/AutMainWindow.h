@@ -371,6 +371,8 @@ public slots:
     void plugin_add_open_close_button(QPushButton *button);
     void plugin_serial_open_close(uint8_t mode);
     void plugin_serial_is_open(bool *open);
+    void plugin_serial_ports(QStringList *ports, QString *selected_port);
+    void plugin_serial_select(QString port);
     void plugin_to_hex(QByteArray *data);
     void plugin_save_setting(QString name, QVariant data);
     void plugin_load_setting(QString name, QVariant *data, bool *found);
@@ -406,6 +408,8 @@ private:
     void update_buffer(QByteArray data, bool apply_formatting, bool outgoing_buffer);
     void update_buffer(QByteArray *data, bool apply_formatting, bool outgoing_buffer);
     void update_display_trimming();
+    void update_plugin_open_close_button(QPushButton *button, bool open);
+    void update_plugin_open_close_buttons(bool open);
 #ifndef SKIPPLUGINS_TRANSPORT
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     bool transport_open(QIODeviceBase::OpenMode mode);
@@ -551,7 +555,7 @@ private:
     bool serial_close_dialog_open;
 #endif
 #ifndef SKIPPLUGINS_TRANSPORT
-    AutTransportPlugin *plugin_active_transport;
+    AutTransportPlugin *plugin_active_transport = nullptr;
 #endif
 #ifndef SKIPSPLITTERMINAL
     AutScrollEdit *text_split_terminal;

@@ -775,13 +775,32 @@ void smp_group_fs_mgmt::receive_ok(uint8_t version, uint8_t op, uint16_t group, 
                 return;
             }
 
-            if (local_file_size != 0 && file_upload_area < local_file_size)
+            bool    download_complete = false;
+            uint8_t progress_percent  = 0;
+
+            if (local_file_size != 0)
+            {
+                download_complete = (file_upload_area >= local_file_size);
+                progress_percent =
+                    uint8_t(qMin<uint32_t>(100U, (file_upload_area * 100U) / local_file_size));
+            }
+            else if (file_data.isEmpty())
+            {
+                local_file_size    = file_upload_area;
+                download_complete  = true;
+                progress_percent   = 100;
+            }
+
+            // Always emit a progress tick after each successfully written chunk so higher-level
+            // download flows can refresh real byte counts from the partial file on disk.
+            emit progress(smp_user_data, progress_percent);
+
+            if (download_complete == false && local_file_size != 0 && file_upload_area < local_file_size)
             {
                 //Download next chunk
                 download_chunk();
-                emit progress(smp_user_data, file_upload_area * 100 / local_file_size);
             }
-            else if (local_file_size == 0 && file_data.isEmpty() == false)
+            else if (download_complete == false && local_file_size == 0 && file_data.isEmpty() == false)
             {
                 // Some targets omit the total remote size in download responses. In that case,
                 // keep reading until the device returns an empty chunk at EOF rather than
@@ -793,11 +812,6 @@ void smp_group_fs_mgmt::receive_ok(uint8_t version, uint8_t op, uint16_t group, 
             else
             {
                 //Download complete
-                if (local_file_size == 0)
-                {
-                    local_file_size = file_upload_area;
-                }
-
                 if (local_file.size() != qint64(local_file_size))
                 {
                     fail_download(QString("Downloaded file size on disk (%1) does not match expected size %2.")

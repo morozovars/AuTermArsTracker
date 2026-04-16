@@ -5707,14 +5707,25 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
     fs_hash_checksum_response.clear();
     fs_size_response = 0;
 
-    bool started = smp_groups.fs_mgmt->start_hash_checksum(remote_file, hash_name,
-                                                           &fs_hash_checksum_response,
-                                                           &fs_size_response);
+    bool started = false;
+
+    if (hash_name.isEmpty())
+    {
+        started = smp_groups.fs_mgmt->start_status(remote_file, &fs_size_response);
+    }
+    else
+    {
+        started = smp_groups.fs_mgmt->start_hash_checksum(remote_file, hash_name,
+                                                          &fs_hash_checksum_response,
+                                                          &fs_size_response);
+    }
 
     if (started == false)
     {
         ars_tracker->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
-                                                 QString("Could not start remote file verification."),
+                                                 hash_name.isEmpty() ?
+                                                     QString("Could not start remote file check.") :
+                                                     QString("Could not start remote file verification."),
                                                  QByteArray(), 0);
     }
     else

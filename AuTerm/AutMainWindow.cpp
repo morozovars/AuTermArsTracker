@@ -1058,6 +1058,8 @@ AutMainWindow::AutMainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::
     }
 #endif
 
+    apply_main_tab_filter();
+
 #ifndef SKIPONLINE
     if (ui->check_enable_online_version_check->isChecked())
     {
@@ -2604,6 +2606,48 @@ void AutMainWindow::OpenDevice(bool from_plugin)
         // Notify plugins from the actual successful open path instead of relying on NoError emissions.
         emit plugin_serial_opened();
 #endif
+    }
+}
+
+void AutMainWindow::apply_main_tab_filter()
+{
+    QTabWidget *tabs = ui->selector_Tab;
+
+    if (tabs == nullptr)
+    {
+        return;
+    }
+
+    for (int i = tabs->count() - 1; i >= 0; --i)
+    {
+        QWidget *page = tabs->widget(i);
+        QString object_name = page != nullptr ? page->objectName() : QString();
+        QString tab_text = tabs->tabText(i);
+
+        bool keep_tab =
+            page == ui->tab_Term ||
+            object_name == "tab" ||
+            object_name == "tab_ars_tracker" ||
+            tab_text == "Terminal" ||
+            tab_text == "MCUmgr" ||
+            tab_text == "ArsTracker";
+
+        if (keep_tab == false)
+        {
+            tabs->removeTab(i);
+        }
+    }
+
+    for (int i = 0; i < tabs->count(); ++i)
+    {
+        QWidget *page = tabs->widget(i);
+        QString object_name = page != nullptr ? page->objectName() : QString();
+
+        if (object_name == "tab_ars_tracker" || tabs->tabText(i) == "ArsTracker")
+        {
+            tabs->setCurrentIndex(i);
+            return;
+        }
     }
 }
 

@@ -408,6 +408,7 @@ private:
     void update_buffer(QByteArray data, bool apply_formatting, bool outgoing_buffer);
     void update_buffer(QByteArray *data, bool apply_formatting, bool outgoing_buffer);
     void update_display_trimming();
+    void apply_main_tab_filter();
     void update_plugin_open_close_button(QPushButton *button, bool open);
     void update_plugin_open_close_buttons(bool open);
 #ifndef SKIPPLUGINS_TRANSPORT

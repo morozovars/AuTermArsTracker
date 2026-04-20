@@ -24,6 +24,42 @@
 #include "crc16.h"
 #include <math.h>
 
+static uint16_t uart_smp_header_len_host(const smp_hdr *header)
+{
+    uint16_t length = header->nh_len;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    length = ((length & 0xff) << 8) | ((length & 0xff00) >> 8);
+#endif
+
+    return length;
+}
+
+static uint16_t uart_smp_header_group_host(const smp_hdr *header)
+{
+    uint16_t group = header->nh_group;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    group = ((group & 0xff) << 8) | ((group & 0xff00) >> 8);
+#endif
+
+    return group;
+}
+
+static int uart_count_marker(const QByteArray &data, const QByteArray &marker)
+{
+    int count = 0;
+    int pos = data.indexOf(marker);
+
+    while (pos >= 0)
+    {
+        ++count;
+        pos = data.indexOf(marker, pos + marker.length());
+    }
+
+    return count;
+}
+
 smp_uart_auterm::smp_uart_auterm(QObject *parent)
 {
     Q_UNUSED(parent);
@@ -37,6 +73,25 @@ void smp_uart_auterm::data_received(QByteArray *message)
 {
     smp_message full_message;
     full_message.append(message);
+    smp_hdr *header = full_message.get_header();
+
+    if (header != nullptr)
+    {
+        log_debug() << "UART SMP complete frame"
+                    << "message length" << full_message.size()
+                    << "payload length" << uart_smp_header_len_host(header)
+                    << "op" << int(header->nh_op)
+                    << "version" << int(header->nh_version)
+                    << "group" << uart_smp_header_group_host(header)
+                    << "seq" << int(header->nh_seq)
+                    << "command" << int(header->nh_id)
+                    << "valid" << full_message.is_valid();
+    }
+    else
+    {
+        log_error() << "UART SMP complete frame has no SMP header"
+                    << "message length" << full_message.size();
+    }
 
     if (full_message.is_valid())
     {
@@ -47,6 +102,18 @@ void smp_uart_auterm::data_received(QByteArray *message)
 
 void smp_uart_auterm::serial_read(QByteArray *rec_data)
 {
+    int first_frames = uart_count_marker(*rec_data, smp_first_header);
+    int continuation_frames = uart_count_marker(*rec_data, smp_continuation_header);
+
+    log_debug() << "UART raw receive"
+                << "read length" << rec_data->length()
+                << "buffer before append" << SerialData.length()
+                << "first frame markers in read" << first_frames
+                << "continuation markers in read" << continuation_frames
+                << "waiting continuation" << SMPWaitingForContinuation
+                << "waiting length" << waiting_packet_length
+                << "assembled length" << SMPBufferActualData.length();
+
     SerialData.append(*rec_data);
 
     //Search for SMP packets
@@ -79,6 +146,13 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                 waiting_packet_length = ((uint16_t)SMPBuffer[0]) << 8;
                 waiting_packet_length |= ((uint16_t)SMPBuffer[1] & 0xff);
                 SMPBuffer.remove(0, 2);
+
+                log_debug() << "UART SMP first frame decoded"
+                            << "decoded payload plus crc length" << SMPBuffer.length()
+                            << "announced packet length" << waiting_packet_length
+                            << "line bytes" << (posA - pos + 1)
+                            << "serial buffer length" << SerialData.length();
+
                 if (SMPBuffer.length() >= (waiting_packet_length))
                 {
                     //We have a full packet, check the checksum
@@ -89,6 +163,9 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                     if (crc == message_crc)
                     {
                         //Good to parse message after removing CRC
+                        log_debug() << "UART SMP single-frame packet complete"
+                                    << "assembled length including crc" << SMPBuffer.length()
+                                    << "announced packet length" << waiting_packet_length;
                         SMPBuffer.remove((SMPBuffer.length() - 2), 2);
                         data_received(&SMPBuffer);
                     }
@@ -103,6 +180,9 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                     //More data expected in another packet
                     SMPWaitingForContinuation = true;
                     SMPBufferActualData = SMPBuffer;
+                    log_debug() << "UART SMP waiting for continuation"
+                                << "assembled length including crc" << SMPBufferActualData.length()
+                                << "announced packet length" << waiting_packet_length;
                 }
             }
 
@@ -132,6 +212,13 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
             {
                 //Check length
                 SMPBufferActualData.append(SMPBuffer);
+                log_debug() << "UART SMP continuation decoded"
+                            << "decoded length" << SMPBuffer.length()
+                            << "assembled length including crc" << SMPBufferActualData.length()
+                            << "announced packet length" << waiting_packet_length
+                            << "line bytes" << (posA_other - pos_other + 1)
+                            << "serial buffer length" << SerialData.length();
+
                 if (SMPBufferActualData.length() >= (waiting_packet_length /*+ 2*/))
                 {
                     //We have a full packet, check the checksum
@@ -142,6 +229,9 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                     if (crc == message_crc)
                     {
                         //Good to parse message after removing CRC
+                        log_debug() << "UART SMP multi-frame packet complete"
+                                    << "assembled length including crc" << SMPBufferActualData.length()
+                                    << "announced packet length" << waiting_packet_length;
                         SMPBufferActualData.remove((SMPBufferActualData.length() - 2), 2);
                         data_received(&SMPBufferActualData);
                     }

@@ -30,6 +30,28 @@
 /******************************************************************************/
 // Local Functions or Private Members
 /******************************************************************************/
+static uint16_t udp_smp_header_len_host(const smp_hdr *header)
+{
+    uint16_t length = header->nh_len;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    length = ((length & 0xff) << 8) | ((length & 0xff00) >> 8);
+#endif
+
+    return length;
+}
+
+static uint16_t udp_smp_header_group_host(const smp_hdr *header)
+{
+    uint16_t group = header->nh_group;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    group = ((group & 0xff) << 8) | ((group & 0xff00) >> 8);
+#endif
+
+    return group;
+}
+
 smp_udp::smp_udp(QObject *parent)
 {
     Q_UNUSED(parent);
@@ -208,11 +230,28 @@ void smp_udp::socket_readyread()
     while (socket->hasPendingDatagrams())
     {
         QNetworkDatagram datagram = socket->receiveDatagram();
+        log_debug() << "UDP raw receive"
+                    << "datagram length" << datagram.data().length()
+                    << "buffer before append" << received_data.size();
         received_data.append(datagram.data());
 
         //Check if there is a full packet
         if (received_data.is_valid() == true)
         {
+            smp_hdr *header = received_data.get_header();
+
+            if (header != nullptr)
+            {
+                log_debug() << "UDP SMP complete frame"
+                            << "message length" << received_data.size()
+                            << "payload length" << udp_smp_header_len_host(header)
+                            << "op" << int(header->nh_op)
+                            << "version" << int(header->nh_version)
+                            << "group" << udp_smp_header_group_host(header)
+                            << "seq" << int(header->nh_seq)
+                            << "command" << int(header->nh_id);
+            }
+
             emit receive_waiting(&received_data);
             received_data.clear();
         }

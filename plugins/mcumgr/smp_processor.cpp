@@ -24,6 +24,28 @@
 #include "smp_processor.h"
 #include "smp_group.h"
 
+static uint16_t smp_header_len_host(const smp_hdr *header)
+{
+    uint16_t length = header->nh_len;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    length = ((length & 0xff) << 8) | ((length & 0xff00) >> 8);
+#endif
+
+    return length;
+}
+
+static uint16_t smp_header_group_host(const smp_hdr *header)
+{
+    uint16_t group = header->nh_group;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    group = ((group & 0xff) << 8) | ((group & 0xff00) >> 8);
+#endif
+
+    return group;
+}
+
 smp_processor::smp_processor(QObject *parent)
 {
     Q_UNUSED(parent);
@@ -95,6 +117,16 @@ smp_transport_error_t smp_processor::send(smp_message *message, uint32_t timeout
 
         if (transport_error == SMP_TRANSPORT_ERROR_OK)
         {
+            log_debug() << "SMP request sent"
+                        << "op" << int(last_message_header->nh_op)
+                        << "version" << int(last_message_header->nh_version)
+                        << "group" << smp_header_group_host(last_message_header)
+                        << "seq" << int(last_message_header->nh_seq)
+                        << "command" << int(last_message_header->nh_id)
+                        << "payload length" << smp_header_len_host(last_message_header)
+                        << "message size" << last_message->size()
+                        << "timeout ms" << timeout_ms
+                        << "retries" << int(repeats);
             repeat_timer.start();
             ++sequence;
 
@@ -236,6 +268,14 @@ void smp_processor::message_timeout()
     //Resend message
     --repeat_times;
     repeat_timer.start();
+    log_warning() << "SMP request retry"
+                  << "op" << int(last_message_header->nh_op)
+                  << "version" << int(last_message_header->nh_version)
+                  << "group" << smp_header_group_host(last_message_header)
+                  << "seq" << int(last_message_header->nh_seq)
+                  << "command" << int(last_message_header->nh_id)
+                  << "payload length" << smp_header_len_host(last_message_header)
+                  << "remaining retries" << int(repeat_times);
     transport->send(last_message);
 }
 
@@ -243,7 +283,9 @@ void smp_processor::message_received(smp_message *response)
 {
     const smp_hdr *response_header = nullptr;
 
-    log_debug() << "got message";
+    log_debug() << "SMP response received"
+                << "message size" << response->size()
+                << "payload size" << response->data_size();
 
     if (!busy)
     {
@@ -260,24 +302,61 @@ void smp_processor::message_received(smp_message *response)
         //Cannot do anything without a header
         log_error() << "Invalid response header";
     }
+    else if (response_header->nh_seq != last_message_header->nh_seq)
+    {
+        log_warning() << "Stale or out-of-order SMP response ignored"
+                      << "expected op" << int(smp_message::response_op(last_message_header->nh_op))
+                      << "got op" << int(response_header->nh_op)
+                      << "expected group" << smp_header_group_host(last_message_header)
+                      << "got group" << smp_header_group_host(response_header)
+                      << "expected seq" << int(last_message_header->nh_seq)
+                      << "got seq" << int(response_header->nh_seq)
+                      << "expected command" << int(last_message_header->nh_id)
+                      << "got command" << int(response_header->nh_id)
+                      << "response payload length" << smp_header_len_host(response_header)
+                      << "response message size" << response->size();
+
+        // A delayed response from a previous request means the peer is alive but still draining
+        // old work. Keep waiting for the current request instead of timing out immediately.
+        repeat_timer.start();
+        return;
+    }
     else if (response_header->nh_group != last_message_header->nh_group)
     {
-        log_error() << "Invalid group, expected " << last_message_header->nh_group << " got " << response_header->nh_group;
+        log_error() << "Invalid group, expected " << smp_header_group_host(last_message_header)
+                    << " got " << smp_header_group_host(response_header)
+                    << "seq" << int(response_header->nh_seq)
+                    << "command" << int(response_header->nh_id)
+                    << "op" << int(response_header->nh_op);
     }
     else if (response_header->nh_id != last_message_header->nh_id)
     {
-        log_error() << "Invalid command, expected " << last_message_header->nh_id << " got " << response_header->nh_id;
-    }
-    else if (response_header->nh_seq != last_message_header->nh_seq)
-    {
-        log_error() << "Invalid sequence, expected " << last_message_header->nh_seq << " got " << response_header->nh_seq;
+        log_error() << "Invalid command, expected " << int(last_message_header->nh_id)
+                    << " got " << int(response_header->nh_id)
+                    << "seq" << int(response_header->nh_seq)
+                    << "group" << smp_header_group_host(response_header)
+                    << "op" << int(response_header->nh_op)
+                    << "payload length" << smp_header_len_host(response_header);
     }
     else if (response_header->nh_op != smp_message::response_op(last_message_header->nh_op))
     {
-        log_error() << "Invalid op, expected " << smp_message::response_op(last_message_header->nh_op) << " got " << response_header->nh_op;
+        log_error() << "Invalid op, expected " << int(smp_message::response_op(last_message_header->nh_op))
+                    << " got " << int(response_header->nh_op)
+                    << "seq" << int(response_header->nh_seq)
+                    << "group" << smp_header_group_host(response_header)
+                    << "command" << int(response_header->nh_id)
+                    << "payload length" << smp_header_len_host(response_header);
     }
     else
     {
+        log_debug() << "SMP response accepted"
+                    << "op" << int(response_header->nh_op)
+                    << "version" << int(response_header->nh_version)
+                    << "group" << smp_header_group_host(response_header)
+                    << "seq" << int(response_header->nh_seq)
+                    << "command" << int(response_header->nh_id)
+                    << "payload length" << smp_header_len_host(response_header);
+
         //Headers look valid
         uint8_t version = response_header->nh_version;
         uint8_t op = response_header->nh_op;

@@ -1163,10 +1163,23 @@ uint32_t smp_group_fs_mgmt::download_chunk_payload_size()
 
     if (max_message_size <= response_overhead_safety + minimum_chunk_size)
     {
+        log_debug() << "FS download chunk payload size clamped"
+                    << "transport max message size" << max_message_size
+                    << "configured mtu" << smp_mtu
+                    << "response overhead safety" << response_overhead_safety
+                    << "minimum chunk size" << minimum_chunk_size;
         return minimum_chunk_size;
     }
 
-    return max_message_size - response_overhead_safety;
+    uint32_t result = max_message_size - response_overhead_safety;
+
+    log_debug() << "FS download chunk payload size calculated"
+                << "transport max message size" << max_message_size
+                << "configured mtu" << smp_mtu
+                << "response overhead safety" << response_overhead_safety
+                << "payload size" << result;
+
+    return result;
 }
 
 bool smp_group_fs_mgmt::start_upload(QString file_name, QString destination_name)

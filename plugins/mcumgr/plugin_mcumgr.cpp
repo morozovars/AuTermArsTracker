@@ -31,6 +31,8 @@
 #include "plugin_mcumgr.h"
 
 static const uint16_t timeout_erase_ms = 14000;
+static const uint32_t timeout_ars_tracker_metadata_ms = 60000;
+static const uint8_t retries_ars_tracker_metadata = 0;
 
 enum tree_img_slot_info_columns
 {
@@ -5366,6 +5368,17 @@ void plugin_mcumgr::set_group_transport_settings(smp_group *group, mcumgr_action
 													transport->get_retries(), transport->get_timeout(), action);
 }
 
+void plugin_mcumgr::set_group_transport_settings(smp_group *group, mcumgr_action_t action,
+																								 uint32_t timeout, uint8_t retries)
+{
+		smp_transport* transport = active_transport();
+		uint32_t effective_timeout =
+				(timeout >= transport->get_timeout() ? timeout : transport->get_timeout());
+
+		group->set_parameters((check_V2_Protocol->isChecked() ? 1 : 0), edit_MTU->value(),
+													retries, effective_timeout, action);
+}
+
 void plugin_mcumgr::on_btn_error_lookup_clicked()
 {
 		error_lookup_form->show();
@@ -6008,7 +6021,21 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 {
 		mode = ACTION_ARS_TRACKER_EXPORT_METADATA;
 		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA);
+		if (hash_name.isEmpty())
+		{
+				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA);
+		}
+		else
+		{
+				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA,
+																		 timeout_ars_tracker_metadata_ms,
+																		 retries_ars_tracker_metadata);
+				log_debug() << "ArsTracker export metadata hash request using long timeout/no retry"
+										<< "remote" << remote_file
+										<< "hash type" << hash_name
+										<< "timeout ms" << timeout_ars_tracker_metadata_ms
+										<< "retries" << int(retries_ars_tracker_metadata);
+		}
 
 		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
 				ARS_TRACKER_EXPORT_FS_METADATA, remote_file);

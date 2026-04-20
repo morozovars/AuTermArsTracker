@@ -329,6 +329,8 @@ private:
     void set_group_transport_settings(smp_group *group);
     void set_group_transport_settings(smp_group *group, uint32_t timeout);
     void set_group_transport_settings(smp_group *group, mcumgr_action_t action);
+    void set_group_transport_settings(smp_group *group, mcumgr_action_t action,
+                                      uint32_t timeout, uint8_t retries);
     void update_img_state_table();
     void set_ars_tracker_controls_loading(bool loading);
     void handle_ars_tracker_shell_status(uint8_t user_data, group_status status,

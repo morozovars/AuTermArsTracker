@@ -39,6 +39,28 @@ static const int max_mtu = 509;
 //ATT overhead of messages
 static const int mtu_atu_overhead = 3;
 
+static uint16_t bluetooth_smp_header_len_host(const smp_hdr *header)
+{
+    uint16_t length = header->nh_len;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    length = ((length & 0xff) << 8) | ((length & 0xff00) >> 8);
+#endif
+
+    return length;
+}
+
+static uint16_t bluetooth_smp_header_group_host(const smp_hdr *header)
+{
+    uint16_t group = header->nh_group;
+
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    group = ((group & 0xff) << 8) | ((group & 0xff00) >> 8);
+#endif
+
+    return group;
+}
+
 enum smp_bluetooth_error_t {
     SMP_BLUETOOTH_ERROR_NONE,
     SMP_BLUETOOTH_ERROR_SERVICE_OPERATION_ERROR,
@@ -301,12 +323,31 @@ void smp_bluetooth::service_discovered(QBluetoothUuid service_uuid)
 
 void smp_bluetooth::mcumgr_service_characteristic_changed(QLowEnergyCharacteristic lecCharacteristic, QByteArray baData)
 {
-    log_debug() << "Bluetooth service characteristic changed";
+    Q_UNUSED(lecCharacteristic);
+
+    log_debug() << "Bluetooth service characteristic changed"
+                << "fragment length" << baData.length()
+                << "buffer before append" << received_data.size()
+                << "mtu" << mtu;
 
     received_data.append(&baData);
 
     if (received_data.is_valid() == true)
     {
+        smp_hdr *header = received_data.get_header();
+
+        if (header != nullptr)
+        {
+            log_debug() << "Bluetooth SMP complete frame"
+                        << "message length" << received_data.size()
+                        << "payload length" << bluetooth_smp_header_len_host(header)
+                        << "op" << int(header->nh_op)
+                        << "version" << int(header->nh_version)
+                        << "group" << bluetooth_smp_header_group_host(header)
+                        << "seq" << int(header->nh_seq)
+                        << "command" << int(header->nh_id);
+        }
+
         emit receive_waiting(&received_data);
         received_data.clear();
     }

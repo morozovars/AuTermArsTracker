@@ -161,6 +161,7 @@ private:
     QString export_hash_name;
     int current_download_index;
     uint32_t next_sensor_index;
+    uint32_t export_transition_sequence;
     QList<ars_tracker_download_item_t> download_queue;
 
     bool resolve_session(const QString &session_id, ars_tracker_session_t *session) const;
@@ -191,6 +192,8 @@ private:
     void reset_export_state();
     void enqueue_fixed_files();
     void enqueue_next_sensor_candidate();
+    void schedule_next_download_or_finish(const QString &reason);
+    void schedule_current_file_download(const QString &reason);
     void request_next_download_or_finish();
     void start_file_download(ars_tracker_download_item_t *item);
     void finish_export(bool success, bool cancelled, const QString &message);

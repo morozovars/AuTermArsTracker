@@ -32,10 +32,10 @@
 #define PLUGIN_NAME "mcumgr"
 #define LOG_OBJECT logger
 
-#define log_error() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_error); QDebug(LOG_OBJECT)
-#define log_warning() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_warning); QDebug(LOG_OBJECT)
-#define log_information() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_information); QDebug(LOG_OBJECT)
-#define log_debug() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_debug); QDebug(LOG_OBJECT)
+#define log_error() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_error, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
+#define log_warning() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_warning, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
+#define log_information() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_information, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
+#define log_debug() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_debug, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
 #else
 #define log_error() qDebug()
 #define log_warning() qDebug()
@@ -51,7 +51,8 @@ public:
     explicit debug_logger(QObject *parent = nullptr);
     ~debug_logger();
     void find_logger_plugin(const QObject *main_window);
-    void set_options(QString title, log_level_types type);
+    void set_options(QString title, log_level_types type, const char *file = nullptr,
+                     int line = 0, const char *function = nullptr);
 
 protected:
     qint64 readData(char *data, qint64 maxlen) override;
@@ -67,6 +68,9 @@ private:
     const QObject *logger_pointer;
     QString logger_title;
     log_level_types logger_type;
+    const char *logger_file;
+    int logger_line;
+    const char *logger_function;
 };
 #endif
 

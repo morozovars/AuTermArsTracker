@@ -153,6 +153,13 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_EXPORT_DOWNLOAD,
 };
 
+enum ars_tracker_export_fs_phase_t : uint8_t {
+    ARS_TRACKER_EXPORT_FS_IDLE = 0,
+    ARS_TRACKER_EXPORT_FS_HASH_SUPPORT,
+    ARS_TRACKER_EXPORT_FS_METADATA,
+    ARS_TRACKER_EXPORT_FS_DOWNLOAD,
+};
+
 class ars_tracker_port_combo_box : public QComboBox
 {
     Q_OBJECT
@@ -321,10 +328,22 @@ private:
     void sync_ars_tracker_serial_controls(bool loading);
     void set_group_transport_settings(smp_group *group);
     void set_group_transport_settings(smp_group *group, uint32_t timeout);
+    void set_group_transport_settings(smp_group *group, mcumgr_action_t action);
     void update_img_state_table();
     void set_ars_tracker_controls_loading(bool loading);
     void handle_ars_tracker_shell_status(uint8_t user_data, group_status status,
                                          QString *error_string);
+    QString ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase_t phase) const;
+    uint32_t begin_ars_tracker_export_fs_operation(ars_tracker_export_fs_phase_t phase,
+                                                   const QString &remote_file,
+                                                   const QString &local_temp_file = QString());
+    void reset_ars_tracker_export_fs_operation();
+    void handle_ars_tracker_export_fs_status(uint8_t user_data, group_status status,
+                                             const QString &error_string);
+    bool ars_tracker_export_fs_start_failed(uint32_t sequence,
+                                            ars_tracker_export_fs_phase_t phase,
+                                            const QString &remote_file,
+                                            const QString &error_message);
 
     //Form items
 ///AUTOGEN_START_OBJECTS
@@ -687,6 +706,14 @@ private:
     bool ars_tracker_delete_loading;
     bool ars_tracker_export_loading;
     bool ars_tracker_clear_selection_on_next_refresh;
+    bool ars_tracker_export_fs_active;
+    ars_tracker_export_fs_phase_t ars_tracker_export_fs_phase;
+    uint32_t ars_tracker_export_fs_sequence;
+    QString ars_tracker_export_fs_remote_file;
+    QString ars_tracker_export_fs_local_temp_file;
+    QByteArray ars_tracker_export_fs_hash_checksum_response;
+    uint32_t ars_tracker_export_fs_size_response;
+    QList<hash_checksum_t> ars_tracker_export_supported_hash_checksum_list;
     QStringList group_list;
     QList<stat_value_t> stat_list;
     QStandardItemModel model_image_state;

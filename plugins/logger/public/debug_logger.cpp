@@ -29,6 +29,16 @@ debug_logger::debug_logger(QObject *parent)
 {
     QIODevice::open(QIODevice::WriteOnly);
     plugin_active = false;
+    logger_type = log_level_debug;
+    logger_file = nullptr;
+    logger_line = 0;
+    logger_function = nullptr;
+
+    QMessageLogger(__FILE__, __LINE__, Q_FUNC_INFO, "plugin_logger_public")
+        .debug()
+        .noquote()
+        << "AUTERM public debug_logger constructed"
+        << "parent=" << (parent != nullptr ? parent->metaObject()->className() : "null");
 }
 
 debug_logger::~debug_logger()
@@ -47,13 +57,39 @@ qint64 debug_logger::readData(char *, qint64)
 
 qint64 debug_logger::writeData(const char *data, qint64 len)
 {
-    if (plugin_active == true)
+    QString message = QString::fromUtf8(data, int(len)).trimmed();
+
+    if (message.isEmpty())
     {
-        emit logger_log(logger_type, logger_title, data);
         return len;
     }
 
-    qDebug() << data;
+    if (plugin_active == true)
+    {
+        emit logger_log(logger_type, logger_title, message);
+    }
+
+    QByteArray category = logger_title.toUtf8();
+    QMessageLogger message_logger(logger_file, logger_line, logger_function,
+                                  category.constData());
+
+    switch (logger_type)
+    {
+    case log_level_error:
+        message_logger.critical().noquote() << message;
+        break;
+    case log_level_warning:
+        message_logger.warning().noquote() << message;
+        break;
+    case log_level_information:
+        message_logger.info().noquote() << message;
+        break;
+    case log_level_debug:
+    default:
+        message_logger.debug().noquote() << message;
+        break;
+    }
+
     return len;
 }
 
@@ -77,10 +113,14 @@ void debug_logger::find_logger_plugin(const QObject *main_window)
     connect(this, SIGNAL(logger_set_visible(bool)), logger_pointer, SLOT(set_enabled(bool)));
 }
 
-void debug_logger::set_options(QString title, log_level_types type)
+void debug_logger::set_options(QString title, log_level_types type, const char *file,
+                               int line, const char *function)
 {
     logger_title = title;
     logger_type = type;
+    logger_file = file;
+    logger_line = line;
+    logger_function = function;
 }
 
 #endif

@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QTimer>
 #include <QtGlobal>
 
 #include "ars_tracker_parser.h"
@@ -123,6 +124,7 @@ ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
     active_tracker_info_step = TRACKER_INFO_STEP_NONE;
     tracker_info_session_list_failed = false;
     delete_loading           = false;
+    export_transition_sequence = 0;
     reset_tracker_info_state();
     reset_export_state();
 #ifndef SKIPPLUGIN_LOGGER
@@ -152,6 +154,7 @@ void ars_tracker_backend::reset_tracker_info_state()
 
 void ars_tracker_backend::reset_export_state()
 {
+    ++export_transition_sequence;
     export_loading           = false;
     export_cancel_requested  = false;
     export_failed            = false;
@@ -1581,7 +1584,7 @@ void ars_tracker_backend::handle_export_hash_support_result(
                     << "falling back to download without pre-verification." << hash_error;
         emit status_message(
             QString("No shared local verification algorithm; downloading files without pre-checks."));
-        request_next_download_or_finish();
+        schedule_next_download_or_finish("hash support completed without shared algorithm");
         return;
     }
 
@@ -1590,7 +1593,7 @@ void ars_tracker_backend::handle_export_hash_support_result(
 
     emit status_message(QString("Using %1 to verify existing local files before download.")
                             .arg(export_hash_name));
-    request_next_download_or_finish();
+    schedule_next_download_or_finish("hash support completed");
 }
 
 void ars_tracker_backend::handle_file_metadata_result(group_status status, const QString& error_message,
@@ -1604,6 +1607,20 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
     }
 
     ars_tracker_download_item_t& item = download_queue[current_download_index];
+
+    if (item.status != ARS_TRACKER_STATUS_CHECKING_EXISTING)
+    {
+        log_debug() << "ArsTracker export metadata callback ignored in state:"
+                    << item.remote_file << "index" << current_download_index
+                    << "status" << int(item.status)
+                    << "callback status" << int(status);
+        return;
+    }
+
+    log_debug() << "ArsTracker export metadata completed:" << item.remote_file
+                << "index" << current_download_index
+                << "status" << int(status)
+                << "remote size" << remote_size;
 
     if (status == STATUS_CANCELLED || export_cancel_requested == true)
     {
@@ -1624,13 +1641,13 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
 
         if (partial_info.exists())
         {
-            start_file_download(&item);
+            schedule_current_file_download("partial temp file exists after metadata");
             return;
         }
 
         if (local_info.exists() == false)
         {
-            start_file_download(&item);
+            schedule_current_file_download("local file missing after metadata");
             return;
         }
 
@@ -1664,7 +1681,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
                 emit status_message(
                     QString("Skipping %1, identical local copy already present.")
                         .arg(QFileInfo(item.remote_file).fileName()));
-                request_next_download_or_finish();
+                schedule_next_download_or_finish("local file already present");
                 return;
             }
         }
@@ -1680,7 +1697,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
             return;
         }
 
-        start_file_download(&item);
+        schedule_current_file_download("metadata verified");
         return;
     }
 
@@ -1695,7 +1712,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
             current_download_index = -1;
             publish_export_file_rows();
             publish_progress_text();
-            request_next_download_or_finish();
+            schedule_next_download_or_finish("sensor enumeration completed");
             return;
         }
 
@@ -1705,7 +1722,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         item.total_bytes = 0;
         publish_export_file_rows();
         publish_progress_text();
-        request_next_download_or_finish();
+        schedule_next_download_or_finish("remote file missing");
         return;
     }
 
@@ -1737,8 +1754,117 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
                       .arg(QFileInfo(item.remote_file).fileName()));
 }
 
+void ars_tracker_backend::schedule_current_file_download(const QString& reason)
+{
+    if (export_loading == false || current_download_index < 0 ||
+        current_download_index >= download_queue.length())
+    {
+        log_debug() << "ArsTracker export download schedule ignored:" << reason
+                    << "index" << current_download_index
+                    << "queue length" << download_queue.length()
+                    << "loading" << export_loading;
+        return;
+    }
+
+    const uint32_t sequence = ++export_transition_sequence;
+    const int      index    = current_download_index;
+    const QString  remote_file = download_queue.at(index).remote_file;
+    const ars_tracker_download_status_t status = download_queue.at(index).status;
+
+    log_debug() << "ArsTracker export download scheduled:" << remote_file
+                << "index" << index << "status" << int(status)
+                << "sequence" << sequence << "reason" << reason;
+
+    QTimer::singleShot(0, this, [this, sequence, index, remote_file, reason]() {
+        if (export_loading == false)
+        {
+            log_debug() << "ArsTracker export scheduled download dropped after export stopped:"
+                        << remote_file << "index" << index << "reason" << reason;
+            return;
+        }
+
+        if (sequence != export_transition_sequence)
+        {
+            log_debug() << "ArsTracker export scheduled download dropped as stale:"
+                        << remote_file << "index" << index << "sequence" << sequence
+                        << "current sequence" << export_transition_sequence;
+            return;
+        }
+
+        if (current_download_index != index || index < 0 || index >= download_queue.length())
+        {
+            log_debug() << "ArsTracker export scheduled download dropped after index changed:"
+                        << remote_file << "scheduled index" << index
+                        << "current index" << current_download_index
+                        << "queue length" << download_queue.length();
+            return;
+        }
+
+        ars_tracker_download_item_t& item = download_queue[index];
+
+        if (item.remote_file != remote_file)
+        {
+            log_debug() << "ArsTracker export scheduled download dropped after file changed:"
+                        << remote_file << "current file" << item.remote_file
+                        << "index" << index;
+            return;
+        }
+
+        if (item.status != ARS_TRACKER_STATUS_CHECKING_EXISTING &&
+            item.status != ARS_TRACKER_STATUS_DOWNLOADING)
+        {
+            log_debug() << "ArsTracker export scheduled download dropped in state:"
+                        << remote_file << "index" << index << "status" << int(item.status);
+            return;
+        }
+
+        start_file_download(&item);
+    });
+}
+
+void ars_tracker_backend::schedule_next_download_or_finish(const QString& reason)
+{
+    const uint32_t sequence = ++export_transition_sequence;
+    const int      index    = current_download_index;
+    const QString  remote_file =
+        (index >= 0 && index < download_queue.length()) ? download_queue.at(index).remote_file :
+                                                          QString();
+
+    log_debug() << "ArsTracker export next file scheduled:" << remote_file
+                << "index" << index << "sequence" << sequence
+                << "reason" << reason;
+
+    QTimer::singleShot(0, this, [this, sequence, index, remote_file, reason]() {
+        if (export_loading == false)
+        {
+            log_debug() << "ArsTracker export scheduled next file dropped after export stopped:"
+                        << remote_file << "index" << index << "reason" << reason;
+            return;
+        }
+
+        if (sequence != export_transition_sequence)
+        {
+            log_debug() << "ArsTracker export scheduled next file dropped as stale:"
+                        << remote_file << "index" << index << "sequence" << sequence
+                        << "current sequence" << export_transition_sequence;
+            return;
+        }
+
+        log_debug() << "ArsTracker export next file running:" << remote_file
+                    << "index" << index << "sequence" << sequence
+                    << "reason" << reason;
+
+        request_next_download_or_finish();
+    });
+}
+
 void ars_tracker_backend::start_file_download(ars_tracker_download_item_t* item)
 {
+    if (item == nullptr)
+    {
+        return;
+    }
+
     QFileInfo partial_info(item->local_temp_file);
     bool      already_downloading = (item->status == ARS_TRACKER_STATUS_DOWNLOADING);
 
@@ -1765,6 +1891,11 @@ void ars_tracker_backend::start_file_download(ars_tracker_download_item_t* item)
                     .arg(QFileInfo(item->remote_file).fileName()));
         }
     }
+
+    log_debug() << "ArsTracker export download started:" << item->remote_file
+                << "index" << current_download_index
+                << "offset" << item->bytes_completed
+                << "total" << item->total_bytes;
 
     emit request_file_download(item->remote_file, item->local_temp_file);
 }
@@ -1804,6 +1935,12 @@ void ars_tracker_backend::request_next_download_or_finish()
             publish_progress_text(item.remote_file);
             emit status_message(
                 QString("Checking %1...").arg(QFileInfo(item.remote_file).fileName()));
+
+            log_debug() << "ArsTracker export metadata requested:" << item.remote_file
+                        << "index" << current_download_index
+                        << "hash" << export_hash_name
+                        << "partial bytes" << item.bytes_completed;
+
             emit request_file_metadata(item.remote_file, export_hash_name);
             return;
         }
@@ -1866,6 +2003,19 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
 
     ars_tracker_download_item_t& item = download_queue[current_download_index];
 
+    if (item.status != ARS_TRACKER_STATUS_DOWNLOADING)
+    {
+        log_debug() << "ArsTracker export download callback ignored in state:"
+                    << item.remote_file << "index" << current_download_index
+                    << "status" << int(item.status)
+                    << "callback status" << int(status);
+        return;
+    }
+
+    log_debug() << "ArsTracker export download completed:" << item.remote_file
+                << "index" << current_download_index
+                << "status" << int(status);
+
     if (status == STATUS_COMPLETE)
     {
         QFileInfo partial_info(item.local_temp_file);
@@ -1911,7 +2061,7 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
             item.status = ARS_TRACKER_STATUS_DOWNLOADING;
             item.error_text.clear();
             publish_export_file_rows();
-            start_file_download(&item);
+            schedule_current_file_download("download ended before expected size");
             return;
         }
 
@@ -1939,7 +2089,7 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
 
         publish_export_file_rows();
         publish_progress_text();
-        request_next_download_or_finish();
+        schedule_next_download_or_finish("download completed");
         return;
     }
 
@@ -1963,7 +2113,7 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
             current_download_index = -1;
             publish_export_file_rows();
             publish_progress_text();
-            request_next_download_or_finish();
+            schedule_next_download_or_finish("sensor missing during download");
             return;
         }
 
@@ -1973,7 +2123,7 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
         item.total_bytes = 0;
         publish_export_file_rows();
         publish_progress_text();
-        request_next_download_or_finish();
+        schedule_next_download_or_finish("remote file missing during download");
         return;
     }
 

@@ -72,13 +72,16 @@ private:
     static bool error_lookup(int32_t rc, QString *error);
     static bool error_define_lookup(int32_t rc, QString *error);
     bool parse_upload_response(QCborStreamReader &reader, uint32_t *off, bool *off_found);
-    bool parse_download_response(QCborStreamReader &reader, uint32_t *off, uint32_t *len, QByteArray *file_data);
+    bool parse_download_response(QCborStreamReader &reader, uint32_t *off, bool *off_found,
+                                 uint32_t *len, bool *len_found, QByteArray *file_data,
+                                 bool *data_found);
     bool parse_status_response(QCborStreamReader &reader, uint32_t *len);
     bool parse_hash_checksum_response(QCborStreamReader &reader, QString *type, QByteArray *hash_checksum, uint32_t *file_size);
     bool parse_supported_hashes_checksums_response(QCborStreamReader &reader, bool in_data, QString *key_name, hash_checksum_t *current_item);
 //    bool parse_file_close_response(QCborStreamReader &reader, int32_t *ret, QString *response);
     bool upload_chunk();
     bool download_chunk();
+    uint32_t download_chunk_payload_size();
     bool restart_download_from_zero();
     bool fail_download(const QString &message);
     void flip_endian(uint8_t *data, uint8_t size);
@@ -88,6 +91,8 @@ private:
     uint32_t local_file_size;
     uint32_t file_upload_area;
     uint32_t download_initial_offset;
+    uint32_t download_requested_offset;
+    uint32_t download_requested_length;
     bool download_restart_from_zero_attempted;
     QElapsedTimer upload_tmr;
     QString device_file_name;

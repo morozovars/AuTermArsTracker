@@ -11,6 +11,10 @@ QT += core gui widgets serialport
 TARGET = AuTerm
 TEMPLATE = app
 
+win32:debug {
+    QMAKE_LFLAGS_WINDOWS = -Wl,-subsystem,console
+}
+
 SOURCES += main.cpp\
     AutEscape.cpp \
     AutLogger.cpp \

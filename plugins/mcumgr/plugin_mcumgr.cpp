@@ -94,6 +94,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		ars_tracker_delete_loading = false;
 		ars_tracker_export_loading = false;
 		ars_tracker_clear_selection_on_next_refresh = false;
+		ars_tracker_export_fs_active = false;
+		ars_tracker_export_fs_phase = ARS_TRACKER_EXPORT_FS_IDLE;
+		ars_tracker_export_fs_sequence = 0;
+		ars_tracker_export_fs_size_response = 0;
 
 		QTabWidget* tabWidget_orig = parent_window->findChild<QTabWidget*>("selector_Tab");
 		selector_tab_root = tabWidget_orig;
@@ -4084,24 +4088,21 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 		if (user_data == ACTION_ARS_TRACKER_EXPORT_DOWNLOAD)
 		{
 				label_status = lbl_ars_tracker_status;
-				ars_tracker->handle_file_download_result(status, error_string);
+				handle_ars_tracker_export_fs_status(user_data, status, error_string);
 				skip_error_string = true;
 				finished = false;
 		}
 		else if (user_data == ACTION_ARS_TRACKER_EXPORT_METADATA)
 		{
 				label_status = lbl_ars_tracker_status;
-				ars_tracker->handle_file_metadata_result(status, error_string,
-																								 fs_hash_checksum_response,
-																								 fs_size_response);
+				handle_ars_tracker_export_fs_status(user_data, status, error_string);
 				skip_error_string = true;
 				finished = false;
 		}
 		else if (user_data == ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT)
 		{
 				label_status = lbl_ars_tracker_status;
-				ars_tracker->handle_export_hash_support_result(status, error_string,
-																									 supported_hash_checksum_list);
+				handle_ars_tracker_export_fs_status(user_data, status, error_string);
 				skip_error_string = true;
 				finished = false;
 		}
@@ -4333,6 +4334,25 @@ void plugin_mcumgr::progress(uint8_t user_data, uint8_t percent)
 
 				if (user_data == ACTION_ARS_TRACKER_EXPORT_DOWNLOAD)
 				{
+						if (ars_tracker_export_fs_active == false ||
+								ars_tracker_export_fs_phase != ARS_TRACKER_EXPORT_FS_DOWNLOAD)
+						{
+								log_debug() << "ArsTracker export fs progress ignored as stale:"
+														<< "user_data" << int(user_data)
+														<< "percent" << int(percent)
+														<< "active" << ars_tracker_export_fs_active
+														<< "phase"
+														<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+														<< "seq" << ars_tracker_export_fs_sequence;
+								return;
+						}
+
+						log_debug() << "ArsTracker export fs progress seq"
+												<< ars_tracker_export_fs_sequence
+												<< "phase"
+												<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+												<< "remote" << ars_tracker_export_fs_remote_file
+												<< "percent" << int(percent);
 						ars_tracker->handle_file_download_progress(percent);
 				}
 				else
@@ -5338,6 +5358,14 @@ void plugin_mcumgr::set_group_transport_settings(smp_group *group, uint32_t time
 				(timeout >= transport->get_timeout() ? timeout : transport->get_timeout()), mode);
 }
 
+void plugin_mcumgr::set_group_transport_settings(smp_group *group, mcumgr_action_t action)
+{
+		smp_transport* transport = active_transport();
+
+		group->set_parameters((check_V2_Protocol->isChecked() ? 1 : 0), edit_MTU->value(),
+													transport->get_retries(), transport->get_timeout(), action);
+}
+
 void plugin_mcumgr::on_btn_error_lookup_clicked()
 {
 		error_lookup_form->show();
@@ -5755,6 +5783,7 @@ void plugin_mcumgr::ars_tracker_export_finished(bool success, bool cancelled, co
 		Q_UNUSED(success);
 		Q_UNUSED(cancelled);
 
+		reset_ars_tracker_export_fs_operation();
 		mode = ACTION_IDLE;
 		relase_transport();
 		btn_cancel->setEnabled(false);
@@ -5793,24 +5822,183 @@ void plugin_mcumgr::ars_tracker_request_session_refresh_after_delete()
 		on_btn_ars_tracker_refresh_clicked();
 }
 
+QString plugin_mcumgr::ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase_t phase) const
+{
+		switch (phase)
+		{
+		case ARS_TRACKER_EXPORT_FS_IDLE:
+				return "idle";
+		case ARS_TRACKER_EXPORT_FS_HASH_SUPPORT:
+				return "hash_support";
+		case ARS_TRACKER_EXPORT_FS_METADATA:
+				return "metadata";
+		case ARS_TRACKER_EXPORT_FS_DOWNLOAD:
+				return "download";
+		}
+
+		return "unknown";
+}
+
+uint32_t plugin_mcumgr::begin_ars_tracker_export_fs_operation(
+		ars_tracker_export_fs_phase_t phase, const QString &remote_file, const QString &local_temp_file)
+{
+		++ars_tracker_export_fs_sequence;
+		ars_tracker_export_fs_active = true;
+		ars_tracker_export_fs_phase = phase;
+		ars_tracker_export_fs_remote_file = remote_file;
+		ars_tracker_export_fs_local_temp_file = local_temp_file;
+		ars_tracker_export_fs_hash_checksum_response.clear();
+		ars_tracker_export_fs_size_response = 0;
+
+		if (phase == ARS_TRACKER_EXPORT_FS_HASH_SUPPORT)
+		{
+				ars_tracker_export_supported_hash_checksum_list.clear();
+		}
+
+		log_debug() << "ArsTracker export fs op begin seq" << ars_tracker_export_fs_sequence
+								<< "phase" << ars_tracker_export_fs_phase_name(phase)
+								<< "remote" << remote_file
+								<< "local temp" << local_temp_file;
+
+		return ars_tracker_export_fs_sequence;
+}
+
+void plugin_mcumgr::reset_ars_tracker_export_fs_operation()
+{
+		if (ars_tracker_export_fs_active == true ||
+				ars_tracker_export_fs_phase != ARS_TRACKER_EXPORT_FS_IDLE)
+		{
+				log_debug() << "ArsTracker export fs op reset seq" << ars_tracker_export_fs_sequence
+										<< "phase" << ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+										<< "remote" << ars_tracker_export_fs_remote_file;
+		}
+
+		ars_tracker_export_fs_active = false;
+		ars_tracker_export_fs_phase = ARS_TRACKER_EXPORT_FS_IDLE;
+		ars_tracker_export_fs_remote_file.clear();
+		ars_tracker_export_fs_local_temp_file.clear();
+		ars_tracker_export_fs_hash_checksum_response.clear();
+		ars_tracker_export_fs_size_response = 0;
+}
+
+bool plugin_mcumgr::ars_tracker_export_fs_start_failed(uint32_t sequence,
+																											 ars_tracker_export_fs_phase_t phase,
+																											 const QString &remote_file,
+																											 const QString &error_message)
+{
+		if (ars_tracker_export_fs_active == false || ars_tracker_export_fs_sequence != sequence ||
+				ars_tracker_export_fs_phase != phase || ars_tracker_export_fs_remote_file != remote_file)
+		{
+				log_debug() << "ArsTracker export fs start failure ignored as stale seq" << sequence
+										<< "current seq" << ars_tracker_export_fs_sequence
+										<< "phase" << ars_tracker_export_fs_phase_name(phase)
+										<< "current phase"
+										<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+										<< "remote" << remote_file
+										<< "current remote" << ars_tracker_export_fs_remote_file;
+				return false;
+		}
+
+		log_debug() << "ArsTracker export fs start failed seq" << sequence
+								<< "phase" << ars_tracker_export_fs_phase_name(phase)
+								<< "remote" << remote_file << "error" << error_message;
+		reset_ars_tracker_export_fs_operation();
+		return true;
+}
+
+void plugin_mcumgr::handle_ars_tracker_export_fs_status(uint8_t user_data, group_status status,
+																												const QString &error_string)
+{
+		ars_tracker_export_fs_phase_t expected_phase = ARS_TRACKER_EXPORT_FS_IDLE;
+
+		if (user_data == ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT)
+		{
+				expected_phase = ARS_TRACKER_EXPORT_FS_HASH_SUPPORT;
+		}
+		else if (user_data == ACTION_ARS_TRACKER_EXPORT_METADATA)
+		{
+				expected_phase = ARS_TRACKER_EXPORT_FS_METADATA;
+		}
+		else if (user_data == ACTION_ARS_TRACKER_EXPORT_DOWNLOAD)
+		{
+				expected_phase = ARS_TRACKER_EXPORT_FS_DOWNLOAD;
+		}
+
+		if (ars_tracker_export_fs_active == false ||
+				ars_tracker_export_fs_phase != expected_phase)
+		{
+				log_debug() << "ArsTracker export fs status ignored as stale:"
+										<< "user_data" << int(user_data)
+										<< "status" << int(status)
+										<< "expected phase"
+										<< ars_tracker_export_fs_phase_name(expected_phase)
+										<< "current phase"
+										<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+										<< "active" << ars_tracker_export_fs_active
+										<< "seq" << ars_tracker_export_fs_sequence
+										<< "remote" << ars_tracker_export_fs_remote_file;
+				return;
+		}
+
+		const uint32_t sequence = ars_tracker_export_fs_sequence;
+		const QString remote_file = ars_tracker_export_fs_remote_file;
+		const QString local_temp_file = ars_tracker_export_fs_local_temp_file;
+		const QByteArray hash_response = ars_tracker_export_fs_hash_checksum_response;
+		const uint32_t size_response = ars_tracker_export_fs_size_response;
+		const QList<hash_checksum_t> supported_hashes =
+				ars_tracker_export_supported_hash_checksum_list;
+
+		log_debug() << "ArsTracker export fs status seq" << sequence
+								<< "phase" << ars_tracker_export_fs_phase_name(expected_phase)
+								<< "remote" << remote_file
+								<< "local temp" << local_temp_file
+								<< "status" << int(status)
+								<< "size" << size_response
+								<< "hash" << hash_response.toHex();
+
+		reset_ars_tracker_export_fs_operation();
+
+		if (expected_phase == ARS_TRACKER_EXPORT_FS_HASH_SUPPORT)
+		{
+				ars_tracker->handle_export_hash_support_result(status, error_string, supported_hashes);
+		}
+		else if (expected_phase == ARS_TRACKER_EXPORT_FS_METADATA)
+		{
+				ars_tracker->handle_file_metadata_result(status, error_string, hash_response, size_response);
+		}
+		else if (expected_phase == ARS_TRACKER_EXPORT_FS_DOWNLOAD)
+		{
+				ars_tracker->handle_file_download_result(status, error_string);
+		}
+}
+
 void plugin_mcumgr::ars_tracker_request_file_hash_support()
 {
 		mode = ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT;
 		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.fs_mgmt);
-		supported_hash_checksum_list.clear();
+		set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT);
+
+		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
+				ARS_TRACKER_EXPORT_FS_HASH_SUPPORT, QString());
 
 		bool started =
-				smp_groups.fs_mgmt->start_supported_hashes_checksums(&supported_hash_checksum_list);
+				smp_groups.fs_mgmt->start_supported_hashes_checksums(
+						&ars_tracker_export_supported_hash_checksum_list);
 
 		if (started == false)
 		{
-				ars_tracker->handle_export_hash_support_result(
-						STATUS_PROCESSOR_TRANSPORT_ERROR, QString("Could not query tracker file hash support."),
-						QList<hash_checksum_t>());
+				if (ars_tracker_export_fs_start_failed(
+								sequence, ARS_TRACKER_EXPORT_FS_HASH_SUPPORT, QString(),
+								QString("Could not query tracker file hash support.")) == true)
+				{
+						ars_tracker->handle_export_hash_support_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR,
+								QString("Could not query tracker file hash support."), QList<hash_checksum_t>());
+				}
 		}
 		else
 		{
+				log_debug() << "ArsTracker export hash support started seq" << sequence;
 				btn_cancel->setEnabled(true);
 		}
 }
@@ -5820,33 +6008,43 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 {
 		mode = ACTION_ARS_TRACKER_EXPORT_METADATA;
 		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.fs_mgmt);
-		fs_hash_checksum_response.clear();
-		fs_size_response = 0;
+		set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA);
+
+		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
+				ARS_TRACKER_EXPORT_FS_METADATA, remote_file);
 
 		bool started = false;
 
 		if (hash_name.isEmpty())
 		{
-				started = smp_groups.fs_mgmt->start_status(remote_file, &fs_size_response);
+				started = smp_groups.fs_mgmt->start_status(
+						remote_file, &ars_tracker_export_fs_size_response);
 		}
 		else
 		{
 				started = smp_groups.fs_mgmt->start_hash_checksum(remote_file, hash_name,
-																													&fs_hash_checksum_response,
-																													&fs_size_response);
+																													&ars_tracker_export_fs_hash_checksum_response,
+																													&ars_tracker_export_fs_size_response);
 		}
 
 		if (started == false)
 		{
-				ars_tracker->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
-																								 hash_name.isEmpty() ?
-																										 QString("Could not start remote file check.") :
-																										 QString("Could not start remote file verification."),
-																								 QByteArray(), 0);
+				QString error_message = hash_name.isEmpty() ?
+																QString("Could not start remote file check.") :
+																QString("Could not start remote file verification.");
+
+				if (ars_tracker_export_fs_start_failed(
+								sequence, ARS_TRACKER_EXPORT_FS_METADATA, remote_file, error_message) == true)
+				{
+						ars_tracker->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+																										 error_message, QByteArray(), 0);
+				}
 		}
 		else
 		{
+				log_debug() << "ArsTracker export metadata started seq" << sequence
+										<< "remote" << remote_file
+										<< "hash type" << hash_name;
 				btn_cancel->setEnabled(true);
 		}
 }
@@ -5855,23 +6053,45 @@ void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file
 {
 		mode = ACTION_ARS_TRACKER_EXPORT_DOWNLOAD;
 		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.fs_mgmt);
+		set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_DOWNLOAD);
+
+		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
+				ARS_TRACKER_EXPORT_FS_DOWNLOAD, remote_file, local_temp_file);
 
 		bool started = smp_groups.fs_mgmt->start_download(remote_file, local_temp_file);
 
 		if (started == false)
 		{
-				ars_tracker->handle_file_download_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
-																								 QString("Could not start file transfer."));
+				QString error_message = QString("Could not start file transfer.");
+
+				if (ars_tracker_export_fs_start_failed(
+								sequence, ARS_TRACKER_EXPORT_FS_DOWNLOAD, remote_file, error_message) == true)
+				{
+						ars_tracker->handle_file_download_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+																										 error_message);
+				}
 		}
 		else
 		{
+				log_debug() << "ArsTracker export download started seq" << sequence
+										<< "remote" << remote_file
+										<< "local temp" << local_temp_file;
 				btn_cancel->setEnabled(true);
 		}
 }
 
 void plugin_mcumgr::ars_tracker_request_cancel_file_download()
 {
+		if (ars_tracker_export_fs_active == false)
+		{
+				log_debug() << "ArsTracker export fs cancel ignored; no active fs op";
+				return;
+		}
+
+		log_debug() << "ArsTracker export fs cancel seq" << ars_tracker_export_fs_sequence
+								<< "phase"
+								<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+								<< "remote" << ars_tracker_export_fs_remote_file;
 		smp_groups.fs_mgmt->cancel();
 }
 

@@ -1400,6 +1400,20 @@ bool ars_tracker_backend::is_not_found_error(group_status   status,
            lowered.contains("enoent");
 }
 
+bool ars_tracker_backend::is_empty_file_error(group_status   status,
+                                              const QString& error_message) const
+{
+    if (status == STATUS_COMPLETE)
+    {
+        return false;
+    }
+
+    QString lowered = error_message.toLower();
+
+    return lowered.contains("file_empty") || lowered.contains("file is empty") ||
+           lowered.contains("file empty") || lowered.contains("empty with no contents");
+}
+
 bool ars_tracker_backend::finalize_downloaded_file(ars_tracker_download_item_t* item,
                                                    QString*                     error_message)
 {
@@ -1452,7 +1466,7 @@ QString ars_tracker_backend::to_status_text(ars_tracker_download_status_t status
     case ARS_TRACKER_STATUS_DOWNLOADED:
         return "Downloaded";
     case ARS_TRACKER_STATUS_MISSING:
-        return "Missing (skipped)";
+        return "Skipped";
     case ARS_TRACKER_STATUS_SENSORS_END:
         return "Sensors sequence complete";
     case ARS_TRACKER_STATUS_FAILED:
@@ -1636,6 +1650,34 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         item.remote_file_size = remote_size;
         item.remote_file_hash = remote_hash;
 
+        if (remote_size == 0)
+        {
+            QFile::remove(item.local_temp_file);
+
+            if (item.category == ARS_TRACKER_FILE_SENSOR)
+            {
+                sensors_enumeration_done = true;
+                download_queue.removeAt(current_download_index);
+                current_download_index = -1;
+                publish_export_file_rows();
+                publish_progress_text();
+                schedule_next_download_or_finish("sensor enumeration completed at empty file");
+                return;
+            }
+
+            item.status          = ARS_TRACKER_STATUS_MISSING;
+            item.error_text      = "Remote file is empty";
+            item.bytes_completed = 0;
+            item.total_bytes     = 0;
+            publish_export_file_rows();
+            publish_progress_text();
+            emit status_message(
+                QString("Skipping %1, remote file is empty.")
+                    .arg(QFileInfo(item.remote_file).fileName()));
+            schedule_next_download_or_finish("remote file empty");
+            return;
+        }
+
         QFileInfo partial_info(item.local_temp_file);
         QFileInfo local_info(item.local_file);
 
@@ -1722,7 +1764,38 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         item.total_bytes = 0;
         publish_export_file_rows();
         publish_progress_text();
+        emit status_message(
+            QString("Skipping %1, remote file is missing.")
+                .arg(QFileInfo(item.remote_file).fileName()));
         schedule_next_download_or_finish("remote file missing");
+        return;
+    }
+
+    if (is_empty_file_error(status, error_message))
+    {
+        QFile::remove(item.local_temp_file);
+
+        if (item.category == ARS_TRACKER_FILE_SENSOR)
+        {
+            sensors_enumeration_done = true;
+            download_queue.removeAt(current_download_index);
+            current_download_index = -1;
+            publish_export_file_rows();
+            publish_progress_text();
+            schedule_next_download_or_finish("sensor enumeration completed at empty file");
+            return;
+        }
+
+        item.status          = ARS_TRACKER_STATUS_MISSING;
+        item.error_text      = "Remote file is empty";
+        item.bytes_completed = 0;
+        item.total_bytes     = 0;
+        publish_export_file_rows();
+        publish_progress_text();
+        emit status_message(
+            QString("Skipping %1, remote file is empty.")
+                .arg(QFileInfo(item.remote_file).fileName()));
+        schedule_next_download_or_finish("remote file empty");
         return;
     }
 
@@ -2123,7 +2196,38 @@ void ars_tracker_backend::handle_file_download_result(group_status   status,
         item.total_bytes = 0;
         publish_export_file_rows();
         publish_progress_text();
+        emit status_message(
+            QString("Skipping %1, remote file is missing.")
+                .arg(QFileInfo(item.remote_file).fileName()));
         schedule_next_download_or_finish("remote file missing during download");
+        return;
+    }
+
+    if (is_empty_file_error(status, error_message))
+    {
+        QFile::remove(item.local_temp_file);
+
+        if (item.category == ARS_TRACKER_FILE_SENSOR)
+        {
+            sensors_enumeration_done = true;
+            download_queue.removeAt(current_download_index);
+            current_download_index = -1;
+            publish_export_file_rows();
+            publish_progress_text();
+            schedule_next_download_or_finish("sensor empty during download");
+            return;
+        }
+
+        item.status          = ARS_TRACKER_STATUS_MISSING;
+        item.error_text      = "Remote file is empty";
+        item.bytes_completed = 0;
+        item.total_bytes     = 0;
+        publish_export_file_rows();
+        publish_progress_text();
+        emit status_message(
+            QString("Skipping %1, remote file is empty.")
+                .arg(QFileInfo(item.remote_file).fileName()));
+        schedule_next_download_or_finish("remote file empty during download");
         return;
     }
 

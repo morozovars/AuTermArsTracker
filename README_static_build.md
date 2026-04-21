@@ -125,6 +125,77 @@ Additional arguments are forwarded to qmake:
 scripts\configure_static_qt_windows.bat DEFINES+=SKIPONLINE
 ```
 
+
+## Building Static Qt Used For AuTerm
+
+The repository does **not** build Qt itself. Below is a known working example
+of how the static Qt used for AuTerm was built.
+
+Open **"x64 Native Tools Command Prompt for VS 2022"** and switch to the
+AuTerm repository root.
+
+Set paths:
+
+```bat
+set SRC=C:\Qt\6.9.2\Src
+set BUILD=C:\Qt\st_msvc3
+set PREFIX=C:\Qt\st_msvc3_install
+```
+
+Create a clean Qt build directory:
+
+```bat
+rmdir /s /q %BUILD%
+mkdir %BUILD%
+cd /d %BUILD%
+```
+
+Configure static Qt:
+
+```bat
+"%SRC%\configure.bat" -static -release -prefix "%PREFIX%" ^
+  -skip qtwebengine ^
+  -skip qtdoc ^
+  -skip qtgrpc ^
+  -skip qtmultimedia ^
+  -skip qt3d ^
+  -skip qtquick3d ^
+  -skip qtquick3dphysics ^
+  -skip qtquickeffectmaker ^
+  -skip qtgraphs ^
+  -skip qtcharts ^
+  -skip qtlocation ^
+  -skip qtpositioning ^
+  -skip qtremoteobjects ^
+  -skip qtscxml ^
+  -skip qtsensors ^
+  -skip qtserialbus ^
+  -skip qtspeech ^
+  -skip qtvirtualkeyboard ^
+  -skip qtwayland ^
+  -skip qtwebview ^
+  -- ^
+  -DCMAKE_C_COMPILER=cl ^
+  -DCMAKE_CXX_COMPILER=cl
+```
+
+Build Qt and save the log to a file:
+
+```bat
+set CL=
+cmake --build . --parallel > build_log.txt 2>&1
+findstr /i /c:" error " /c:": error C" /c:"fatal error" build_log.txt
+```
+
+Install the finished static Qt into the prefix directory:
+
+```bat
+cmake --install .
+```
+
+The directory from `PREFIX` is the static Qt installation that must later be
+passed to AuTerm through `AUTERM_STATIC_QT_DIR`.
+
 ## Qt Plugins
 
 The project imports only plugins that are required or low-risk for the current
@@ -212,3 +283,27 @@ dynamic and must be handled in the toolchain or static Qt build.
 - Re-run qmake after changing Qt modules, defines, or plugin settings.
 - Check the licensing requirements for static Qt and all statically linked
   dependencies before distributing the result.
+
+
+## Building AuTerm.exe With The Installed Static Qt
+
+Open **"x64 Native Tools Command Prompt for VS 2022"** in the AuTerm
+repository root.
+
+Point AuTerm build scripts to the **installed** static Qt directory from
+`PREFIX`, not to the temporary Qt build directory:
+
+```bat
+set AUTERM_STATIC_QT_DIR=C:\Qt\st_msvc3_install
+```
+
+Then build AuTerm:
+
+```bat
+scripts\build_static_release_windows.bat
+```
+
+`AUTERM_STATIC_QT_DIR` must point to the Qt **install** directory that contains
+`bin\qmake.exe`, `lib`, `include`, and `mkspecs`.
+It must **not** point to the intermediate Qt build directory.
+

@@ -201,6 +201,7 @@ private:
     void publish_progress_text(const QString &current_file = QString());
 
     bool is_not_found_error(group_status status, const QString &error_message) const;
+    bool is_empty_file_error(group_status status, const QString &error_message) const;
     bool finalize_downloaded_file(ars_tracker_download_item_t *item, QString *error_message);
     QString to_status_text(ars_tracker_download_status_t status) const;
 #ifndef SKIPPLUGIN_LOGGER

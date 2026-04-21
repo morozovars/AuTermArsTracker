@@ -36,3 +36,5 @@ SUBDIRS += \
         }
     }
 }
+RESOURCES += \
+    AuTermImages.qrc

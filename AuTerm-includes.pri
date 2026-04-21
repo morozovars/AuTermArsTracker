@@ -4,6 +4,16 @@
 # Build for x86_64 and arm64 on mac
 QMAKE_APPLE_DEVICE_ARCHS = x86_64 arm64
 
+# Optional profile used by the Windows static Qt build scripts.
+contains(CONFIG, auterm_static) {
+    CONFIG += static
+    DEFINES += "AUTERM_STATIC_QT_BUILD"
+}
+
+win32:contains(CONFIG, static) {
+    DEFINES += "AUTERM_STATIC_QT_BUILD"
+}
+
 # Uncomment to exclude building automation form
 #DEFINES += "SKIPAUTOMATIONFORM"
 

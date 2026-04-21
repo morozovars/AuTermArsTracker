@@ -35,6 +35,9 @@
 #include <QFileInfo>
 #include <QMutex>
 #include <QThread>
+#if defined(QT_STATIC) && defined(Q_OS_WIN)
+#include <QtPlugin>
+#endif
 #include <cstdlib>
 #include <cstdio>
 #if TARGET_OS_MAC
@@ -42,6 +45,14 @@
 #endif
 #if defined(Q_OS_WIN)
 #include <windows.h>
+#endif
+
+#if defined(QT_STATIC) && defined(Q_OS_WIN) && defined(AUTERM_IMPORT_WINDOWS_QPA_PLUGIN)
+Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)
+#endif
+
+#if defined(QT_STATIC) && defined(Q_OS_WIN) && defined(AUTERM_IMPORT_WINDOWS_VISTA_STYLE_PLUGIN)
+Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin)
 #endif
 
 #ifndef QT_NO_DEBUG

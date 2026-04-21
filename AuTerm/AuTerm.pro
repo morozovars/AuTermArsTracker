@@ -2,6 +2,13 @@
 
 include(../AuTerm-includes.pri)
 
+# Common build location
+CONFIG(release, debug|release) {
+    DESTDIR = ../release
+} else {
+    DESTDIR = ../debug
+}
+
 QT += core gui widgets serialport
 
 !contains(DEFINES, SKIPONLINE) {
@@ -101,6 +108,22 @@ win32:RC_ICONS = images/AuTerm32.ico
 
 # Mac application icon
 ICON = MacAuTermIcon.icns
+
+# Windows static Qt build support. This is intentionally scoped to the app
+# target; the top-level subdirs project only orchestrates build order.
+win32:contains(CONFIG, static) {
+    QTPLUGIN += qwindows
+    DEFINES += "AUTERM_IMPORT_WINDOWS_QPA_PLUGIN"
+
+    contains(QT_CONFIG, style-windowsvista) {
+        QTPLUGIN += qwindowsvistastyle
+        DEFINES += "AUTERM_IMPORT_WINDOWS_VISTA_STYLE_PLUGIN"
+    }
+
+    !isEmpty(AUTERM_STATIC_QT_EXTRA_PLUGINS) {
+        QTPLUGIN += $$AUTERM_STATIC_QT_EXTRA_PLUGINS
+    }
+}
 
 # Common build location
 CONFIG(release, debug|release) {

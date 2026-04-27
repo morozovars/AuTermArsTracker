@@ -50,6 +50,8 @@
 #include "smp_json.h"
 #include "ars_tracker_backend.h"
 
+class QSerialPort;
+
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
 #include "smp_udp.h"
 #endif
@@ -160,12 +162,30 @@ enum ars_tracker_export_fs_phase_t : uint8_t {
     ARS_TRACKER_EXPORT_FS_DOWNLOAD,
 };
 
+enum ars_tracker_ui_state_t : uint8_t {
+    ARS_TRACKER_UI_STATE_DISCONNECTED = 0,
+    ARS_TRACKER_UI_STATE_SCANNING,
+    ARS_TRACKER_UI_STATE_CONNECTING,
+    ARS_TRACKER_UI_STATE_CONNECTED,
+    ARS_TRACKER_UI_STATE_DISCONNECTING,
+};
+
+struct ars_tracker_port_scan_result_t {
+    QString port_name;
+    QString serial_number;
+};
+
 class ars_tracker_port_combo_box : public QComboBox
 {
     Q_OBJECT
 
 public:
     using QComboBox::QComboBox;
+    void show_popup_without_refresh()
+    {
+        suppress_popup_refresh = true;
+        QComboBox::showPopup();
+    }
 
 signals:
     void popup_about_to_show();
@@ -173,9 +193,19 @@ signals:
 protected:
     void showPopup() override
     {
-        emit popup_about_to_show();
+        if (suppress_popup_refresh == false)
+        {
+            emit popup_about_to_show();
+        }
+        else
+        {
+            suppress_popup_refresh = false;
+        }
         QComboBox::showPopup();
     }
+
+private:
+    bool suppress_popup_refresh = false;
 };
 
 class plugin_mcumgr : public QObject, AutPlugin
@@ -201,6 +231,7 @@ signals:
     void plugin_to_hex(QByteArray *data);
     void plugin_serial_open_close(uint8_t mode);
     void plugin_serial_is_open(bool *open);
+    void plugin_serial_state(bool *open, bool *opening);
     void plugin_serial_ports(QStringList *ports, QString *selected_port);
     void plugin_serial_select(QString port);
 
@@ -324,7 +355,31 @@ private:
     bool ars_tracker_transport_usable();
     bool ars_tracker_tab_is_active() const;
     void maybe_auto_refresh_ars_tracker();
+    QString ars_tracker_selected_port_name() const;
+    bool ars_tracker_has_selected_port() const;
+    bool ars_tracker_combo_has_selectable_port() const;
+    bool ars_tracker_main_serial_state(bool *open, bool *opening);
+    ars_tracker_ui_state_t ars_tracker_current_ui_state(bool loading);
+    QString ars_tracker_ui_state_to_string(ars_tracker_ui_state_t state);
+    QString ars_tracker_port_display_text(const QString &port_name,
+                                          const QString &serial_number) const;
     void refresh_ars_tracker_serial_ports();
+    void populate_ars_tracker_serial_ports(const QList<ars_tracker_port_scan_result_t> &ports,
+                                           const QString &selected_port,
+                                           const QString &placeholder_text = QString());
+    void start_ars_tracker_port_scan();
+    void finish_ars_tracker_port_scan(const QString &status_message);
+    void begin_next_ars_tracker_port_probe();
+    void send_ars_tracker_port_probe_command();
+    void configure_ars_tracker_scan_serial_port(const QString &port_name);
+    void complete_ars_tracker_port_probe(bool matched, const QString &serial_number,
+                                         const QString &reason);
+    bool current_ars_tracker_serial_number(QString *serial_number) const;
+    void handle_ars_tracker_scan_serial_ready_read();
+    void handle_ars_tracker_scan_serial_write(QByteArray *data);
+    void handle_ars_tracker_scan_serial_error();
+    void handle_ars_tracker_scan_shell_status(uint8_t user_data, group_status status,
+                                              QString error_string);
     void sync_ars_tracker_serial_controls(bool loading);
     void set_group_transport_settings(smp_group *group);
     void set_group_transport_settings(smp_group *group, uint32_t timeout);
@@ -703,10 +758,13 @@ private:
     QList<memory_pool_t> memory_list;
     int32_t shell_rc;
     int32_t ars_tracker_shell_rc;
+    int32_t ars_tracker_port_scan_shell_rc;
     bool ars_tracker_info_loading;
     bool ars_tracker_loading;
     bool ars_tracker_delete_loading;
     bool ars_tracker_export_loading;
+    bool ars_tracker_port_scan_active;
+    bool ars_tracker_serial_transition_active;
     bool ars_tracker_clear_selection_on_next_refresh;
     bool ars_tracker_export_fs_active;
     ars_tracker_export_fs_phase_t ars_tracker_export_fs_phase;
@@ -753,6 +811,18 @@ private:
 #ifndef SKIPPLUGIN_LOGGER
     debug_logger *logger;
 #endif
+    QSerialPort *ars_tracker_scan_serial_port;
+    smp_uart_auterm *ars_tracker_scan_transport;
+    smp_processor *ars_tracker_scan_processor;
+    smp_group_shell_mgmt *ars_tracker_scan_shell_mgmt;
+    QList<ars_tracker_port_scan_result_t> ars_tracker_scan_results;
+    QStringList ars_tracker_scan_pending_ports;
+    QString ars_tracker_scan_selected_port;
+    QString ars_tracker_scan_current_port;
+    int ars_tracker_scan_port_index;
+    bool ars_tracker_scan_main_serial_open;
+    bool ars_tracker_scan_probe_active;
+    bool ars_tracker_scan_command_started;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

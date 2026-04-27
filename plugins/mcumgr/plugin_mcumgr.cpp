@@ -28,11 +28,37 @@
 #include <QTimeZone>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QTimer>
+#include <QSerialPort>
+#include <QSerialPortInfo>
 #include "plugin_mcumgr.h"
+#include "ars_tracker_parser.h"
 
 static const uint16_t timeout_erase_ms = 14000;
 static const uint32_t timeout_ars_tracker_metadata_ms = 60000;
 static const uint8_t retries_ars_tracker_metadata = 0;
+static const uint32_t ars_tracker_port_scan_open_delay_ms = 100;
+static const uint32_t timeout_ars_tracker_port_scan_ms = 2000;
+static const uint8_t retries_ars_tracker_port_scan = 0;
+
+static QString ars_tracker_scan_status_to_string(group_status status)
+{
+		switch (status)
+		{
+		case STATUS_COMPLETE:
+				return "complete";
+		case STATUS_ERROR:
+				return "error";
+		case STATUS_TIMEOUT:
+				return "timeout";
+		case STATUS_CANCELLED:
+				return "cancelled";
+		case STATUS_PROCESSOR_TRANSPORT_ERROR:
+				return "processor_transport_error";
+		default:
+				return QString("unknown(%1)").arg(int(status));
+		}
+}
 
 enum tree_img_slot_info_columns
 {
@@ -91,15 +117,26 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		child_row             = -1;
 		child_column          = -1;
 		ars_tracker_shell_rc   = 0;
+		ars_tracker_port_scan_shell_rc = 0;
 		ars_tracker_info_loading = false;
 		ars_tracker_loading    = false;
 		ars_tracker_delete_loading = false;
 		ars_tracker_export_loading = false;
+		ars_tracker_port_scan_active = false;
+		ars_tracker_serial_transition_active = false;
 		ars_tracker_clear_selection_on_next_refresh = false;
 		ars_tracker_export_fs_active = false;
 		ars_tracker_export_fs_phase = ARS_TRACKER_EXPORT_FS_IDLE;
 		ars_tracker_export_fs_sequence = 0;
 		ars_tracker_export_fs_size_response = 0;
+		ars_tracker_scan_serial_port = new QSerialPort(this);
+		ars_tracker_scan_transport = new smp_uart_auterm(this);
+		ars_tracker_scan_processor = new smp_processor(this);
+		ars_tracker_scan_shell_mgmt = new smp_group_shell_mgmt(ars_tracker_scan_processor);
+		ars_tracker_scan_port_index = 0;
+		ars_tracker_scan_main_serial_open = false;
+		ars_tracker_scan_probe_active = false;
+		ars_tracker_scan_command_started = false;
 
 		QTabWidget* tabWidget_orig = parent_window->findChild<QTabWidget*>("selector_Tab");
 		selector_tab_root = tabWidget_orig;
@@ -2368,6 +2405,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						SLOT(plugin_serial_open_close(uint8_t)));
 		connect(this, SIGNAL(plugin_serial_ports(QStringList*,QString*)), parent_window,
 						SLOT(plugin_serial_ports(QStringList*,QString*)));
+		connect(this, SIGNAL(plugin_serial_state(bool*,bool*)), parent_window,
+						SLOT(plugin_serial_state(bool*,bool*)));
 		connect(this, SIGNAL(plugin_serial_select(QString)), parent_window,
 						SLOT(plugin_serial_select(QString)));
 
@@ -2388,6 +2427,19 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						SLOT(plugin_serial_transmit(QByteArray*)));
 		connect(uart_transport, SIGNAL(receive_waiting(smp_message*)), processor,
 						SLOT(message_received(smp_message*)));
+		connect(ars_tracker_scan_transport, &smp_uart_auterm::serial_write, this,
+						&plugin_mcumgr::handle_ars_tracker_scan_serial_write);
+		connect(ars_tracker_scan_transport, &smp_uart_auterm::receive_waiting,
+						ars_tracker_scan_processor, &smp_processor::message_received);
+		connect(ars_tracker_scan_serial_port, &QSerialPort::readyRead, this,
+						&plugin_mcumgr::handle_ars_tracker_scan_serial_ready_read);
+		connect(ars_tracker_scan_serial_port, &QSerialPort::errorOccurred, this,
+						[this](QSerialPort::SerialPortError error) {
+								Q_UNUSED(error);
+								handle_ars_tracker_scan_serial_error();
+						});
+		connect(ars_tracker_scan_shell_mgmt, &smp_group_shell_mgmt::status, this,
+						&plugin_mcumgr::handle_ars_tracker_scan_shell_status);
 
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
 		connect(udp_transport, SIGNAL(receive_waiting(smp_message*)), processor,
@@ -2592,16 +2644,58 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						&plugin_mcumgr::ars_tracker_request_file_metadata);
 		connect(list_ars_tracker_sessions, SIGNAL(itemSelectionChanged()), this,
 						SLOT(on_list_ars_tracker_sessions_itemSelectionChanged()));
-		connect(combo_ars_tracker_port, &QComboBox::currentTextChanged, this,
-						[this](const QString& text) {
-								if (text.trimmed().isEmpty() == false)
+		connect(combo_ars_tracker_port,
+						QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+						[this](int index) {
+								if (index < 0)
 								{
-										emit plugin_serial_select(text);
+										return;
+								}
+
+								QString port_name =
+										combo_ars_tracker_port->itemData(index, Qt::UserRole).toString();
+								if (port_name.trimmed().isEmpty() == false)
+								{
+										emit plugin_serial_select(port_name);
 								}
 						});
 
+		btn_ars_tracker_connect->setProperty("auterm_open_close_connect_click", false);
 		btn_ars_tracker_connect->setProperty("auterm_open_close_text_style", "connect");
 		emit plugin_add_open_close_button(btn_ars_tracker_connect);
+		connect(btn_ars_tracker_connect, &QPushButton::clicked, this, [this]() {
+				bool serial_open = false;
+				bool serial_opening = false;
+				ars_tracker_main_serial_state(&serial_open, &serial_opening);
+
+				if (serial_open == false && serial_opening == false)
+				{
+						QString port_name = ars_tracker_selected_port_name();
+						if (port_name.isEmpty())
+						{
+								lbl_ars_tracker_status->setText("No ArsTracker device selected.");
+								return;
+						}
+
+						emit plugin_serial_select(port_name);
+				}
+
+				ars_tracker_serial_transition_active = true;
+				sync_ars_tracker_serial_controls(
+						ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+						ars_tracker_export_loading);
+				emit plugin_serial_open_close(2);
+
+				ars_tracker_main_serial_state(&serial_open, &serial_opening);
+				if (serial_open == false && serial_opening == false)
+				{
+						ars_tracker_serial_transition_active = false;
+						sync_ars_tracker_serial_controls(
+								ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+								ars_tracker_export_loading);
+				}
+		});
+
 
 		refresh_ars_tracker_serial_ports();
 		set_ars_tracker_controls_loading(false);
@@ -2639,6 +2733,9 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 #ifndef SKIPPLUGIN_LOGGER
 		processor->set_logger(logger);
 		uart_transport->set_logger(logger);
+		ars_tracker_scan_processor->set_logger(logger);
+		ars_tracker_scan_transport->set_logger(logger);
+		ars_tracker_scan_shell_mgmt->set_logger(logger);
 
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
 		udp_transport->set_logger(logger);
@@ -2708,6 +2805,8 @@ plugin_mcumgr::~plugin_mcumgr()
 							 SLOT(plugin_to_hex(QByteArray*)));
 		disconnect(this, SIGNAL(plugin_serial_open_close(uint8_t)), parent_window,
 							 SLOT(plugin_serial_open_close(uint8_t)));
+		disconnect(this, SIGNAL(plugin_serial_state(bool*,bool*)), parent_window,
+							 SLOT(plugin_serial_state(bool*,bool*)));
 		disconnect(this, SIGNAL(plugin_serial_ports(QStringList*,QString*)), parent_window,
 							 SLOT(plugin_serial_ports(QStringList*,QString*)));
 		disconnect(this, SIGNAL(plugin_serial_select(QString)), parent_window,
@@ -2824,6 +2923,13 @@ plugin_mcumgr::~plugin_mcumgr()
 		delete smp_groups.os_mgmt;
 		delete smp_groups.img_mgmt;
 		delete smp_groups.fs_mgmt;
+		if (ars_tracker_scan_serial_port != nullptr && ars_tracker_scan_serial_port->isOpen())
+		{
+				ars_tracker_scan_serial_port->close();
+		}
+		delete ars_tracker_scan_shell_mgmt;
+		delete ars_tracker_scan_processor;
+		delete ars_tracker_scan_transport;
 		delete processor;
 		delete log_json;
 		delete uart_transport;
@@ -2895,7 +3001,7 @@ void plugin_mcumgr::serial_about_to_close()
 void plugin_mcumgr::serial_opened()
 {
 		btn_transport_connect->setText("Close");
-		refresh_ars_tracker_serial_ports();
+		ars_tracker_serial_transition_active = false;
 		sync_ars_tracker_serial_controls(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
 				ars_tracker_export_loading);
@@ -2904,6 +3010,7 @@ void plugin_mcumgr::serial_opened()
 
 void plugin_mcumgr::serial_closed()
 {
+		ars_tracker_serial_transition_active = false;
 		refresh_ars_tracker_serial_ports();
 		sync_ars_tracker_serial_controls(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
@@ -5409,32 +5516,689 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports()
 				return;
 		}
 
-		QStringList ports;
-		QString     selected_port;
-		QString     previous_selection = combo_ars_tracker_port->currentText();
-
-		emit plugin_serial_ports(&ports, &selected_port);
-
-		bool blocked = combo_ars_tracker_port->blockSignals(true);
-		combo_ars_tracker_port->clear();
-		combo_ars_tracker_port->addItems(ports);
-
-		QString target_port = selected_port.isEmpty() == false ? selected_port : previous_selection;
-		int index = combo_ars_tracker_port->findText(target_port);
-
-		if (index >= 0)
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		if (serial_open == true || serial_opening == true ||
+				ars_tracker_serial_transition_active == true)
 		{
-				combo_ars_tracker_port->setCurrentIndex(index);
+				log_debug()
+						<< "ArsTracker port scan skipped because main transport is connected/connecting";
+				sync_ars_tracker_serial_controls(
+						ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+						ars_tracker_export_loading);
+				return;
 		}
-		else if (combo_ars_tracker_port->count() > 0)
+
+		start_ars_tracker_port_scan();
+}
+
+QString plugin_mcumgr::ars_tracker_selected_port_name() const
+{
+		if (combo_ars_tracker_port == nullptr)
 		{
+				return QString();
+		}
+
+		int current_index = combo_ars_tracker_port->currentIndex();
+		if (current_index < 0)
+		{
+				return QString();
+		}
+
+		return combo_ars_tracker_port->itemData(current_index, Qt::UserRole).toString().trimmed();
+}
+
+bool plugin_mcumgr::ars_tracker_has_selected_port() const
+{
+		return ars_tracker_selected_port_name().isEmpty() == false;
+}
+
+bool plugin_mcumgr::ars_tracker_combo_has_selectable_port() const
+{
+		if (combo_ars_tracker_port == nullptr)
+		{
+				return false;
+		}
+
+		for (int i = 0; i < combo_ars_tracker_port->count(); ++i)
+		{
+				if (combo_ars_tracker_port->itemData(i, Qt::UserRole).toString().trimmed().isEmpty() ==
+						false)
+				{
+						return true;
+				}
+		}
+
+		return false;
+}
+
+bool plugin_mcumgr::ars_tracker_main_serial_state(bool *open, bool *opening)
+{
+		bool local_open = false;
+		bool local_opening = false;
+		emit plugin_serial_state(&local_open, &local_opening);
+
+		if (open != nullptr)
+		{
+				*open = local_open;
+		}
+
+		if (opening != nullptr)
+		{
+				*opening = local_opening;
+		}
+
+		return true;
+}
+
+ars_tracker_ui_state_t plugin_mcumgr::ars_tracker_current_ui_state(bool loading)
+{
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+
+		if (ars_tracker_port_scan_active == true)
+		{
+				return ARS_TRACKER_UI_STATE_SCANNING;
+		}
+
+		if (serial_open == true)
+		{
+				return ARS_TRACKER_UI_STATE_CONNECTED;
+		}
+
+		if (ars_tracker_serial_transition_active == true || serial_opening == true)
+		{
+				return ARS_TRACKER_UI_STATE_CONNECTING;
+		}
+
+		Q_UNUSED(loading);
+		return ARS_TRACKER_UI_STATE_DISCONNECTED;
+}
+
+QString plugin_mcumgr::ars_tracker_ui_state_to_string(ars_tracker_ui_state_t state)
+{
+		switch (state)
+		{
+		case ARS_TRACKER_UI_STATE_DISCONNECTED:
+				return "disconnected";
+		case ARS_TRACKER_UI_STATE_SCANNING:
+				return "scanning";
+		case ARS_TRACKER_UI_STATE_CONNECTING:
+				return "connecting";
+		case ARS_TRACKER_UI_STATE_CONNECTED:
+				return "connected";
+		case ARS_TRACKER_UI_STATE_DISCONNECTING:
+				return "disconnecting";
+		default:
+				return "unknown";
+		}
+}
+
+QString plugin_mcumgr::ars_tracker_port_display_text(const QString &port_name,
+																									 const QString &serial_number) const
+{
+		return serial_number.trimmed().isEmpty() ? port_name :
+																						port_name % "  " % serial_number.trimmed();
+}
+
+void plugin_mcumgr::populate_ars_tracker_serial_ports(
+		const QList<ars_tracker_port_scan_result_t> &ports, const QString &selected_port,
+		const QString &placeholder_text)
+{
+		if (combo_ars_tracker_port == nullptr)
+		{
+				return;
+		}
+
+		bool was_popup_visible =
+				combo_ars_tracker_port->view() != nullptr && combo_ars_tracker_port->view()->isVisible();
+		QSignalBlocker blocker(combo_ars_tracker_port);
+		combo_ars_tracker_port->clear();
+		log_debug() << "ArsTracker UI updating port combo. ports count:" << ports.count()
+								<< "selected port:" << selected_port
+								<< "placeholder:" << placeholder_text
+								<< "popup visible:" << was_popup_visible;
+
+		if (placeholder_text.isEmpty() == false)
+		{
+				log_debug() << "ArsTracker UI add placeholder item display=" << placeholder_text;
+				combo_ars_tracker_port->addItem(placeholder_text, QString());
 				combo_ars_tracker_port->setCurrentIndex(0);
 		}
+		else
+		{
+				for (const ars_tracker_port_scan_result_t &port : ports)
+				{
+						QString display_text =
+								ars_tracker_port_display_text(port.port_name, port.serial_number);
+						log_debug() << "ArsTracker UI add port item display=" << display_text
+												<< "data=" << port.port_name;
+						combo_ars_tracker_port->addItem(display_text, port.port_name);
+				}
 
-		combo_ars_tracker_port->blockSignals(blocked);
+				int index = -1;
+				if (selected_port.trimmed().isEmpty() == false)
+				{
+						index = combo_ars_tracker_port->findData(selected_port, Qt::UserRole);
+				}
+
+				if (index < 0 && combo_ars_tracker_port->count() > 0)
+				{
+						index = 0;
+				}
+
+				if (index >= 0)
+				{
+						combo_ars_tracker_port->setCurrentIndex(index);
+				}
+		}
+
+		log_debug() << "ArsTracker UI port combo updated. combo count:"
+								<< combo_ars_tracker_port->count() << "current index:"
+								<< combo_ars_tracker_port->currentIndex() << "current data:"
+								<< combo_ars_tracker_port->currentData(Qt::UserRole).toString();
+
+		if (was_popup_visible == true && placeholder_text.isEmpty() == false)
+		{
+				combo_ars_tracker_port->hidePopup();
+				combo_ars_tracker_port->show_popup_without_refresh();
+		}
+		else if (was_popup_visible == true && ports.count() > 1)
+		{
+				combo_ars_tracker_port->hidePopup();
+				combo_ars_tracker_port->show_popup_without_refresh();
+		}
+}
+
+void plugin_mcumgr::start_ars_tracker_port_scan()
+{
+		if (ars_tracker_port_scan_active == true)
+		{
+				log_debug() << "ArsTracker port scan request ignored because a scan is already running";
+				return;
+		}
+
+		ars_tracker_scan_results.clear();
+		ars_tracker_scan_pending_ports.clear();
+		ars_tracker_scan_current_port.clear();
+		ars_tracker_scan_port_index = 0;
+		ars_tracker_scan_main_serial_open = false;
+		ars_tracker_scan_probe_active = false;
+		ars_tracker_scan_command_started = false;
+		ars_tracker_scan_selected_port.clear();
+
+		QStringList system_ports;
+		const QList<QSerialPortInfo> available_ports = QSerialPortInfo::availablePorts();
+		for (const QSerialPortInfo &info : available_ports)
+		{
+				system_ports.append(info.portName());
+		}
+
+		ars_tracker_scan_pending_ports = system_ports;
+		ars_tracker_scan_selected_port = ars_tracker_selected_port_name();
+		if (ars_tracker_scan_selected_port.isEmpty())
+		{
+				QComboBox *main_combo = parent_window->findChild<QComboBox*>("combo_COM");
+				if (main_combo != nullptr)
+				{
+						ars_tracker_scan_selected_port = main_combo->currentText().trimmed();
+				}
+		}
+
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		if (serial_open == true || serial_opening == true ||
+				ars_tracker_serial_transition_active == true)
+		{
+				log_debug()
+						<< "ArsTracker port scan skipped because main transport is connected/connecting";
+				return;
+		}
+		ars_tracker_scan_main_serial_open = serial_open;
+		ars_tracker_port_scan_active = true;
+		ars_tracker_scan_shell_mgmt->cancel();
+		ars_tracker_scan_processor->cancel();
+		ars_tracker_scan_transport->reset_state();
+
+		log_debug() << "ArsTracker port scan started. System ports:" << system_ports
+								<< "selected port:" << ars_tracker_scan_selected_port
+								<< "main serial open:" << ars_tracker_scan_main_serial_open;
+
+		populate_ars_tracker_serial_ports(QList<ars_tracker_port_scan_result_t>(),
+																			ars_tracker_scan_selected_port, "Scanning...");
+		lbl_ars_tracker_status->setText("Scanning ArsTracker serial ports...");
 		sync_ars_tracker_serial_controls(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
-				ars_tracker_export_loading);
+				ars_tracker_export_loading || ars_tracker_port_scan_active);
+
+		if (ars_tracker_scan_pending_ports.isEmpty())
+		{
+				finish_ars_tracker_port_scan("No ArsTracker devices found.");
+				return;
+		}
+
+		QTimer::singleShot(0, this, &plugin_mcumgr::begin_next_ars_tracker_port_probe);
+}
+
+void plugin_mcumgr::finish_ars_tracker_port_scan(const QString &status_message)
+{
+		if (ars_tracker_scan_shell_mgmt != nullptr)
+		{
+				ars_tracker_scan_shell_mgmt->cancel();
+		}
+
+		if (ars_tracker_scan_processor != nullptr)
+		{
+				ars_tracker_scan_processor->cancel();
+		}
+
+		if (ars_tracker_scan_transport != nullptr)
+		{
+				ars_tracker_scan_transport->reset_state();
+		}
+
+		if (ars_tracker_scan_serial_port != nullptr && ars_tracker_scan_serial_port->isOpen())
+		{
+				ars_tracker_scan_serial_port->close();
+		}
+
+		ars_tracker_port_scan_active = false;
+		ars_tracker_scan_probe_active = false;
+		ars_tracker_scan_command_started = false;
+		ars_tracker_scan_current_port.clear();
+
+		QStringList filtered_ports;
+		for (const ars_tracker_port_scan_result_t &port : ars_tracker_scan_results)
+		{
+				filtered_ports.append(ars_tracker_port_display_text(port.port_name, port.serial_number));
+		}
+
+		if (ars_tracker_scan_results.isEmpty())
+		{
+				populate_ars_tracker_serial_ports(ars_tracker_scan_results,
+																			ars_tracker_scan_selected_port,
+																			"No ArsTracker devices found");
+		}
+		else
+		{
+				populate_ars_tracker_serial_ports(ars_tracker_scan_results,
+																			ars_tracker_scan_selected_port);
+		}
+
+		log_debug() << "ArsTracker port scan finished. Filtered ports:" << filtered_ports;
+
+		lbl_ars_tracker_status->setText(status_message);
+		sync_ars_tracker_serial_controls(
+				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
+				ars_tracker_export_loading || ars_tracker_port_scan_active);
+
+		bool serial_open = false;
+		emit plugin_serial_is_open(&serial_open);
+		if (serial_open == false)
+		{
+				QString port_name = ars_tracker_selected_port_name();
+				if (port_name.isEmpty() == false)
+				{
+						emit plugin_serial_select(port_name);
+				}
+		}
+
+		maybe_auto_refresh_ars_tracker();
+}
+
+void plugin_mcumgr::begin_next_ars_tracker_port_probe()
+{
+		if (ars_tracker_port_scan_active == false)
+		{
+				return;
+		}
+
+		if (ars_tracker_scan_serial_port != nullptr && ars_tracker_scan_serial_port->isOpen())
+		{
+				ars_tracker_scan_serial_port->close();
+		}
+		ars_tracker_scan_shell_mgmt->cancel();
+		ars_tracker_scan_processor->cancel();
+		ars_tracker_scan_transport->reset_state();
+
+		if (ars_tracker_scan_port_index >= ars_tracker_scan_pending_ports.length())
+		{
+				finish_ars_tracker_port_scan(
+						ars_tracker_scan_results.isEmpty() ? "No ArsTracker devices found." :
+																								QString("Found %1 ArsTracker device(s).")
+																										.arg(ars_tracker_scan_results.length()));
+				return;
+		}
+
+		ars_tracker_scan_current_port =
+				ars_tracker_scan_pending_ports.at(ars_tracker_scan_port_index++);
+		ars_tracker_scan_probe_active = false;
+		ars_tracker_scan_command_started = false;
+		lbl_ars_tracker_status->setText(
+				QString("Scanning %1 (%2/%3)...")
+						.arg(ars_tracker_scan_current_port)
+						.arg(ars_tracker_scan_port_index)
+						.arg(ars_tracker_scan_pending_ports.length()));
+		log_debug() << "ArsTracker port scan probing port:" << ars_tracker_scan_current_port;
+
+		if (radio_transport_uart->isChecked() == true &&
+				ars_tracker_scan_main_serial_open == true &&
+				ars_tracker_scan_current_port == ars_tracker_scan_selected_port)
+		{
+				QString current_serial;
+				ars_tracker_scan_probe_active = true;
+				if (current_ars_tracker_serial_number(&current_serial) == true)
+				{
+						log_debug() << "ArsTracker port scan reused current connection serial for port"
+												<< ars_tracker_scan_current_port << ":" << current_serial;
+						complete_ars_tracker_port_probe(current_serial.startsWith("ARS"), current_serial,
+																			 current_serial.startsWith("ARS") ?
+																					 QString() :
+																					 QString("Current connected device serial does not start with ARS"));
+				}
+				else
+				{
+						complete_ars_tracker_port_probe(
+								false, QString(),
+								"Port is already open in AuTerm and cannot be probed without interfering");
+				}
+				return;
+		}
+
+		log_debug() << "ArsTracker port scan opening port" << ars_tracker_scan_current_port;
+		configure_ars_tracker_scan_serial_port(ars_tracker_scan_current_port);
+		bool open_result = ars_tracker_scan_serial_port->open(QIODevice::ReadWrite);
+		log_debug() << "ArsTracker port scan port" << ars_tracker_scan_current_port
+								<< "open result:" << open_result
+								<< "error:" << ars_tracker_scan_serial_port->errorString();
+		if (open_result == false)
+		{
+				complete_ars_tracker_port_probe(
+						false, QString(),
+						QString("Open failed: %1").arg(ars_tracker_scan_serial_port->errorString()));
+				return;
+		}
+
+		QCheckBox *check_rts = parent_window->findChild<QCheckBox*>("check_RTS");
+		QCheckBox *check_dtr = parent_window->findChild<QCheckBox*>("check_DTR");
+		QComboBox *combo_handshake = parent_window->findChild<QComboBox*>("combo_Handshake");
+
+		if (combo_handshake == nullptr || combo_handshake->currentIndex() != 1)
+		{
+				if (check_rts != nullptr)
+				{
+						if (ars_tracker_scan_serial_port->setRequestToSend(check_rts->isChecked()) == false)
+						{
+								log_warning() << "ArsTracker port scan RTS setup failed for"
+															<< ars_tracker_scan_current_port << ":"
+															<< ars_tracker_scan_serial_port->errorString();
+						}
+				}
+		}
+
+		if (check_dtr != nullptr)
+		{
+				if (ars_tracker_scan_serial_port->setDataTerminalReady(check_dtr->isChecked()) == false)
+				{
+						log_warning() << "ArsTracker port scan DTR setup failed for"
+													<< ars_tracker_scan_current_port << ":"
+													<< ars_tracker_scan_serial_port->errorString();
+				}
+		}
+
+		ars_tracker_scan_probe_active = true;
+		QTimer::singleShot(ars_tracker_port_scan_open_delay_ms, this,
+											 &plugin_mcumgr::send_ars_tracker_port_probe_command);
+}
+
+void plugin_mcumgr::send_ars_tracker_port_probe_command()
+{
+		if (ars_tracker_port_scan_active == false || ars_tracker_scan_probe_active == false)
+		{
+				return;
+		}
+
+		if (ars_tracker_scan_serial_port == nullptr || ars_tracker_scan_serial_port->isOpen() == false)
+		{
+				log_warning() << "ArsTracker port scan send skipped because probe transport is not open for"
+											<< ars_tracker_scan_current_port;
+				complete_ars_tracker_port_probe(false, QString(),
+																	 "Probe transport is not open after initialization");
+				return;
+		}
+
+		ars_tracker_scan_processor->set_transport(ars_tracker_scan_transport);
+		ars_tracker_scan_shell_mgmt->set_parameters((check_V2_Protocol->isChecked() ? 1 : 0),
+																								edit_MTU->value(),
+																								retries_ars_tracker_port_scan,
+																								timeout_ars_tracker_port_scan_ms, 0);
+
+		QStringList command_arguments = QStringList() << "param" << "sn";
+		ars_tracker_port_scan_shell_rc = 0;
+		log_debug() << "ArsTracker port scan sending param sn to"
+								<< ars_tracker_scan_current_port;
+		if (ars_tracker_scan_shell_mgmt->start_execute(&command_arguments,
+																							 &ars_tracker_port_scan_shell_rc) == false)
+		{
+				QString reason =
+						ars_tracker_scan_serial_port->isOpen() == false ?
+								QString("Failed to start mcumgr shell command: probe transport is closed") :
+								QString("Failed to start mcumgr shell command");
+				complete_ars_tracker_port_probe(false, QString(), reason);
+				return;
+		}
+
+		ars_tracker_scan_command_started = true;
+}
+
+void plugin_mcumgr::configure_ars_tracker_scan_serial_port(const QString &port_name)
+{
+		QComboBox *combo_baud = parent_window->findChild<QComboBox*>("combo_Baud");
+		QComboBox *combo_data = parent_window->findChild<QComboBox*>("combo_Data");
+		QComboBox *combo_stop = parent_window->findChild<QComboBox*>("combo_Stop");
+		QComboBox *combo_parity = parent_window->findChild<QComboBox*>("combo_Parity");
+		QComboBox *combo_handshake = parent_window->findChild<QComboBox*>("combo_Handshake");
+
+		ars_tracker_scan_serial_port->close();
+		ars_tracker_scan_serial_port->setPortName(port_name);
+		ars_tracker_scan_serial_port->setBaudRate(
+				combo_baud != nullptr ? combo_baud->currentText().toInt() : 115200);
+		ars_tracker_scan_serial_port->setDataBits(combo_data != nullptr ?
+																							(QSerialPort::DataBits)combo_data->currentText().toInt() :
+																							QSerialPort::Data8);
+		ars_tracker_scan_serial_port->setStopBits(combo_stop != nullptr ?
+																							(QSerialPort::StopBits)combo_stop->currentText().toInt() :
+																							QSerialPort::OneStop);
+		ars_tracker_scan_serial_port->setParity(
+				combo_parity != nullptr && combo_parity->currentIndex() == 1 ?
+						QSerialPort::OddParity :
+						(combo_parity != nullptr && combo_parity->currentIndex() == 2 ?
+								 QSerialPort::EvenParity :
+								 QSerialPort::NoParity));
+		ars_tracker_scan_serial_port->setFlowControl(
+				combo_handshake != nullptr && combo_handshake->currentIndex() == 1 ?
+						QSerialPort::HardwareControl :
+						(combo_handshake != nullptr && combo_handshake->currentIndex() == 2 ?
+								 QSerialPort::SoftwareControl :
+								 QSerialPort::NoFlowControl));
+}
+
+void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString &serial_number,
+																										const QString &reason)
+{
+		if (ars_tracker_scan_probe_active == false)
+		{
+				return;
+		}
+
+		ars_tracker_scan_probe_active = false;
+		ars_tracker_scan_command_started = false;
+
+		log_debug() << "ArsTracker port scan closing probe transport for"
+								<< ars_tracker_scan_current_port;
+
+		if (ars_tracker_scan_serial_port != nullptr && ars_tracker_scan_serial_port->isOpen())
+		{
+				ars_tracker_scan_serial_port->close();
+		}
+		if (ars_tracker_scan_shell_mgmt != nullptr)
+		{
+				ars_tracker_scan_shell_mgmt->cancel();
+		}
+		if (ars_tracker_scan_processor != nullptr)
+		{
+				ars_tracker_scan_processor->cancel();
+		}
+		if (ars_tracker_scan_transport != nullptr)
+		{
+				ars_tracker_scan_transport->reset_state();
+		}
+
+		log_debug() << "ArsTracker port scan probe transport closed for"
+								<< ars_tracker_scan_current_port;
+
+		if (matched == true)
+		{
+				ars_tracker_port_scan_result_t result;
+				result.port_name = ars_tracker_scan_current_port;
+				result.serial_number = serial_number.trimmed();
+				ars_tracker_scan_results.append(result);
+				log_debug() << "ArsTracker port scan accepted port:" << ars_tracker_scan_current_port
+										<< "serial:" << result.serial_number;
+		}
+		else
+		{
+				log_debug() << "ArsTracker port scan excluded port:" << ars_tracker_scan_current_port
+										<< "reason:" << reason;
+		}
+
+		QTimer::singleShot(0, this, &plugin_mcumgr::begin_next_ars_tracker_port_probe);
+}
+
+bool plugin_mcumgr::current_ars_tracker_serial_number(QString *serial_number) const
+{
+		const ars_tracker_info_t &info = ars_tracker->tracker_info();
+		if (info.serial_number.status != ARS_TRACKER_INFO_FIELD_READY)
+		{
+				return false;
+		}
+
+		QString value = info.serial_number.value.trimmed();
+		if (value.isEmpty())
+		{
+				return false;
+		}
+
+		if (serial_number != nullptr)
+		{
+				*serial_number = value;
+		}
+
+		return true;
+}
+
+void plugin_mcumgr::handle_ars_tracker_scan_serial_ready_read()
+{
+		if (ars_tracker_scan_probe_active == false || ars_tracker_scan_serial_port == nullptr ||
+				ars_tracker_scan_serial_port->isOpen() == false)
+		{
+				return;
+		}
+
+		QByteArray data = ars_tracker_scan_serial_port->readAll();
+		if (data.isEmpty() == false)
+		{
+				ars_tracker_scan_transport->serial_read(&data);
+		}
+}
+
+void plugin_mcumgr::handle_ars_tracker_scan_serial_write(QByteArray *data)
+{
+		if (ars_tracker_scan_serial_port == nullptr ||
+				ars_tracker_scan_serial_port->isOpen() == false || data == nullptr)
+		{
+				return;
+		}
+
+		qint64 written = ars_tracker_scan_serial_port->write(*data);
+		if (written < 0)
+		{
+				log_warning() << "ArsTracker port scan write failed for"
+											<< ars_tracker_scan_current_port << ":"
+											<< ars_tracker_scan_serial_port->errorString();
+		}
+}
+
+void plugin_mcumgr::handle_ars_tracker_scan_serial_error()
+{
+		if (ars_tracker_port_scan_active == false || ars_tracker_scan_probe_active == false ||
+				ars_tracker_scan_serial_port == nullptr)
+		{
+				return;
+		}
+
+		if (ars_tracker_scan_serial_port->error() == QSerialPort::NoError)
+		{
+				return;
+		}
+
+		log_warning() << "ArsTracker port scan serial error for" << ars_tracker_scan_current_port
+									<< ":" << ars_tracker_scan_serial_port->error()
+									<< ars_tracker_scan_serial_port->errorString();
+		complete_ars_tracker_port_probe(
+				false, QString(),
+				QString("Serial error: %1").arg(ars_tracker_scan_serial_port->errorString()));
+}
+
+void plugin_mcumgr::handle_ars_tracker_scan_shell_status(uint8_t user_data, group_status status,
+																												 QString error_string)
+{
+		Q_UNUSED(user_data);
+
+		if (ars_tracker_scan_probe_active == false)
+		{
+				return;
+		}
+
+		log_debug() << "ArsTracker port scan param sn callback for"
+								<< ars_tracker_scan_current_port << "status="
+								<< ars_tracker_scan_status_to_string(status) << "response=" << error_string;
+
+		if (status != STATUS_COMPLETE)
+		{
+				complete_ars_tracker_port_probe(
+						false, QString(),
+						QString("mcumgr shell command failed: %1").arg(error_string));
+				return;
+		}
+
+		if (ars_tracker_port_scan_shell_rc != 0)
+		{
+				complete_ars_tracker_port_probe(
+						false, QString(),
+						QString("mcumgr shell returned ret=%1").arg(ars_tracker_port_scan_shell_rc));
+				return;
+		}
+
+		QString decoded_serial;
+		QString parse_error;
+		if (ars_tracker_parser::parse_param_sn_output(error_string, &decoded_serial, &parse_error) ==
+				false)
+		{
+				complete_ars_tracker_port_probe(false, QString(), parse_error);
+				return;
+		}
+
+		log_debug() << "ArsTracker port scan parsed ASCII serial for"
+								<< ars_tracker_scan_current_port << ":" << decoded_serial;
+		log_debug() << "ArsTracker port scan decoded serial:" << decoded_serial;
+		complete_ars_tracker_port_probe(decoded_serial.startsWith("ARS"), decoded_serial,
+																	 decoded_serial.startsWith("ARS") ?
+																			 QString() :
+																			 QString("Decoded serial does not start with ARS"));
 }
 
 void plugin_mcumgr::sync_ars_tracker_serial_controls(bool loading)
@@ -5445,12 +6209,56 @@ void plugin_mcumgr::sync_ars_tracker_serial_controls(bool loading)
 		}
 
 		bool serial_open = false;
-		emit plugin_serial_is_open(&serial_open);
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		bool has_port = ars_tracker_combo_has_selectable_port();
+		bool has_selected_port = ars_tracker_has_selected_port();
+		ars_tracker_ui_state_t state = ars_tracker_current_ui_state(loading);
+		bool combo_enabled = false;
+		bool button_enabled = false;
+		QString button_text = "Connect";
 
-		bool has_port = combo_ars_tracker_port->count() > 0;
+		switch (state)
+		{
+		case ARS_TRACKER_UI_STATE_SCANNING:
+				combo_enabled = false;
+				button_enabled = false;
+				button_text = "Connect";
+				break;
+		case ARS_TRACKER_UI_STATE_CONNECTED:
+				combo_enabled = false;
+				button_enabled = true;
+				button_text = "Disconnect";
+				break;
+		case ARS_TRACKER_UI_STATE_CONNECTING:
+				combo_enabled = false;
+				button_enabled = false;
+				button_text = "Connect";
+				break;
+		case ARS_TRACKER_UI_STATE_DISCONNECTING:
+				combo_enabled = false;
+				button_enabled = false;
+				button_text = "Disconnect";
+				break;
+		case ARS_TRACKER_UI_STATE_DISCONNECTED:
+		default:
+				combo_enabled = (loading == false && has_port == true);
+				button_enabled = (loading == false && has_selected_port == true);
+				button_text = "Connect";
+				break;
+		}
 
-		combo_ars_tracker_port->setEnabled(!loading && !serial_open);
-		btn_ars_tracker_connect->setEnabled(!loading && (serial_open || has_port));
+		combo_ars_tracker_port->setEnabled(combo_enabled);
+		btn_ars_tracker_connect->setText(button_text);
+		btn_ars_tracker_connect->setEnabled(button_enabled);
+		log_debug() << "ArsTracker UI state update: state="
+								<< ars_tracker_ui_state_to_string(state) << "port="
+								<< ars_tracker_selected_port_name() << "main serial open=" << serial_open
+								<< "main serial opening=" << serial_opening << "scanRunning="
+								<< ars_tracker_port_scan_active;
+		log_debug() << "ArsTracker UI: combo enabled=" << combo_enabled
+								<< "connectButton text=" << button_text
+								<< "enabled=" << button_enabled;
 }
 
 bool plugin_mcumgr::ars_tracker_transport_usable()
@@ -5496,7 +6304,7 @@ void plugin_mcumgr::maybe_auto_refresh_ars_tracker()
 		}
 
 		if (ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
-				ars_tracker_export_loading)
+				ars_tracker_export_loading || ars_tracker_port_scan_active)
 		{
 				return;
 		}

@@ -5365,6 +5365,19 @@ void AutMainWindow::plugin_serial_is_open(bool *open)
     *open = transport_isOpen();
 }
 
+void AutMainWindow::plugin_serial_state(bool *open, bool *opening)
+{
+    if (open != nullptr)
+    {
+        *open = transport_isOpen();
+    }
+
+    if (opening != nullptr)
+    {
+        *opening = transport_isOpening();
+    }
+}
+
 void AutMainWindow::plugin_serial_ports(QStringList *ports, QString *selected_port)
 {
     RefreshSerialDevices();

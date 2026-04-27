@@ -35,6 +35,7 @@ class smp_uart_auterm : public smp_transport
 public:
     smp_uart_auterm(QObject *parent = nullptr);
     ~smp_uart_auterm();
+    void reset_state();
     smp_transport_error_t send(smp_message *message) override;
     uint16_t max_message_data_size(uint16_t mtu) override;
 

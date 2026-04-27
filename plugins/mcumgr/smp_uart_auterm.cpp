@@ -69,6 +69,15 @@ smp_uart_auterm::~smp_uart_auterm()
 {
 }
 
+void smp_uart_auterm::reset_state()
+{
+    SerialData.clear();
+    SMPBuffer.clear();
+    SMPBufferActualData.clear();
+    SMPWaitingForContinuation = false;
+    waiting_packet_length = 0;
+}
+
 void smp_uart_auterm::data_received(QByteArray *message)
 {
     smp_message full_message;

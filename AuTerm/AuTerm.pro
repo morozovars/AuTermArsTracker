@@ -18,8 +18,12 @@ QT += core gui widgets serialport
 TARGET = AuTerm
 TEMPLATE = app
 
-win32:debug {
+win32:CONFIG(debug, debug|release) {
     QMAKE_LFLAGS_WINDOWS = -Wl,-subsystem,console
+}
+
+win32:CONFIG(release, debug|release) {
+    CONFIG -= console
 }
 
 SOURCES += main.cpp\

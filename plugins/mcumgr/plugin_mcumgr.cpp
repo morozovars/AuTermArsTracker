@@ -2345,7 +2345,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		btn_ars_tracker_info_refresh->setText(
 				QCoreApplication::translate("Form", "Refresh tracker info", nullptr));
 		label_ars_tracker_port->setText(
-				QCoreApplication::translate("Form", "COM port:", nullptr));
+				QCoreApplication::translate("Form", "Available trackers", nullptr));
 		btn_ars_tracker_connect->setText(
 				QCoreApplication::translate("Form", "Connect", nullptr));
 		label_ars_tracker_serial_number->setText(
@@ -5639,8 +5639,49 @@ QString plugin_mcumgr::ars_tracker_ui_state_to_string(ars_tracker_ui_state_t sta
 QString plugin_mcumgr::ars_tracker_port_display_text(const QString &port_name,
 																									 const QString &serial_number) const
 {
-		return serial_number.trimmed().isEmpty() ? port_name :
-																						port_name % "  " % serial_number.trimmed();
+		QString trimmed_serial = serial_number.trimmed();
+		if (trimmed_serial.isEmpty())
+		{
+				log_debug() << "ArsTracker UI tracker display fallback to port name because serial is empty."
+										<< "port=" << port_name;
+				return port_name;
+		}
+
+		QStringList serial_parts = trimmed_serial.split('.');
+		if (serial_parts.length() >= 4)
+		{
+				QString tracker_type = serial_parts.at(2).trimmed();
+				QString tracker_unique = serial_parts.last().trimmed();
+				QString tracker_side;
+
+				if (tracker_type == "1")
+				{
+						tracker_side = "R";
+				}
+				else if (tracker_type == "2")
+				{
+						tracker_side = "L";
+				}
+
+				if (tracker_unique.isEmpty() == false && tracker_side.isEmpty() == false)
+				{
+						QString display_text = tracker_unique % tracker_side;
+						log_debug() << "ArsTracker UI tracker display parsed. full serial="
+												<< trimmed_serial << "unique=" << tracker_unique
+												<< "side=" << tracker_side << "display=" << display_text
+												<< "port=" << port_name;
+						return display_text;
+				}
+
+				log_warning() << "ArsTracker UI tracker display fallback because serial type is unexpected."
+											<< "full serial=" << trimmed_serial << "type=" << tracker_type
+											<< "unique=" << tracker_unique << "port=" << port_name;
+				return trimmed_serial;
+		}
+
+		log_warning() << "ArsTracker UI tracker display fallback because serial format is unexpected."
+									<< "full serial=" << trimmed_serial << "port=" << port_name;
+		return trimmed_serial;
 }
 
 void plugin_mcumgr::populate_ars_tracker_serial_ports(
@@ -5674,7 +5715,8 @@ void plugin_mcumgr::populate_ars_tracker_serial_ports(
 						QString display_text =
 								ars_tracker_port_display_text(port.port_name, port.serial_number);
 						log_debug() << "ArsTracker UI add port item display=" << display_text
-												<< "data=" << port.port_name;
+												<< "data=" << port.port_name
+												<< "fullSerial=" << port.serial_number;
 						combo_ars_tracker_port->addItem(display_text, port.port_name);
 				}
 

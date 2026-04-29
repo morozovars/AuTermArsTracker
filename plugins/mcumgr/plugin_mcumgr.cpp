@@ -174,6 +174,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		child_row             = -1;
 		child_column          = -1;
 		ars_tracker_shell_rc   = 0;
+		ars_tracker_shell_command_rc = 0;
 		ars_tracker_port_scan_shell_rc = 0;
 		ars_tracker_info_loading = false;
 		ars_tracker_loading    = false;
@@ -181,6 +182,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		ars_tracker_export_loading = false;
 		ars_tracker_firmware_upload_active = false;
 		ars_tracker_firmware_erase_active = false;
+		ars_tracker_shell_command_active = false;
 		ars_tracker_firmware_refresh_after_erase_pending = false;
 		ars_tracker_port_scan_active = false;
 		ars_tracker_serial_transition_active = false;
@@ -2169,16 +2171,52 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		horizontalLayout_ars_tracker_actions->addWidget(btn_ars_tracker_cancel);
 
 		gridLayout_ars_tracker_sessions->addLayout(horizontalLayout_ars_tracker_actions, 6, 1, 1, 3);
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_sessions, 1, 2, 1, 1, Qt::AlignTop);
+
+		group_ars_tracker_shell = new QGroupBox(tab_ars_tracker);
+		group_ars_tracker_shell->setObjectName("group_ars_tracker_shell");
+		gridLayout_ars_tracker_shell = new QGridLayout(group_ars_tracker_shell);
+		gridLayout_ars_tracker_shell->setSpacing(2);
+		gridLayout_ars_tracker_shell->setObjectName("gridLayout_ars_tracker_shell");
+		gridLayout_ars_tracker_shell->setContentsMargins(6, 6, 6, 6);
+
+		label_ars_tracker_shell_command = new QLabel(group_ars_tracker_shell);
+		label_ars_tracker_shell_command->setObjectName("label_ars_tracker_shell_command");
+		gridLayout_ars_tracker_shell->addWidget(label_ars_tracker_shell_command, 0, 0, 1, 1);
+
+		edit_ars_tracker_shell_command = new QLineEdit(group_ars_tracker_shell);
+		edit_ars_tracker_shell_command->setObjectName("edit_ars_tracker_shell_command");
+		gridLayout_ars_tracker_shell->addWidget(edit_ars_tracker_shell_command, 0, 1, 1, 1);
+
+		button_ars_tracker_shell_send = new QPushButton(group_ars_tracker_shell);
+		button_ars_tracker_shell_send->setObjectName("button_ars_tracker_shell_send");
+		button_ars_tracker_shell_send->setEnabled(false);
+		gridLayout_ars_tracker_shell->addWidget(button_ars_tracker_shell_send, 0, 2, 1, 1);
+
+		button_ars_tracker_shell_clear = new QToolButton(group_ars_tracker_shell);
+		button_ars_tracker_shell_clear->setObjectName("button_ars_tracker_shell_clear");
+		gridLayout_ars_tracker_shell->addWidget(button_ars_tracker_shell_clear, 0, 3, 1, 1);
+
+		text_ars_tracker_shell_output = new AutScrollEdit(group_ars_tracker_shell);
+		text_ars_tracker_shell_output->setObjectName("text_ars_tracker_shell_output");
+		text_ars_tracker_shell_output->setPalette(palette);
+		text_ars_tracker_shell_output->setUndoRedoEnabled(false);
+		text_ars_tracker_shell_output->setReadOnly(true);
+		text_ars_tracker_shell_output->setMinimumHeight(140);
+		gridLayout_ars_tracker_shell->addWidget(text_ars_tracker_shell_output, 1, 0, 1, 4);
+		gridLayout_ars_tracker_shell->setColumnStretch(1, 1);
+
+		gridLayout_ars_tracker->addWidget(group_ars_tracker_shell, 2, 0, 1, 3);
 
 		lbl_ars_tracker_progress = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_progress->setObjectName("lbl_ars_tracker_progress");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 3, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 4, 0, 1, 3);
 
 		lbl_ars_tracker_status = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_status->setObjectName("lbl_ars_tracker_status");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 4, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 5, 0, 1, 3);
 
 		gridLayout_ars_tracker_sessions->setColumnStretch(0, 2);
 		gridLayout_ars_tracker_sessions->setColumnStretch(2, 3);
@@ -2191,18 +2229,17 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		gridLayout_ars_tracker_sessions->setRowStretch(6, 0);
 		gridLayout_ars_tracker_sessions->setRowStretch(7, 0);
 
-		gridLayout_ars_tracker->addWidget(frame_ars_tracker_sessions, 1, 2, 1, 1, Qt::AlignTop);
-
 		verticalSpacer_ars_tracker_status =
 				new QSpacerItem(20, 40, QSizePolicy::Policy::Minimum, QSizePolicy::Policy::Expanding);
 
-		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 2, 0, 1, 3);
+		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 3, 0, 1, 3);
 		gridLayout_ars_tracker->setColumnStretch(0, 4);
 		gridLayout_ars_tracker->setColumnStretch(1, 3);
 		gridLayout_ars_tracker->setColumnStretch(2, 4);
-		gridLayout_ars_tracker->setRowStretch(2, 1);
+		gridLayout_ars_tracker->setRowStretch(3, 1);
 
 		qDebug() << "ArsTracker UI layout regrouped: Tracker info + Firmware + Sessions";
+		qDebug() << "ArsTracker shell block added below top row";
 		qDebug() << "ArsTracker Sessions block initialized with compact session list and file status widgets";
 		qDebug() << "ArsTracker operation status labels moved to bottom status area";
 
@@ -2692,6 +2729,16 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		btn_ars_tracker_destination->setText(QCoreApplication::translate("Form", "...", nullptr));
 		label_ars_tracker_files->setText(
 				QCoreApplication::translate("Form", "File status:", nullptr));
+		group_ars_tracker_shell->setTitle(
+				QCoreApplication::translate("Form", "MCUMgr Shell", nullptr));
+		label_ars_tracker_shell_command->setText(
+				QCoreApplication::translate("Form", "Command:", nullptr));
+		edit_ars_tracker_shell_command->setPlaceholderText(
+				QCoreApplication::translate("Form", "Enter shell command", nullptr));
+		button_ars_tracker_shell_send->setText(
+				QCoreApplication::translate("Form", "Send", nullptr));
+		button_ars_tracker_shell_clear->setText(
+				QCoreApplication::translate("Form", "Clear", nullptr));
 		btn_ars_tracker_delete->setText(
 				QCoreApplication::translate("Form", "Delete session", nullptr));
 		btn_ars_tracker_download->setText(
@@ -2932,6 +2979,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						SLOT(on_btn_ars_tracker_firmware_upload_clicked()));
 		connect(btn_ars_tracker_firmware_erase, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_firmware_erase_clicked()));
+		connect(button_ars_tracker_shell_send, SIGNAL(clicked()), this,
+						SLOT(on_btn_ars_tracker_shell_send_clicked()));
+		connect(button_ars_tracker_shell_clear, SIGNAL(clicked()), this,
+						SLOT(on_btn_ars_tracker_shell_clear_clicked()));
+		connect(edit_ars_tracker_shell_command, &QLineEdit::returnPressed, this,
+						&plugin_mcumgr::on_btn_ars_tracker_shell_send_clicked);
 		connect(btn_ars_tracker_destination, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_destination_clicked()));
 		connect(combo_ars_tracker_port, &ars_tracker_port_combo_box::popup_about_to_show, this,
@@ -3059,6 +3112,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		edit_SHELL_Output->setup_scrollback(32);
 		edit_SHELL_Output->set_line_mode(true);
 		edit_SHELL_Output->set_vt100_mode(VT100_MODE_DECODE);
+		text_ars_tracker_shell_output->setFont(shell_font);
 
 		colview_IMG_Images->setModel(&model_image_state);
 		colview_IMG_Images->setColumnWidths(QList<int>() << 50 << 50 << 460);
@@ -3075,6 +3129,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		QFont monospace_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 		monospace_font.setPointSize(8);
 		edit_SHELL_Output->setFont(monospace_font);
+		text_ars_tracker_shell_output->setFont(monospace_font);
+		text_ars_tracker_shell_output->setTabStopDistance(
+				shell_font_metrics.horizontalAdvance(" ") * 8);
+		text_ars_tracker_shell_output->setup_scrollback(32);
+		text_ars_tracker_shell_output->set_line_mode(true);
+		text_ars_tracker_shell_output->set_vt100_mode(VT100_MODE_DECODE);
 
 #ifndef SKIPPLUGIN_LOGGER
 		processor->set_logger(logger);
@@ -3107,6 +3167,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 #endif
 
 		edit_SHELL_Output->set_serial_open(true);
+		text_ars_tracker_shell_output->set_serial_open(true);
 
 		// Setup list of timezones
 		QList<QByteArray> items = QTimeZone::availableTimeZoneIds();
@@ -3371,6 +3432,7 @@ void plugin_mcumgr::serial_closed()
 		ars_tracker_auto_info_refresh_attempts = 0;
 		ars_tracker_firmware_upload_active = false;
 		ars_tracker_firmware_erase_active = false;
+		ars_tracker_shell_command_active = false;
 		ars_tracker_firmware_refresh_after_erase_pending = false;
 		refresh_ars_tracker_serial_ports();
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
@@ -3415,6 +3477,11 @@ void plugin_mcumgr::serial_closed()
 		}
 
 		case ACTION_SHELL_EXECUTE: {
+				smp_groups.shell_mgmt->cancel();
+				break;
+		}
+
+		case ACTION_ARS_TRACKER_SHELL_COMMAND: {
 				smp_groups.shell_mgmt->cancel();
 				break;
 		}
@@ -4600,7 +4667,8 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 				log_debug() << "shell sender";
 				label_status = ((user_data == ACTION_ARS_TRACKER_INFO_REFRESH ||
 												 user_data == ACTION_ARS_TRACKER_SESSION_LIST ||
-												 user_data == ACTION_ARS_TRACKER_DELETE_SESSION) ?
+												 user_data == ACTION_ARS_TRACKER_DELETE_SESSION ||
+												 user_data == ACTION_ARS_TRACKER_SHELL_COMMAND) ?
 														lbl_ars_tracker_status :
 														lbl_SHELL_Status);
 
@@ -4620,6 +4688,27 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 										error_string =
 												QString("Finished, error (ret): ").append(QString::number(shell_rc));
 								}
+						} else if (user_data == ACTION_ARS_TRACKER_SHELL_COMMAND)
+						{
+								if (error_string.isEmpty() == false)
+								{
+										log_debug() << "ArsTracker shell response received:" << error_string;
+										append_ars_tracker_shell_output(error_string);
+								}
+
+								ars_tracker_shell_command_active = false;
+								set_ars_tracker_controls_loading(ars_tracker_any_loading());
+
+								if (ars_tracker_shell_command_rc == 0)
+								{
+										error_string = nullptr;
+								}
+								else
+								{
+										error_string = QString("Finished, error (ret): ")
+																 .append(QString::number(ars_tracker_shell_command_rc));
+										append_ars_tracker_shell_output(QString("Error: %1").arg(error_string));
+								}
 						} else if (user_data == ACTION_ARS_TRACKER_INFO_REFRESH ||
 											 user_data == ACTION_ARS_TRACKER_SESSION_LIST ||
 											 user_data == ACTION_ARS_TRACKER_DELETE_SESSION)
@@ -4631,6 +4720,30 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 								}
 								skip_error_string = true;
 						}
+				} else if (user_data == ACTION_ARS_TRACKER_SHELL_COMMAND)
+				{
+						ars_tracker_shell_command_active = false;
+						set_ars_tracker_controls_loading(ars_tracker_any_loading());
+
+						QString shell_error = error_string;
+						if (shell_error.isEmpty())
+						{
+								if (status == STATUS_TIMEOUT)
+								{
+										shell_error = "Command timed out";
+								}
+								else if (status == STATUS_CANCELLED)
+								{
+										shell_error = "Cancelled";
+								}
+								else
+								{
+										shell_error = "Shell command failed";
+								}
+						}
+
+						log_debug() << "ArsTracker shell command failed:" << shell_error;
+						append_ars_tracker_shell_output(QString("Error: %1").arg(shell_error));
 				} else if (user_data == ACTION_ARS_TRACKER_INFO_REFRESH ||
 									 user_data == ACTION_ARS_TRACKER_SESSION_LIST ||
 									 user_data == ACTION_ARS_TRACKER_DELETE_SESSION)
@@ -6862,6 +6975,7 @@ void plugin_mcumgr::sync_ars_tracker_serial_controls(bool loading)
 								<< "connectButton text=" << button_text
 								<< "enabled=" << button_enabled;
 		update_ars_tracker_firmware_upload_controls(loading || ars_tracker_port_scan_active);
+		update_ars_tracker_shell_controls(loading || ars_tracker_port_scan_active);
 }
 
 bool plugin_mcumgr::ars_tracker_transport_usable()
@@ -7354,6 +7468,144 @@ void plugin_mcumgr::on_btn_ars_tracker_firmware_erase_clicked()
 		btn_cancel->setEnabled(true);
 }
 
+void plugin_mcumgr::append_ars_tracker_shell_output(const QString &text)
+{
+		if (text_ars_tracker_shell_output == nullptr || text.isEmpty())
+		{
+				return;
+		}
+
+		QString output_text = text;
+		if (output_text.endsWith('\n') == false)
+		{
+				output_text.append('\n');
+		}
+
+		text_ars_tracker_shell_output->add_dat_in_text(output_text.toUtf8());
+		text_ars_tracker_shell_output->update_display();
+}
+
+bool plugin_mcumgr::start_ars_tracker_shell_command(const QString &command, QString *error_message)
+{
+		if (error_message != nullptr)
+		{
+				error_message->clear();
+		}
+
+		QString trimmed_command = command.trimmed();
+		if (trimmed_command.isEmpty())
+		{
+				if (error_message != nullptr)
+				{
+						*error_message = "No shell command to send";
+				}
+				return false;
+		}
+
+		if (ars_tracker_port_scan_active || ars_tracker_any_loading())
+		{
+				QString busy_message = "Busy: another ArsTracker operation is running";
+				log_debug() << "ArsTracker shell command skipped: busy";
+				append_ars_tracker_shell_output(busy_message);
+				if (error_message != nullptr)
+				{
+						*error_message = busy_message;
+				}
+				return false;
+		}
+
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		if (serial_open == false || serial_opening == true)
+		{
+				QString disconnected_message = "Tracker is not connected";
+				log_debug() << "ArsTracker shell command skipped: disconnected";
+				if (error_message != nullptr)
+				{
+						*error_message = disconnected_message;
+				}
+				return false;
+		}
+
+		if (claim_transport(lbl_ars_tracker_status) == false)
+		{
+				QString claim_message = lbl_ars_tracker_status != nullptr ? lbl_ars_tracker_status->text() :
+																												QString("Error: Could not claim transport");
+				log_debug() << "ArsTracker shell command failed:" << claim_message;
+				append_ars_tracker_shell_output(QString("Error: %1").arg(claim_message));
+				if (error_message != nullptr)
+				{
+						*error_message = claim_message;
+				}
+				return false;
+		}
+
+		QRegularExpression re_temp_re("\\s+");
+		QStringList list_arguments = trimmed_command.split(re_temp_re, Qt::SkipEmptyParts);
+		if (list_arguments.isEmpty())
+		{
+				relase_transport();
+				if (error_message != nullptr)
+				{
+						*error_message = "No shell command to send";
+				}
+				return false;
+		}
+
+		log_debug() << "ArsTracker shell command requested:" << trimmed_command;
+		mode = ACTION_ARS_TRACKER_SHELL_COMMAND;
+		processor->set_transport(active_transport());
+		set_group_transport_settings(smp_groups.shell_mgmt);
+		ars_tracker_shell_command_rc = 0;
+		bool started = smp_groups.shell_mgmt->start_execute(&list_arguments, &ars_tracker_shell_command_rc);
+		if (started == false)
+		{
+				mode = ACTION_IDLE;
+				relase_transport();
+				QString start_message = "Failed to start shell command.";
+				log_debug() << "ArsTracker shell command failed:" << start_message;
+				append_ars_tracker_shell_output(QString("> %1").arg(trimmed_command));
+				append_ars_tracker_shell_output(QString("Error: %1").arg(start_message));
+				if (error_message != nullptr)
+				{
+						*error_message = start_message;
+				}
+				return false;
+		}
+
+		log_debug() << "ArsTracker shell command sent";
+		append_ars_tracker_shell_output(QString("> %1").arg(trimmed_command));
+		ars_tracker_shell_command_active = true;
+		edit_ars_tracker_shell_command->clear();
+		lbl_ars_tracker_status->setText("ArsTracker shell command sent...");
+		set_ars_tracker_controls_loading(ars_tracker_any_loading());
+		return true;
+}
+
+void plugin_mcumgr::on_btn_ars_tracker_shell_send_clicked()
+{
+		QString error_message;
+		QString command = edit_ars_tracker_shell_command != nullptr ?
+											edit_ars_tracker_shell_command->text() :
+											QString();
+
+		if (start_ars_tracker_shell_command(command, &error_message) == false &&
+				error_message.isEmpty() == false)
+		{
+				lbl_ars_tracker_status->setText(error_message);
+		}
+}
+
+void plugin_mcumgr::on_btn_ars_tracker_shell_clear_clicked()
+{
+		if (text_ars_tracker_shell_output != nullptr)
+		{
+				text_ars_tracker_shell_output->clear_dat_in();
+				text_ars_tracker_shell_output->update_display();
+		}
+}
+
 void plugin_mcumgr::on_btn_ars_tracker_cancel_clicked()
 {
 		if (ars_tracker_firmware_upload_active == true || ars_tracker_firmware_erase_active == true)
@@ -7371,6 +7623,13 @@ void plugin_mcumgr::on_btn_ars_tracker_cancel_clicked()
 						smp_groups.img_mgmt->cancel();
 				}
 
+				return;
+		}
+
+		if (ars_tracker_shell_command_active == true)
+		{
+				lbl_ars_tracker_status->setText("Cancelling ArsTracker shell command...");
+				smp_groups.shell_mgmt->cancel();
 				return;
 		}
 
@@ -7409,7 +7668,7 @@ bool plugin_mcumgr::ars_tracker_any_loading() const
 {
 		return ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
 					 ars_tracker_export_loading || ars_tracker_firmware_upload_active ||
-					 ars_tracker_firmware_erase_active;
+					 ars_tracker_firmware_erase_active || ars_tracker_shell_command_active;
 }
 
 void plugin_mcumgr::update_ars_tracker_firmware_upload_controls(bool controls_locked)
@@ -7450,6 +7709,24 @@ void plugin_mcumgr::update_ars_tracker_firmware_upload_controls(bool controls_lo
 								<< "fileExists=" << firmware_file_exists
 								<< "secondSlotHasImage=" << second_slot_has_image
 								<< "controlsLocked=" << controls_locked;
+}
+
+void plugin_mcumgr::update_ars_tracker_shell_controls(bool controls_locked)
+{
+		if (button_ars_tracker_shell_send == nullptr || edit_ars_tracker_shell_command == nullptr ||
+				button_ars_tracker_shell_clear == nullptr)
+		{
+				return;
+		}
+
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		bool send_enabled = serial_open == true && serial_opening == false && controls_locked == false;
+
+		edit_ars_tracker_shell_command->setEnabled(true);
+		button_ars_tracker_shell_send->setEnabled(send_enabled);
+		button_ars_tracker_shell_clear->setEnabled(true);
 }
 
 void plugin_mcumgr::ars_tracker_info_changed(const ars_tracker_info_t &info)
@@ -8010,8 +8287,10 @@ void plugin_mcumgr::set_ars_tracker_controls_loading(bool loading)
 		btn_ars_tracker_delete->setEnabled(!controls_locked && has_selection);
 		btn_ars_tracker_download->setEnabled(!controls_locked && has_selection);
 		update_ars_tracker_firmware_upload_controls(controls_locked);
+		update_ars_tracker_shell_controls(controls_locked);
 		btn_ars_tracker_cancel->setEnabled(ars_tracker_info_loading || ars_tracker_export_loading ||
-																		 ars_tracker_firmware_upload_active);
+																		 ars_tracker_firmware_upload_active ||
+																		 ars_tracker_shell_command_active);
 }
 
 AutPlugin::PluginType plugin_mcumgr::plugin_type()

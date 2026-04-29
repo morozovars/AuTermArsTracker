@@ -158,6 +158,7 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET,
     ACTION_ARS_TRACKER_FIRMWARE_RESET,
     ACTION_ARS_TRACKER_FIRMWARE_ERASE,
+    ACTION_ARS_TRACKER_SHELL_COMMAND,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -330,6 +331,8 @@ private slots:
     void on_btn_ars_tracker_firmware_browse_clicked();
     void on_btn_ars_tracker_firmware_upload_clicked();
     void on_btn_ars_tracker_firmware_erase_clicked();
+    void on_btn_ars_tracker_shell_send_clicked();
+    void on_btn_ars_tracker_shell_clear_clicked();
     void on_btn_ars_tracker_cancel_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_info_changed(const ars_tracker_info_t &info);
@@ -403,6 +406,9 @@ private:
                                       uint32_t timeout, uint8_t retries);
     void update_img_state_table();
     void set_ars_tracker_controls_loading(bool loading);
+    void update_ars_tracker_shell_controls(bool controls_locked);
+    bool start_ars_tracker_shell_command(const QString &command, QString *error_message = nullptr);
+    void append_ars_tracker_shell_output(const QString &text);
     void handle_ars_tracker_shell_status(uint8_t user_data, group_status status,
                                          QString *error_string);
     QString ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase_t phase) const;
@@ -759,6 +765,13 @@ private:
     QToolButton *btn_ars_tracker_destination;
     QLabel *label_ars_tracker_files;
     QListWidget *list_ars_tracker_files;
+    QGroupBox *group_ars_tracker_shell;
+    QGridLayout *gridLayout_ars_tracker_shell;
+    QLabel *label_ars_tracker_shell_command;
+    QLineEdit *edit_ars_tracker_shell_command;
+    QPushButton *button_ars_tracker_shell_send;
+    QToolButton *button_ars_tracker_shell_clear;
+    AutScrollEdit *text_ars_tracker_shell_output;
     QHBoxLayout *horizontalLayout_ars_tracker_actions;
     QSpacerItem *horizontalSpacer_ars_tracker_actions;
     QPushButton *btn_ars_tracker_delete;
@@ -802,6 +815,7 @@ private:
     QList<memory_pool_t> memory_list;
     int32_t shell_rc;
     int32_t ars_tracker_shell_rc;
+    int32_t ars_tracker_shell_command_rc;
     int32_t ars_tracker_port_scan_shell_rc;
     bool ars_tracker_info_loading;
     bool ars_tracker_loading;
@@ -809,6 +823,7 @@ private:
     bool ars_tracker_export_loading;
     bool ars_tracker_firmware_upload_active;
     bool ars_tracker_firmware_erase_active;
+    bool ars_tracker_shell_command_active;
     bool ars_tracker_firmware_refresh_after_erase_pending;
     bool ars_tracker_port_scan_active;
     bool ars_tracker_serial_transition_active;

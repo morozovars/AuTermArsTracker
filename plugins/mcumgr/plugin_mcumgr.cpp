@@ -124,6 +124,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		ars_tracker_export_loading = false;
 		ars_tracker_port_scan_active = false;
 		ars_tracker_serial_transition_active = false;
+		ars_tracker_auto_info_refresh_pending = false;
+		ars_tracker_info_refresh_started_for_current_connection = false;
+		ars_tracker_auto_info_refresh_in_progress = false;
+		ars_tracker_auto_info_refresh_attempts = 0;
 		ars_tracker_clear_selection_on_next_refresh = false;
 		ars_tracker_export_fs_active = false;
 		ars_tracker_export_fs_phase = ARS_TRACKER_EXPORT_FS_IDLE;
@@ -2723,6 +2727,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						}
 
 						emit plugin_serial_select(port_name);
+						ars_tracker_auto_info_refresh_pending = true;
+						ars_tracker_info_refresh_started_for_current_connection = false;
+						ars_tracker_auto_info_refresh_in_progress = false;
+						ars_tracker_auto_info_refresh_attempts = 0;
 				}
 
 				ars_tracker_serial_transition_active = true;
@@ -2735,6 +2743,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 				if (serial_open == false && serial_opening == false)
 				{
 						ars_tracker_serial_transition_active = false;
+						ars_tracker_auto_info_refresh_pending = false;
+						ars_tracker_auto_info_refresh_attempts = 0;
 						sync_ars_tracker_serial_controls(
 								ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
 								ars_tracker_export_loading);
@@ -3050,12 +3060,26 @@ void plugin_mcumgr::serial_opened()
 		sync_ars_tracker_serial_controls(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
 				ars_tracker_export_loading);
-		maybe_auto_refresh_ars_tracker();
+		if (ars_tracker_auto_info_refresh_pending == true &&
+				ars_tracker_info_refresh_started_for_current_connection == false)
+		{
+				log_debug() << "ArsTracker connected, scheduling automatic tracker info refresh";
+				QTimer::singleShot(100, this, [this]() { maybe_auto_refresh_ars_tracker(); });
+		}
+		else if (ars_tracker_auto_info_refresh_pending == true)
+		{
+				log_debug() << "ArsTracker automatic tracker info refresh skipped: reason="
+										<< "already started for current connection";
+		}
 }
 
 void plugin_mcumgr::serial_closed()
 {
 		ars_tracker_serial_transition_active = false;
+		ars_tracker_auto_info_refresh_pending = false;
+		ars_tracker_info_refresh_started_for_current_connection = false;
+		ars_tracker_auto_info_refresh_in_progress = false;
+		ars_tracker_auto_info_refresh_attempts = 0;
 		refresh_ars_tracker_serial_ports();
 		sync_ars_tracker_serial_controls(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
@@ -5808,6 +5832,22 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 				return;
 		}
 
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		ars_tracker_ui_state_t state = ars_tracker_current_ui_state(false);
+		if (serial_open == true || serial_opening == true ||
+				ars_tracker_serial_transition_active == true ||
+				state == ARS_TRACKER_UI_STATE_CONNECTED || state == ARS_TRACKER_UI_STATE_CONNECTING)
+		{
+				log_debug() << "ArsTracker port scan skipped because tracker is connected/connecting"
+										<< "state=" << ars_tracker_ui_state_to_string(state)
+										<< "open=" << serial_open
+										<< "opening=" << serial_opening
+										<< "transition=" << ars_tracker_serial_transition_active;
+				return;
+		}
+
 		ars_tracker_scan_results.clear();
 		ars_tracker_scan_pending_ports.clear();
 		ars_tracker_scan_current_port.clear();
@@ -5835,8 +5875,8 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 				}
 		}
 
-		bool serial_open = false;
-		bool serial_opening = false;
+		serial_open = false;
+		serial_opening = false;
 		ars_tracker_main_serial_state(&serial_open, &serial_opening);
 		if (serial_open == true || serial_opening == true ||
 				ars_tracker_serial_transition_active == true)
@@ -6374,52 +6414,40 @@ bool plugin_mcumgr::ars_tracker_tab_is_active() const
 		return selector_tab_root != nullptr && selector_tab_root->currentWidget() == tab_ars_tracker;
 }
 
-void plugin_mcumgr::maybe_auto_refresh_ars_tracker()
+bool plugin_mcumgr::start_ars_tracker_info_refresh(QString *error_message)
 {
-		if (ars_tracker_tab_is_active() == false)
+		if (error_message != nullptr)
 		{
-				return;
+				error_message->clear();
 		}
-
-		if (ars_tracker_transport_usable() == false)
-		{
-				return;
-		}
-
-		if (mode != ACTION_IDLE)
-		{
-				return;
-		}
-
-		if (ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
-				ars_tracker_export_loading || ars_tracker_port_scan_active)
-		{
-				return;
-		}
-
-		on_btn_ars_tracker_info_refresh_clicked();
-}
-
-void plugin_mcumgr::on_btn_ars_tracker_info_refresh_clicked()
-{
-		QString backend_error;
 
 		if (ars_tracker_port_scan_active)
 		{
-				lbl_ars_tracker_status->setText("Wait for ArsTracker port scan to finish.");
-				return;
+				if (error_message != nullptr)
+				{
+						*error_message = "Wait for ArsTracker port scan to finish.";
+				}
+				return false;
 		}
 
 		if (claim_transport(lbl_ars_tracker_status) == false)
 		{
-				return;
+				if (error_message != nullptr)
+				{
+						*error_message = lbl_ars_tracker_status->text();
+				}
+				return false;
 		}
 
+		QString backend_error;
 		if (ars_tracker->begin_tracker_info_refresh(&backend_error) == false)
 		{
 				relase_transport();
-				lbl_ars_tracker_status->setText(backend_error);
-				return;
+				if (error_message != nullptr)
+				{
+						*error_message = backend_error;
+				}
+				return false;
 		}
 
 		if (ars_tracker_info_loading == false)
@@ -6427,6 +6455,122 @@ void plugin_mcumgr::on_btn_ars_tracker_info_refresh_clicked()
 				mode = ACTION_IDLE;
 				relase_transport();
 				btn_cancel->setEnabled(false);
+				if (error_message != nullptr)
+				{
+						*error_message = "Tracker info refresh did not start.";
+				}
+				return false;
+		}
+
+		ars_tracker_auto_info_refresh_pending = false;
+		ars_tracker_info_refresh_started_for_current_connection = true;
+
+		return true;
+}
+
+void plugin_mcumgr::maybe_auto_refresh_ars_tracker()
+{
+		if (ars_tracker_auto_info_refresh_pending == false)
+		{
+				return;
+		}
+
+		QString skip_reason;
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+
+		if (ars_tracker_tab_is_active() == false)
+		{
+				skip_reason = "ArsTracker tab is not active";
+		}
+		else if (serial_open == false)
+		{
+				if (ars_tracker_auto_info_refresh_attempts < 5)
+				{
+						++ars_tracker_auto_info_refresh_attempts;
+						log_debug() << "ArsTracker automatic tracker info refresh skipped: reason="
+												<< "transport is not open yet, retry scheduled"
+												<< "attempt=" << int(ars_tracker_auto_info_refresh_attempts)
+												<< "open=" << serial_open
+												<< "opening=" << serial_opening
+												<< "transition=" << ars_tracker_serial_transition_active;
+						QTimer::singleShot(300, this, [this]() { maybe_auto_refresh_ars_tracker(); });
+						return;
+				}
+
+				skip_reason =
+						QString("transport is not open after %1 retries")
+								.arg(QString::number(int(ars_tracker_auto_info_refresh_attempts)));
+		}
+		else if (mode != ACTION_IDLE)
+		{
+				skip_reason = QString("mode is %1").arg(QString::number(int(mode)));
+		}
+		else if (ars_tracker_port_scan_active)
+		{
+				skip_reason = "port scan is running";
+		}
+		else if (ars_tracker_serial_transition_active)
+		{
+				skip_reason = "serial transition is still active";
+		}
+		else if (ars_tracker_info_loading)
+		{
+				skip_reason = "tracker info refresh already in progress";
+		}
+		else if (ars_tracker_loading)
+		{
+				skip_reason = "session list loading is in progress";
+		}
+		else if (ars_tracker_delete_loading)
+		{
+				skip_reason = "session delete is in progress";
+		}
+		else if (ars_tracker_export_loading)
+		{
+				skip_reason = "session export is in progress";
+		}
+		else if (ars_tracker_info_refresh_started_for_current_connection)
+		{
+				skip_reason = "tracker info refresh already started for current connection";
+				ars_tracker_auto_info_refresh_pending = false;
+		}
+
+		if (skip_reason.isEmpty() == false)
+		{
+				if (skip_reason.startsWith("transport is not open after "))
+				{
+						ars_tracker_auto_info_refresh_pending = false;
+				}
+				log_debug() << "ArsTracker automatic tracker info refresh skipped: reason="
+										<< skip_reason;
+				return;
+		}
+
+		log_debug() << "ArsTracker automatic tracker info refresh started";
+		ars_tracker_auto_info_refresh_in_progress = true;
+		ars_tracker_auto_info_refresh_attempts = 0;
+
+		QString start_error;
+		if (start_ars_tracker_info_refresh(&start_error) == false)
+		{
+				ars_tracker_auto_info_refresh_in_progress = false;
+				log_debug() << "ArsTracker automatic tracker info refresh skipped: reason="
+										<< (start_error.isEmpty() ? QString("start request failed") : start_error);
+				return;
+		}
+}
+
+void plugin_mcumgr::on_btn_ars_tracker_info_refresh_clicked()
+{
+		QString backend_error;
+		if (start_ars_tracker_info_refresh(&backend_error) == false)
+		{
+				if (backend_error.isEmpty() == false)
+				{
+						lbl_ars_tracker_status->setText(backend_error);
+				}
 		}
 }
 
@@ -6615,6 +6759,11 @@ void plugin_mcumgr::ars_tracker_info_changed(const ars_tracker_info_t &info)
 void plugin_mcumgr::ars_tracker_info_loading_changed(bool loading)
 {
 		ars_tracker_info_loading = loading;
+		if (loading == false && ars_tracker_auto_info_refresh_in_progress == true)
+		{
+				ars_tracker_auto_info_refresh_in_progress = false;
+				log_debug() << "ArsTracker automatic tracker info refresh finished";
+		}
 		set_ars_tracker_controls_loading(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
 				ars_tracker_export_loading);

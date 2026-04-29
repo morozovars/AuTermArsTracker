@@ -354,6 +354,7 @@ private:
     void close_transport_windows();
     bool ars_tracker_transport_usable();
     bool ars_tracker_tab_is_active() const;
+    bool start_ars_tracker_info_refresh(QString *error_message = nullptr);
     void maybe_auto_refresh_ars_tracker();
     QString ars_tracker_selected_port_name() const;
     bool ars_tracker_has_selected_port() const;
@@ -771,6 +772,10 @@ private:
     bool ars_tracker_export_loading;
     bool ars_tracker_port_scan_active;
     bool ars_tracker_serial_transition_active;
+    bool ars_tracker_auto_info_refresh_pending;
+    bool ars_tracker_info_refresh_started_for_current_connection;
+    bool ars_tracker_auto_info_refresh_in_progress;
+    uint8_t ars_tracker_auto_info_refresh_attempts;
     bool ars_tracker_clear_selection_on_next_refresh;
     bool ars_tracker_export_fs_active;
     ars_tracker_export_fs_phase_t ars_tracker_export_fs_phase;

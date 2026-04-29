@@ -214,9 +214,8 @@ int main(int argc, char *argv[])
     //Fix for Mac to stop bad styling
     QApplication::setStyle(QStyleFactory::create("Fusion"));
 #endif
-    AutMainWindow w;
-    w.show();
-
+    AutMainWindow main_window;
+    main_window.showMaximized();
     return a.exec();
 }
 

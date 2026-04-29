@@ -109,7 +109,7 @@ AutMainWindow::AutMainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::
 
 		//Setup the GUI
 		ui->setupUi(this);
-		resize(1000, 600);
+		resize(1600, 700);
 #ifndef SKIPPLUGINS
 		//Find and load plugins
 #ifdef QT_STATIC

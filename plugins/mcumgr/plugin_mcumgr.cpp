@@ -1833,7 +1833,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		gridLayout_ars_tracker_connection->addWidget(btn_ars_tracker_connect, 1, 2, 1, 2);
 
-		gridLayout_ars_tracker->addWidget(frame_ars_tracker_connection, 0, 0, 1, 2);
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_connection, 0, 0, 1, 3);
 
 		frame_ars_tracker_info = new QFrame(tab_ars_tracker);
 		frame_ars_tracker_info->setObjectName("frame_ars_tracker_info");
@@ -2053,9 +2053,9 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		gridLayout_ars_tracker_firmware_section->addWidget(btn_ars_tracker_firmware_upload, 4, 1, 1,
 																							 1, Qt::AlignLeft | Qt::AlignTop);
 		gridLayout_ars_tracker_firmware_section->setColumnStretch(1, 1);
-		gridLayout_ars_tracker_firmware_section->setRowStretch(5, 1);
-		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_firmware_section, 4, 2, 5, 2,
-																					 Qt::AlignTop);
+		gridLayout_ars_tracker_firmware_section->setRowStretch(5, 0);
+		widget_ars_tracker_firmware_section->setSizePolicy(QSizePolicy::Policy::Preferred,
+																									 QSizePolicy::Policy::Maximum);
 
 		gridLayout_ars_tracker_info->setRowStretch(0, 0);
 		gridLayout_ars_tracker_info->setRowStretch(1, 0);
@@ -2066,15 +2066,34 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		gridLayout_ars_tracker_info->setRowStretch(6, 0);
 		gridLayout_ars_tracker_info->setRowStretch(7, 0);
 		gridLayout_ars_tracker_info->setRowStretch(8, 0);
-		gridLayout_ars_tracker_info->setRowStretch(9, 1);
+		gridLayout_ars_tracker_info->setRowStretch(9, 0);
 		gridLayout_ars_tracker_info->setColumnStretch(1, 1);
 		gridLayout_ars_tracker_info->setColumnStretch(3, 1);
+		frame_ars_tracker_info->setSizePolicy(QSizePolicy::Policy::Preferred,
+																					 QSizePolicy::Policy::Maximum);
 
-		gridLayout_ars_tracker->addWidget(frame_ars_tracker_info, 1, 0, 1, 1);
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_info, 1, 0, 1, 1, Qt::AlignTop);
+
+		frame_ars_tracker_firmware = new QFrame(tab_ars_tracker);
+		frame_ars_tracker_firmware->setObjectName("frame_ars_tracker_firmware");
+		frame_ars_tracker_firmware->setFrameShape(QFrame::Shape::StyledPanel);
+		frame_ars_tracker_firmware->setSizePolicy(QSizePolicy::Policy::Preferred,
+																						 QSizePolicy::Policy::Maximum);
+		gridLayout_ars_tracker_firmware = new QGridLayout(frame_ars_tracker_firmware);
+		gridLayout_ars_tracker_firmware->setSpacing(2);
+		gridLayout_ars_tracker_firmware->setObjectName("gridLayout_ars_tracker_firmware");
+		gridLayout_ars_tracker_firmware->setContentsMargins(6, 6, 6, 6);
+		gridLayout_ars_tracker_firmware->addWidget(widget_ars_tracker_firmware_section, 0, 0, 1, 1,
+																						 Qt::AlignTop);
+		gridLayout_ars_tracker_firmware->setColumnStretch(0, 1);
+
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_firmware, 1, 1, 1, 1, Qt::AlignTop);
 
 		frame_ars_tracker_sessions = new QFrame(tab_ars_tracker);
 		frame_ars_tracker_sessions->setObjectName("frame_ars_tracker_sessions");
 		frame_ars_tracker_sessions->setFrameShape(QFrame::Shape::StyledPanel);
+		frame_ars_tracker_sessions->setSizePolicy(QSizePolicy::Policy::Preferred,
+																						 QSizePolicy::Policy::Maximum);
 		gridLayout_ars_tracker_sessions = new QGridLayout(frame_ars_tracker_sessions);
 		gridLayout_ars_tracker_sessions->setSpacing(2);
 		gridLayout_ars_tracker_sessions->setObjectName("gridLayout_ars_tracker_sessions");
@@ -2102,6 +2121,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		list_ars_tracker_sessions = new QListWidget(frame_ars_tracker_sessions);
 		list_ars_tracker_sessions->setObjectName("list_ars_tracker_sessions");
+		list_ars_tracker_sessions->setSizePolicy(QSizePolicy::Policy::Expanding,
+																						 QSizePolicy::Policy::Preferred);
+		list_ars_tracker_sessions->setMinimumHeight(120);
+		list_ars_tracker_sessions->setMaximumHeight(160);
 
 		gridLayout_ars_tracker_sessions->addWidget(list_ars_tracker_sessions, 1, 0, 6, 1);
 
@@ -2112,6 +2135,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		list_ars_tracker_files = new QListWidget(frame_ars_tracker_sessions);
 		list_ars_tracker_files->setObjectName("list_ars_tracker_files");
+		list_ars_tracker_files->setSizePolicy(QSizePolicy::Policy::Expanding,
+																					 QSizePolicy::Policy::Preferred);
+		list_ars_tracker_files->setMinimumHeight(70);
+		list_ars_tracker_files->setMaximumHeight(90);
 
 		gridLayout_ars_tracker_sessions->addWidget(list_ars_tracker_files, 1, 2, 3, 2);
 
@@ -2146,30 +2173,37 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		lbl_ars_tracker_progress = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_progress->setObjectName("lbl_ars_tracker_progress");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 3, 0, 1, 2);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 3, 0, 1, 3);
 
 		lbl_ars_tracker_status = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_status->setObjectName("lbl_ars_tracker_status");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 4, 0, 1, 2);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 4, 0, 1, 3);
 
 		gridLayout_ars_tracker_sessions->setColumnStretch(0, 2);
 		gridLayout_ars_tracker_sessions->setColumnStretch(2, 3);
+		gridLayout_ars_tracker_sessions->setRowStretch(0, 0);
+		gridLayout_ars_tracker_sessions->setRowStretch(1, 0);
+		gridLayout_ars_tracker_sessions->setRowStretch(2, 0);
+		gridLayout_ars_tracker_sessions->setRowStretch(3, 0);
+		gridLayout_ars_tracker_sessions->setRowStretch(4, 0);
+		gridLayout_ars_tracker_sessions->setRowStretch(5, 0);
 		gridLayout_ars_tracker_sessions->setRowStretch(6, 0);
-		gridLayout_ars_tracker_sessions->setRowStretch(7, 1);
+		gridLayout_ars_tracker_sessions->setRowStretch(7, 0);
 
-		gridLayout_ars_tracker->addWidget(frame_ars_tracker_sessions, 1, 1, 1, 1);
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_sessions, 1, 2, 1, 1, Qt::AlignTop);
 
 		verticalSpacer_ars_tracker_status =
 				new QSpacerItem(20, 40, QSizePolicy::Policy::Minimum, QSizePolicy::Policy::Expanding);
 
-		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 2, 0, 1, 2);
-		gridLayout_ars_tracker->setColumnStretch(0, 2);
+		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 2, 0, 1, 3);
+		gridLayout_ars_tracker->setColumnStretch(0, 4);
 		gridLayout_ars_tracker->setColumnStretch(1, 3);
+		gridLayout_ars_tracker->setColumnStretch(2, 4);
 		gridLayout_ars_tracker->setRowStretch(2, 1);
 
-		qDebug() << "ArsTracker UI layout regrouped: Tracker info + Sessions";
-		qDebug() << "ArsTracker Sessions block initialized with existing session list and file status widgets";
+		qDebug() << "ArsTracker UI layout regrouped: Tracker info + Firmware + Sessions";
+		qDebug() << "ArsTracker Sessions block initialized with compact session list and file status widgets";
 		qDebug() << "ArsTracker operation status labels moved to bottom status area";
 
 

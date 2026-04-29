@@ -710,7 +710,7 @@ private:
     QLineEdit *edit_ars_tracker_type;
     QLabel *label_ars_tracker_status_value;
     QWidget *widget_ars_tracker_status_value;
-    QHBoxLayout *horizontalLayout_ars_tracker_status_value;
+    QVBoxLayout *verticalLayout_ars_tracker_status_value;
     QLabel *label_ars_tracker_status_state;
     QLineEdit *edit_ars_tracker_status_value;
     QLabel *label_ars_tracker_sessions;

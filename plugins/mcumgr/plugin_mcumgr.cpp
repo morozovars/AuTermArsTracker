@@ -1889,24 +1889,23 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		widget_ars_tracker_status_value = new QWidget(frame_ars_tracker_info);
 		widget_ars_tracker_status_value->setObjectName("widget_ars_tracker_status_value");
-		horizontalLayout_ars_tracker_status_value =
-				new QHBoxLayout(widget_ars_tracker_status_value);
-		horizontalLayout_ars_tracker_status_value->setObjectName(
-				"horizontalLayout_ars_tracker_status_value");
-		horizontalLayout_ars_tracker_status_value->setContentsMargins(0, 0, 0, 0);
-		horizontalLayout_ars_tracker_status_value->setSpacing(6);
-
-		label_ars_tracker_status_state = new QLabel(widget_ars_tracker_status_value);
-		label_ars_tracker_status_state->setObjectName("label_ars_tracker_status_state");
-
-		horizontalLayout_ars_tracker_status_value->addWidget(label_ars_tracker_status_state);
+		verticalLayout_ars_tracker_status_value = new QVBoxLayout(widget_ars_tracker_status_value);
+		verticalLayout_ars_tracker_status_value->setObjectName(
+				"verticalLayout_ars_tracker_status_value");
+		verticalLayout_ars_tracker_status_value->setContentsMargins(0, 0, 0, 0);
+		verticalLayout_ars_tracker_status_value->setSpacing(2);
 
 		edit_ars_tracker_status_value = new QLineEdit(widget_ars_tracker_status_value);
 		edit_ars_tracker_status_value->setObjectName("edit_ars_tracker_status_value");
 		edit_ars_tracker_status_value->setReadOnly(true);
 
-		horizontalLayout_ars_tracker_status_value->addWidget(edit_ars_tracker_status_value);
-		horizontalLayout_ars_tracker_status_value->setStretch(1, 1);
+		verticalLayout_ars_tracker_status_value->addWidget(edit_ars_tracker_status_value);
+
+		label_ars_tracker_status_state = new QLabel(widget_ars_tracker_status_value);
+		label_ars_tracker_status_state->setObjectName("label_ars_tracker_status_state");
+
+		verticalLayout_ars_tracker_status_value->addWidget(label_ars_tracker_status_state, 0,
+																							 Qt::AlignLeft | Qt::AlignTop);
 		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_status_value, 4, 1, 1, 1,
 																					 Qt::AlignTop);
 

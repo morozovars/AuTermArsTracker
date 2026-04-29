@@ -157,6 +157,7 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_FIRMWARE_UPLOAD,
     ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET,
     ACTION_ARS_TRACKER_FIRMWARE_RESET,
+    ACTION_ARS_TRACKER_FIRMWARE_ERASE,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -328,6 +329,7 @@ private slots:
     void on_btn_ars_tracker_destination_clicked();
     void on_btn_ars_tracker_firmware_browse_clicked();
     void on_btn_ars_tracker_firmware_upload_clicked();
+    void on_btn_ars_tracker_firmware_erase_clicked();
     void on_btn_ars_tracker_cancel_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_info_changed(const ars_tracker_info_t &info);
@@ -732,11 +734,16 @@ private:
     QLineEdit *edit_ars_tracker_memory_usage;
     QLabel *label_ars_tracker_bad_blocks;
     QLineEdit *edit_ars_tracker_bad_blocks;
+    QWidget *widget_ars_tracker_firmware_section;
+    QGridLayout *gridLayout_ars_tracker_firmware_section;
     QLabel *label_ars_tracker_firmware_header;
     QLabel *label_ars_tracker_firmware_current_version;
     QLineEdit *edit_ars_tracker_firmware_current_version;
     QLabel *label_ars_tracker_firmware_second_slot;
+    QWidget *widget_ars_tracker_firmware_second_slot;
+    QHBoxLayout *horizontalLayout_ars_tracker_firmware_second_slot;
     QLineEdit *edit_ars_tracker_firmware_second_slot;
+    QPushButton *btn_ars_tracker_firmware_erase;
     QLabel *label_ars_tracker_firmware_file;
     QWidget *widget_ars_tracker_firmware_file;
     QHBoxLayout *horizontalLayout_ars_tracker_firmware_file;
@@ -797,6 +804,8 @@ private:
     bool ars_tracker_delete_loading;
     bool ars_tracker_export_loading;
     bool ars_tracker_firmware_upload_active;
+    bool ars_tracker_firmware_erase_active;
+    bool ars_tracker_firmware_refresh_after_erase_pending;
     bool ars_tracker_port_scan_active;
     bool ars_tracker_serial_transition_active;
     bool ars_tracker_auto_info_refresh_pending;

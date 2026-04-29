@@ -180,6 +180,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		ars_tracker_delete_loading = false;
 		ars_tracker_export_loading = false;
 		ars_tracker_firmware_upload_active = false;
+		ars_tracker_firmware_erase_active = false;
+		ars_tracker_firmware_refresh_after_erase_pending = false;
 		ars_tracker_port_scan_active = false;
 		ars_tracker_serial_transition_active = false;
 		ars_tracker_auto_info_refresh_pending = false;
@@ -1953,46 +1955,85 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		edit_ars_tracker_bad_blocks->setReadOnly(true);
 
 		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_bad_blocks, 3, 5, 1, 1);
-		label_ars_tracker_firmware_header = new QLabel(frame_ars_tracker_info);
+		widget_ars_tracker_firmware_section = new QWidget(frame_ars_tracker_info);
+		widget_ars_tracker_firmware_section->setObjectName(
+				"widget_ars_tracker_firmware_section");
+		gridLayout_ars_tracker_firmware_section =
+				new QGridLayout(widget_ars_tracker_firmware_section);
+		gridLayout_ars_tracker_firmware_section->setObjectName(
+				"gridLayout_ars_tracker_firmware_section");
+		gridLayout_ars_tracker_firmware_section->setContentsMargins(0, 0, 0, 0);
+		gridLayout_ars_tracker_firmware_section->setHorizontalSpacing(2);
+		gridLayout_ars_tracker_firmware_section->setVerticalSpacing(2);
+
+		label_ars_tracker_firmware_header = new QLabel(widget_ars_tracker_firmware_section);
 		label_ars_tracker_firmware_header->setObjectName("label_ars_tracker_firmware_header");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_firmware_header, 4, 4, 1, 2,
-																					 Qt::AlignTop | Qt::AlignLeft);
+		gridLayout_ars_tracker_firmware_section->addWidget(label_ars_tracker_firmware_header, 0, 0,
+																							 1, 2, Qt::AlignTop | Qt::AlignLeft);
 
-		label_ars_tracker_firmware_current_version = new QLabel(frame_ars_tracker_info);
+		label_ars_tracker_firmware_current_version =
+				new QLabel(widget_ars_tracker_firmware_section);
 		label_ars_tracker_firmware_current_version->setObjectName(
 				"label_ars_tracker_firmware_current_version");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_firmware_current_version, 5, 4, 1,
-																					 1);
+		gridLayout_ars_tracker_firmware_section->addWidget(
+				label_ars_tracker_firmware_current_version, 1, 0, 1, 1);
 
-		edit_ars_tracker_firmware_current_version = new QLineEdit(frame_ars_tracker_info);
+		edit_ars_tracker_firmware_current_version =
+				new QLineEdit(widget_ars_tracker_firmware_section);
 		edit_ars_tracker_firmware_current_version->setObjectName(
 				"edit_ars_tracker_firmware_current_version");
 		edit_ars_tracker_firmware_current_version->setReadOnly(true);
 
-		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_firmware_current_version, 5, 5, 1,
-																					 1);
+		gridLayout_ars_tracker_firmware_section->addWidget(
+				edit_ars_tracker_firmware_current_version, 1, 1, 1, 1);
 
-		label_ars_tracker_firmware_second_slot = new QLabel(frame_ars_tracker_info);
+		label_ars_tracker_firmware_second_slot = new QLabel(widget_ars_tracker_firmware_section);
 		label_ars_tracker_firmware_second_slot->setObjectName(
 				"label_ars_tracker_firmware_second_slot");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_firmware_second_slot, 6, 4, 1, 1);
+		gridLayout_ars_tracker_firmware_section->addWidget(label_ars_tracker_firmware_second_slot,
+																							 2, 0, 1, 1);
 
-		edit_ars_tracker_firmware_second_slot = new QLineEdit(frame_ars_tracker_info);
+		widget_ars_tracker_firmware_second_slot =
+				new QWidget(widget_ars_tracker_firmware_section);
+		widget_ars_tracker_firmware_second_slot->setObjectName(
+				"widget_ars_tracker_firmware_second_slot");
+		horizontalLayout_ars_tracker_firmware_second_slot =
+				new QHBoxLayout(widget_ars_tracker_firmware_second_slot);
+		horizontalLayout_ars_tracker_firmware_second_slot->setObjectName(
+				"horizontalLayout_ars_tracker_firmware_second_slot");
+		horizontalLayout_ars_tracker_firmware_second_slot->setContentsMargins(0, 0, 0, 0);
+		horizontalLayout_ars_tracker_firmware_second_slot->setSpacing(2);
+
+		edit_ars_tracker_firmware_second_slot =
+				new QLineEdit(widget_ars_tracker_firmware_second_slot);
 		edit_ars_tracker_firmware_second_slot->setObjectName(
 				"edit_ars_tracker_firmware_second_slot");
 		edit_ars_tracker_firmware_second_slot->setReadOnly(true);
 
-		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_firmware_second_slot, 6, 5, 1, 1);
+		horizontalLayout_ars_tracker_firmware_second_slot->addWidget(
+				edit_ars_tracker_firmware_second_slot);
+		horizontalLayout_ars_tracker_firmware_second_slot->setStretch(0, 1);
 
-		label_ars_tracker_firmware_file = new QLabel(frame_ars_tracker_info);
+		btn_ars_tracker_firmware_erase =
+				new QPushButton(widget_ars_tracker_firmware_second_slot);
+		btn_ars_tracker_firmware_erase->setObjectName("btn_ars_tracker_firmware_erase");
+		btn_ars_tracker_firmware_erase->setEnabled(false);
+
+		horizontalLayout_ars_tracker_firmware_second_slot->addWidget(
+				btn_ars_tracker_firmware_erase);
+		gridLayout_ars_tracker_firmware_section->addWidget(
+				widget_ars_tracker_firmware_second_slot, 2, 1, 1, 1);
+
+		label_ars_tracker_firmware_file = new QLabel(widget_ars_tracker_firmware_section);
 		label_ars_tracker_firmware_file->setObjectName("label_ars_tracker_firmware_file");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_firmware_file, 7, 4, 1, 1);
+		gridLayout_ars_tracker_firmware_section->addWidget(label_ars_tracker_firmware_file, 3, 0,
+																							 1, 1);
 
-		widget_ars_tracker_firmware_file = new QWidget(frame_ars_tracker_info);
+		widget_ars_tracker_firmware_file = new QWidget(widget_ars_tracker_firmware_section);
 		widget_ars_tracker_firmware_file->setObjectName("widget_ars_tracker_firmware_file");
 		horizontalLayout_ars_tracker_firmware_file =
 				new QHBoxLayout(widget_ars_tracker_firmware_file);
@@ -2012,13 +2053,18 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		horizontalLayout_ars_tracker_firmware_file->addWidget(btn_ars_tracker_firmware_browse);
 
-		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_firmware_file, 7, 5, 1, 1);
+		gridLayout_ars_tracker_firmware_section->addWidget(widget_ars_tracker_firmware_file, 3, 1,
+																							 1, 1);
 
-		btn_ars_tracker_firmware_upload = new QPushButton(frame_ars_tracker_info);
+		btn_ars_tracker_firmware_upload = new QPushButton(widget_ars_tracker_firmware_section);
 		btn_ars_tracker_firmware_upload->setObjectName("btn_ars_tracker_firmware_upload");
 
-		gridLayout_ars_tracker_info->addWidget(btn_ars_tracker_firmware_upload, 8, 5, 1, 1,
-																					 Qt::AlignLeft);
+		gridLayout_ars_tracker_firmware_section->addWidget(btn_ars_tracker_firmware_upload, 4, 1, 1,
+																							 1, Qt::AlignLeft | Qt::AlignTop);
+		gridLayout_ars_tracker_firmware_section->setColumnStretch(1, 1);
+		gridLayout_ars_tracker_firmware_section->setRowStretch(5, 1);
+		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_firmware_section, 4, 4, 5, 2,
+																					 Qt::AlignTop);
 		gridLayout_ars_tracker_info->setRowStretch(0, 0);
 		gridLayout_ars_tracker_info->setRowStretch(1, 0);
 		gridLayout_ars_tracker_info->setRowStretch(2, 0);
@@ -2575,6 +2621,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 				QCoreApplication::translate("Form", "Second slot:", nullptr));
 		edit_ars_tracker_firmware_second_slot->setText(
 				QCoreApplication::translate("Form", "Not loaded", nullptr));
+		btn_ars_tracker_firmware_erase->setText(
+				QCoreApplication::translate("Form", "Erase", nullptr));
 		label_ars_tracker_firmware_file->setText(
 				QCoreApplication::translate("Form", "Firmware file:", nullptr));
 		edit_ars_tracker_firmware_file->setText(QString());
@@ -2825,6 +2873,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						SLOT(on_btn_ars_tracker_firmware_browse_clicked()));
 		connect(btn_ars_tracker_firmware_upload, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_firmware_upload_clicked()));
+		connect(btn_ars_tracker_firmware_erase, SIGNAL(clicked()), this,
+						SLOT(on_btn_ars_tracker_firmware_erase_clicked()));
 		connect(btn_ars_tracker_destination, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_destination_clicked()));
 		connect(combo_ars_tracker_port, &ars_tracker_port_combo_box::popup_about_to_show, this,
@@ -2896,10 +2946,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 				bool serial_opening = false;
 				ars_tracker_main_serial_state(&serial_open, &serial_opening);
 
-				if (serial_open == true && ars_tracker_firmware_upload_active == true)
+				if (serial_open == true &&
+						(ars_tracker_firmware_upload_active == true ||
+						 ars_tracker_firmware_erase_active == true))
 				{
 						lbl_ars_tracker_status->setText(
-								"Disconnect is not allowed during firmware upload.");
+								"Disconnect is not allowed during firmware update/erase.");
 						return;
 				}
 
@@ -3261,6 +3313,8 @@ void plugin_mcumgr::serial_closed()
 		ars_tracker_auto_info_refresh_in_progress = false;
 		ars_tracker_auto_info_refresh_attempts = 0;
 		ars_tracker_firmware_upload_active = false;
+		ars_tracker_firmware_erase_active = false;
+		ars_tracker_firmware_refresh_after_erase_pending = false;
 		refresh_ars_tracker_serial_ports();
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
 		ars_tracker_info_changed(ars_tracker->tracker_info());
@@ -3279,12 +3333,17 @@ void plugin_mcumgr::serial_closed()
 		case ACTION_IMG_IMAGE_LIST:
 		case ACTION_IMG_IMAGE_SET:
 		case ACTION_IMG_IMAGE_ERASE:
-		case ACTION_IMG_IMAGE_SLOT_INFO: {
+		case ACTION_IMG_IMAGE_SLOT_INFO:
+		case ACTION_ARS_TRACKER_FIRMWARE_STATE:
+		case ACTION_ARS_TRACKER_FIRMWARE_UPLOAD:
+		case ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET:
+		case ACTION_ARS_TRACKER_FIRMWARE_ERASE: {
 				smp_groups.img_mgmt->cancel();
 				break;
 		}
 
 		case ACTION_OS_UPLOAD_RESET:
+		case ACTION_ARS_TRACKER_FIRMWARE_RESET:
 		case ACTION_OS_ECHO:
 		case ACTION_OS_TASK_STATS:
 		case ACTION_OS_MEMORY_POOL:
@@ -3966,7 +4025,8 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 		bool    ars_tracker_img_action =
 				(user_data == ACTION_ARS_TRACKER_FIRMWARE_STATE ||
 				 user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD ||
-				 user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET);
+				 user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET ||
+				 user_data == ACTION_ARS_TRACKER_FIRMWARE_ERASE);
 		bool ars_tracker_os_action = (user_data == ACTION_ARS_TRACKER_FIRMWARE_RESET);
 
 		log_debug() << "Status: " << status;
@@ -4010,71 +4070,58 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 						}
 						else if (user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD)
 						{
-								log_debug() << "ArsTracker firmware upload complete, hash="
+								log_debug() << "ArsTracker firmware upload completed, hash="
 														<< ars_tracker_firmware_upload_hash;
 								lbl_ars_tracker_progress->setText("Firmware upload: 100%");
+								finished = false;
+								mode = ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET;
+								processor->set_transport(active_transport());
+								set_group_transport_settings(smp_groups.img_mgmt);
+								bool started = smp_groups.img_mgmt->start_image_set(
+										&ars_tracker_firmware_upload_hash, true, nullptr);
 
-								if (radio_IMG_Test->isChecked() || radio_IMG_Confirm->isChecked())
+								if (started == true)
 								{
-										finished = false;
-										mode = ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET;
-										processor->set_transport(active_transport());
-										set_group_transport_settings(smp_groups.img_mgmt);
-										bool started = smp_groups.img_mgmt->start_image_set(
-												&ars_tracker_firmware_upload_hash,
-												(radio_IMG_Confirm->isChecked() ? true : false), nullptr);
-
-										if (started == true)
-										{
-												log_debug() << "ArsTracker firmware upload set step started:"
-																		<< (radio_IMG_Confirm->isChecked() ? "confirm" : "test");
-												lbl_ars_tracker_status->setText(
-														radio_IMG_Confirm->isChecked() ?
-																"Confirming uploaded firmware..." :
-																"Marking uploaded firmware for test...");
-										}
-										else
-										{
-												error_string = "Firmware upload failed: could not start image state step.";
-												ars_tracker_firmware_upload_active = false;
-										}
+										log_debug() << "ArsTracker firmware image confirm/test step started";
+										lbl_ars_tracker_status->setText("Confirming uploaded firmware...");
 								}
 								else
 								{
-										error_string = "Firmware upload completed";
+										finished = true;
+										error_string = "Firmware upload failed: could not start image state step.";
 										ars_tracker_firmware_upload_active = false;
 								}
 						}
 						else if (user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET)
 						{
-								log_debug() << "ArsTracker firmware upload image set step completed";
+								log_debug() << "ArsTracker firmware image confirm/test step completed";
 								lbl_ars_tracker_progress->setText("Image confirm/test step completed");
+								finished = false;
+								mode = ACTION_ARS_TRACKER_FIRMWARE_RESET;
+								processor->set_transport(active_transport());
+								set_group_transport_settings(smp_groups.os_mgmt);
+								log_debug() << "ArsTracker firmware reset after upload requested";
+								bool started = smp_groups.os_mgmt->start_reset(false, 0);
 
-								if (check_IMG_Reset->isChecked())
+								if (started == true)
 								{
-										finished = false;
-										mode = ACTION_ARS_TRACKER_FIRMWARE_RESET;
-										processor->set_transport(active_transport());
-										set_group_transport_settings(smp_groups.os_mgmt);
-										bool started = smp_groups.os_mgmt->start_reset(false, 0);
-
-										if (started == true)
-										{
-												log_debug() << "ArsTracker firmware upload reset step started";
-												lbl_ars_tracker_status->setText("Resetting after firmware upload...");
-										}
-										else
-										{
-												error_string =
-														"Firmware upload completed, but failed to send reset.";
-												ars_tracker_firmware_upload_active = false;
-										}
+										lbl_ars_tracker_status->setText("Resetting after firmware upload...");
 								}
 								else
 								{
-										error_string = "Firmware upload completed";
+										finished = true;
+										error_string =
+												"Firmware upload completed, but failed to send reset.";
 										ars_tracker_firmware_upload_active = false;
 								}
+						}
+						else if (user_data == ACTION_ARS_TRACKER_FIRMWARE_ERASE)
+						{
+								log_debug() << "ArsTracker firmware erase second slot completed";
+								lbl_ars_tracker_progress->setText("Second slot erased");
+								error_string = "Second slot erased";
+								ars_tracker_firmware_erase_active = false;
+								ars_tracker_firmware_refresh_after_erase_pending = true;
 						}
 						else if (user_data == ACTION_IMG_UPLOAD)
 						{
@@ -4215,33 +4262,24 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 						if (user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET)
 						{
 								skip_error_string = true;
+								finished = false;
+								mode = ACTION_ARS_TRACKER_FIRMWARE_RESET;
+								processor->set_transport(active_transport());
+								set_group_transport_settings(smp_groups.os_mgmt);
+								log_debug() << "ArsTracker firmware reset after upload requested";
+								bool started = smp_groups.os_mgmt->start_reset(false, 0);
 
-								if (check_IMG_Reset->isChecked())
+								if (started == true)
 								{
-										finished = false;
-										mode = ACTION_ARS_TRACKER_FIRMWARE_RESET;
-										processor->set_transport(active_transport());
-										set_group_transport_settings(smp_groups.os_mgmt);
-										bool started = smp_groups.os_mgmt->start_reset(false, 0);
-
-										if (started == true)
-										{
-												log_debug() << "ArsTracker firmware upload reset step started after unsupported set";
-												lbl_ars_tracker_status->setText("Resetting after firmware upload...");
-										}
-										else
-										{
-												error_string =
-														"Firmware upload completed, but image state command is unsupported and reset failed to start.";
-												ars_tracker_firmware_upload_active = false;
-												lbl_ars_tracker_status->setText(error_string);
-										}
+										lbl_ars_tracker_status->setText("Resetting after firmware upload...");
 								}
 								else
 								{
-										lbl_ars_tracker_status->setText(
-												"Firmware upload completed, image state command not supported.");
+										finished = true;
+										error_string =
+												"Firmware upload completed, but image state command is unsupported and reset failed to start.";
 										ars_tracker_firmware_upload_active = false;
+										lbl_ars_tracker_status->setText(error_string);
 								}
 						}
 						else if (user_data == ACTION_IMG_UPLOAD_SET)
@@ -4281,6 +4319,7 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 						else
 						{
 								ars_tracker_firmware_upload_active = false;
+								ars_tracker_firmware_erase_active = false;
 						}
 				}
 		} else if (sender() == smp_groups.os_mgmt)
@@ -4298,7 +4337,7 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 								error_string = nullptr;
 						} else if (user_data == ACTION_ARS_TRACKER_FIRMWARE_RESET)
 						{
-								log_debug() << "ArsTracker firmware reset command completed";
+								log_debug() << "ArsTracker firmware reset command sent";
 								error_string = "Reset command sent";
 								ars_tracker_firmware_upload_active = false;
 						}
@@ -4823,7 +4862,40 @@ void plugin_mcumgr::status(uint8_t user_data, group_status status, QString error
 
 		if ((ars_tracker_img_action || ars_tracker_os_action) && finished == true)
 		{
+				if (ars_tracker_img_action)
+				{
+						ars_tracker_firmware_upload_active = false;
+						if (user_data == ACTION_ARS_TRACKER_FIRMWARE_ERASE)
+						{
+								ars_tracker_firmware_erase_active = false;
+						}
+				}
+
+				if (ars_tracker_os_action)
+				{
+						ars_tracker_firmware_upload_active = false;
+						ars_tracker_firmware_erase_active = false;
+				}
+
 				set_ars_tracker_controls_loading(ars_tracker_any_loading());
+
+				if (user_data == ACTION_ARS_TRACKER_FIRMWARE_ERASE &&
+						ars_tracker_firmware_refresh_after_erase_pending == true)
+				{
+						ars_tracker_firmware_refresh_after_erase_pending = false;
+						QTimer::singleShot(0, this, [this]() {
+								log_debug() << "ArsTracker firmware image state refresh after erase";
+								QString error_message;
+
+								if (start_ars_tracker_info_refresh(&error_message) == false &&
+										error_message.isEmpty() == false)
+								{
+										log_warning() << "ArsTracker firmware image state refresh after erase failed:"
+																	<< error_message;
+										lbl_ars_tracker_status->setText(error_message);
+								}
+						});
+				}
 		}
 
 		if (error_string != nullptr && skip_error_string == false)
@@ -6830,11 +6902,11 @@ bool plugin_mcumgr::start_ars_tracker_firmware_upload(QString *error_message)
 				return false;
 		}
 
-		if (ars_tracker_firmware_upload_active)
+		if (ars_tracker_firmware_upload_active || ars_tracker_firmware_erase_active)
 		{
 				if (error_message != nullptr)
 				{
-						*error_message = "Wait for firmware upload to finish.";
+						*error_message = "Another ArsTracker operation is already running";
 				}
 				return false;
 		}
@@ -6843,7 +6915,7 @@ bool plugin_mcumgr::start_ars_tracker_firmware_upload(QString *error_message)
 		{
 				if (error_message != nullptr)
 				{
-						*error_message = "Another ArsTracker operation is already in progress.";
+						*error_message = "Another ArsTracker operation is already running";
 				}
 				return false;
 		}
@@ -6888,7 +6960,8 @@ bool plugin_mcumgr::start_ars_tracker_firmware_upload(QString *error_message)
 				return false;
 		}
 
-		log_debug() << "ArsTracker firmware upload started for file:" << firmware_file;
+		log_debug() << "ArsTracker firmware upload started";
+		log_debug() << "ArsTracker firmware upload file:" << firmware_file;
 		mode = ACTION_ARS_TRACKER_FIRMWARE_UPLOAD;
 		processor->set_transport(active_transport());
 		set_group_transport_settings(smp_groups.img_mgmt);
@@ -6908,6 +6981,7 @@ bool plugin_mcumgr::start_ars_tracker_firmware_upload(QString *error_message)
 		}
 
 		ars_tracker_firmware_upload_active = true;
+		ars_tracker_firmware_refresh_after_erase_pending = false;
 		lbl_ars_tracker_progress->setText("Firmware upload: 0%");
 		lbl_ars_tracker_status->setText("Firmware upload started");
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
@@ -7169,11 +7243,67 @@ void plugin_mcumgr::on_btn_ars_tracker_firmware_upload_clicked()
 		}
 }
 
+void plugin_mcumgr::on_btn_ars_tracker_firmware_erase_clicked()
+{
+		if (ars_tracker_port_scan_active || ars_tracker_any_loading())
+		{
+				lbl_ars_tracker_status->setText("Another ArsTracker operation is already running");
+				return;
+		}
+
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		if (serial_open == false || serial_opening == true)
+		{
+				lbl_ars_tracker_status->setText("Connect to ArsTracker before erasing second slot.");
+				return;
+		}
+
+		QString second_slot_value = edit_ars_tracker_firmware_second_slot->text().trimmed();
+		if (second_slot_value.isEmpty() || second_slot_value.compare("empty", Qt::CaseInsensitive) == 0 ||
+				second_slot_value.compare("Not loaded", Qt::CaseInsensitive) == 0 ||
+				second_slot_value.startsWith("Loading", Qt::CaseInsensitive) ||
+				second_slot_value.startsWith("Error", Qt::CaseInsensitive))
+		{
+				lbl_ars_tracker_status->setText("Second slot is already empty.");
+				return;
+		}
+
+		if (claim_transport(lbl_ars_tracker_status) == false)
+		{
+				return;
+		}
+
+		log_debug() << "ArsTracker firmware erase second slot requested";
+		log_debug() << "ArsTracker firmware erase second slot started";
+		mode = ACTION_ARS_TRACKER_FIRMWARE_ERASE;
+		processor->set_transport(active_transport());
+		set_group_transport_settings(smp_groups.img_mgmt, timeout_erase_ms);
+		bool started = smp_groups.img_mgmt->start_image_erase(1);
+
+		if (started == false)
+		{
+				relase_transport();
+				lbl_ars_tracker_status->setText("Failed to start second slot erase.");
+				return;
+		}
+
+		ars_tracker_firmware_erase_active = true;
+		ars_tracker_firmware_refresh_after_erase_pending = false;
+		lbl_ars_tracker_progress->setText("Erasing second slot...");
+		lbl_ars_tracker_status->setText("Erasing second slot...");
+		set_ars_tracker_controls_loading(ars_tracker_any_loading());
+		btn_cancel->setEnabled(true);
+}
+
 void plugin_mcumgr::on_btn_ars_tracker_cancel_clicked()
 {
-		if (ars_tracker_firmware_upload_active == true)
+		if (ars_tracker_firmware_upload_active == true || ars_tracker_firmware_erase_active == true)
 		{
-				lbl_ars_tracker_status->setText("Cancelling firmware upload...");
+				lbl_ars_tracker_status->setText(ars_tracker_firmware_erase_active ?
+																			 "Cancelling firmware erase..." :
+																			 "Cancelling firmware upload...");
 
 				if (mode == ACTION_ARS_TRACKER_FIRMWARE_RESET)
 				{
@@ -7221,13 +7351,15 @@ void plugin_mcumgr::update_ars_tracker_status_indicator(const QString &raw_statu
 bool plugin_mcumgr::ars_tracker_any_loading() const
 {
 		return ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
-					 ars_tracker_export_loading || ars_tracker_firmware_upload_active;
+					 ars_tracker_export_loading || ars_tracker_firmware_upload_active ||
+					 ars_tracker_firmware_erase_active;
 }
 
 void plugin_mcumgr::update_ars_tracker_firmware_upload_controls(bool controls_locked)
 {
 		if (btn_ars_tracker_firmware_upload == nullptr || btn_ars_tracker_firmware_browse == nullptr ||
-				edit_ars_tracker_firmware_file == nullptr)
+				edit_ars_tracker_firmware_file == nullptr || btn_ars_tracker_firmware_erase == nullptr ||
+				edit_ars_tracker_firmware_second_slot == nullptr)
 		{
 				return;
 		}
@@ -7238,16 +7370,28 @@ void plugin_mcumgr::update_ars_tracker_firmware_upload_controls(bool controls_lo
 		bool firmware_file_exists =
 				edit_ars_tracker_firmware_file->text().isEmpty() == false &&
 				QFileInfo::exists(edit_ars_tracker_firmware_file->text());
+		QString second_slot_value = edit_ars_tracker_firmware_second_slot->text().trimmed();
+		bool second_slot_has_image =
+				second_slot_value.isEmpty() == false &&
+				second_slot_value.compare("empty", Qt::CaseInsensitive) != 0 &&
+				second_slot_value.compare("Not loaded", Qt::CaseInsensitive) != 0 &&
+				second_slot_value.startsWith("Loading", Qt::CaseInsensitive) == false &&
+				second_slot_value.startsWith("Error", Qt::CaseInsensitive) == false;
 
 		btn_ars_tracker_firmware_browse->setEnabled(!controls_locked);
 		btn_ars_tracker_firmware_upload->setEnabled(!controls_locked && serial_open == true &&
 																						 serial_opening == false &&
 																						 firmware_file_exists);
+		btn_ars_tracker_firmware_erase->setEnabled(!controls_locked && serial_open == true &&
+																					 serial_opening == false &&
+																					 second_slot_has_image);
 		log_debug() << "ArsTracker firmware UI controls:"
 								<< "browseEnabled=" << btn_ars_tracker_firmware_browse->isEnabled()
 								<< "uploadEnabled=" << btn_ars_tracker_firmware_upload->isEnabled()
+								<< "eraseEnabled=" << btn_ars_tracker_firmware_erase->isEnabled()
 								<< "serialOpen=" << serial_open << "serialOpening=" << serial_opening
 								<< "fileExists=" << firmware_file_exists
+								<< "secondSlotHasImage=" << second_slot_has_image
 								<< "controlsLocked=" << controls_locked;
 }
 
@@ -7306,6 +7450,8 @@ void plugin_mcumgr::ars_tracker_info_changed(const ars_tracker_info_t &info)
 												 field_display_text(info.firmware_current_version));
 		set_tracker_info_value(edit_ars_tracker_firmware_second_slot, "Second slot",
 												 field_display_text(info.firmware_second_slot));
+		update_ars_tracker_firmware_upload_controls(ars_tracker_any_loading() ||
+																						 ars_tracker_port_scan_active);
 }
 
 void plugin_mcumgr::ars_tracker_info_loading_changed(bool loading)

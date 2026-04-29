@@ -10,6 +10,7 @@
 
 #include "smp_group.h"
 #include "smp_group_fs_mgmt.h"
+#include "smp_group_img_mgmt.h"
 
 struct ars_tracker_session_t {
     QString id;
@@ -41,6 +42,8 @@ struct ars_tracker_info_t {
     ars_tracker_info_field_t battery_info;
     ars_tracker_info_field_t memory_usage;
     ars_tracker_info_field_t bad_blocks;
+    ars_tracker_info_field_t firmware_current_version;
+    ars_tracker_info_field_t firmware_second_slot;
     QString batteryInfoText;
     QString memoryUsageText;
     QString badBlocksText;
@@ -96,6 +99,9 @@ public:
     bool begin_tracker_info_refresh(QString *error_message);
     void handle_tracker_info_response(group_status status, const QString &shell_output,
                                       int32_t shell_ret);
+    void handle_tracker_firmware_state_response(group_status status,
+                                                const QString &error_message,
+                                                const QList<image_state_t> &images);
     bool begin_session_delete(const QString &session_id, QString *session_name,
                               QString *error_message);
     void handle_session_delete_response(group_status status, const QString &shell_output,
@@ -130,6 +136,8 @@ signals:
     void request_session_list_refresh_after_delete();
     void request_tracker_info_shell_command(const QStringList &arguments);
     void request_cancel_tracker_info_shell_command();
+    void request_tracker_info_image_state();
+    void request_cancel_tracker_info_image_state();
     void request_file_hash_support();
     void request_file_metadata(const QString &remote_file, const QString &hash_name);
     void request_file_download(const QString &remote_file, const QString &local_temp_file);
@@ -145,6 +153,7 @@ private:
         TRACKER_INFO_STEP_BATTERY_INFO,
         TRACKER_INFO_STEP_MEMORY_USAGE,
         TRACKER_INFO_STEP_BAD_BLOCKS,
+        TRACKER_INFO_STEP_FIRMWARE_STATE,
         TRACKER_INFO_STEP_SESSION_LIST,
     };
 

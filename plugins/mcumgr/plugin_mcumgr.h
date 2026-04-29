@@ -153,6 +153,10 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT,
     ACTION_ARS_TRACKER_EXPORT_METADATA,
     ACTION_ARS_TRACKER_EXPORT_DOWNLOAD,
+    ACTION_ARS_TRACKER_FIRMWARE_STATE,
+    ACTION_ARS_TRACKER_FIRMWARE_UPLOAD,
+    ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET,
+    ACTION_ARS_TRACKER_FIRMWARE_RESET,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -322,6 +326,8 @@ private slots:
     void on_btn_ars_tracker_delete_clicked();
     void on_btn_ars_tracker_download_clicked();
     void on_btn_ars_tracker_destination_clicked();
+    void on_btn_ars_tracker_firmware_browse_clicked();
+    void on_btn_ars_tracker_firmware_upload_clicked();
     void on_btn_ars_tracker_cancel_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_info_changed(const ars_tracker_info_t &info);
@@ -335,6 +341,8 @@ private slots:
     void ars_tracker_export_finished(bool success, bool cancelled, const QString &message);
     void ars_tracker_request_info_shell_command(const QStringList &arguments);
     void ars_tracker_request_cancel_info_shell_command();
+    void ars_tracker_request_info_image_state();
+    void ars_tracker_request_cancel_info_image_state();
     void ars_tracker_request_session_refresh_after_delete();
     void ars_tracker_request_file_hash_support();
     void ars_tracker_request_file_metadata(const QString &remote_file, const QString &hash_name);
@@ -352,10 +360,13 @@ private:
     void show_transport_open_status();
     void size_abbreviation(uint32_t size, QString *output);
     void update_ars_tracker_status_indicator(const QString &raw_status);
+    bool ars_tracker_any_loading() const;
+    void update_ars_tracker_firmware_upload_controls(bool controls_locked);
     void close_transport_windows();
     bool ars_tracker_transport_usable();
     bool ars_tracker_tab_is_active() const;
     bool start_ars_tracker_info_refresh(QString *error_message = nullptr);
+    bool start_ars_tracker_firmware_upload(QString *error_message = nullptr);
     void maybe_auto_refresh_ars_tracker();
     QString ars_tracker_selected_port_name() const;
     bool ars_tracker_has_selected_port() const;
@@ -721,6 +732,17 @@ private:
     QLineEdit *edit_ars_tracker_memory_usage;
     QLabel *label_ars_tracker_bad_blocks;
     QLineEdit *edit_ars_tracker_bad_blocks;
+    QLabel *label_ars_tracker_firmware_header;
+    QLabel *label_ars_tracker_firmware_current_version;
+    QLineEdit *edit_ars_tracker_firmware_current_version;
+    QLabel *label_ars_tracker_firmware_second_slot;
+    QLineEdit *edit_ars_tracker_firmware_second_slot;
+    QLabel *label_ars_tracker_firmware_file;
+    QWidget *widget_ars_tracker_firmware_file;
+    QHBoxLayout *horizontalLayout_ars_tracker_firmware_file;
+    QLineEdit *edit_ars_tracker_firmware_file;
+    QToolButton *btn_ars_tracker_firmware_browse;
+    QPushButton *btn_ars_tracker_firmware_upload;
     QLabel *label_ars_tracker_destination;
     QLineEdit *edit_ars_tracker_destination;
     QToolButton *btn_ars_tracker_destination;
@@ -774,6 +796,7 @@ private:
     bool ars_tracker_loading;
     bool ars_tracker_delete_loading;
     bool ars_tracker_export_loading;
+    bool ars_tracker_firmware_upload_active;
     bool ars_tracker_port_scan_active;
     bool ars_tracker_serial_transition_active;
     bool ars_tracker_auto_info_refresh_pending;
@@ -789,6 +812,8 @@ private:
     QByteArray ars_tracker_export_fs_hash_checksum_response;
     uint32_t ars_tracker_export_fs_size_response;
     QList<hash_checksum_t> ars_tracker_export_supported_hash_checksum_list;
+    QList<image_state_t> ars_tracker_image_state_list;
+    QByteArray ars_tracker_firmware_upload_hash;
     QStringList group_list;
     QList<stat_value_t> stat_list;
     QStandardItemModel model_image_state;

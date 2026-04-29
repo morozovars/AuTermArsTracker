@@ -14,6 +14,108 @@
 static const QStringList ars_tracker_fixed_files =
     QStringList() << "trace.csv" << "processedStr.csv" << "battery.csv";
 
+static QString format_firmware_slot_value(const slot_state_t *slot, const QString &empty_text)
+{
+    if (slot == nullptr)
+    {
+        return empty_text;
+    }
+
+    QString version_text = QString::fromUtf8(slot->version).trimmed();
+    if (version_text.isEmpty())
+    {
+        version_text = empty_text;
+    }
+
+    QStringList flags;
+    if (slot->active)
+    {
+        flags << "active";
+    }
+    if (slot->confirmed)
+    {
+        flags << "confirmed";
+    }
+    if (slot->pending)
+    {
+        flags << "pending";
+    }
+    if (slot->bootable)
+    {
+        flags << "bootable";
+    }
+    if (slot->permanent)
+    {
+        flags << "permanent";
+    }
+
+    if (flags.isEmpty())
+    {
+        return version_text;
+    }
+
+    return QString("%1 (%2)").arg(version_text, flags.join(", "));
+}
+
+static bool parse_tracker_firmware_versions(const QList<image_state_t> &images,
+                                            QString                    *current_version,
+                                            QString                    *second_slot_version,
+                                            QString                    *error_message)
+{
+    const image_state_t *image_zero = nullptr;
+
+    for (int i = 0; i < images.length(); ++i)
+    {
+        if (images.at(i).image_set == false || images.at(i).image == 0)
+        {
+            image_zero = &images.at(i);
+
+            if (images.at(i).image_set == true && images.at(i).image == 0)
+            {
+                break;
+            }
+        }
+    }
+
+    if (image_zero == nullptr)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Image state response does not include image 0.");
+        }
+
+        return false;
+    }
+
+    const slot_state_t *slot_zero = nullptr;
+    const slot_state_t *slot_one  = nullptr;
+
+    for (int i = 0; i < image_zero->slot_list.length(); ++i)
+    {
+        const slot_state_t &slot = image_zero->slot_list.at(i);
+
+        if (slot.slot == 0 && slot_zero == nullptr)
+        {
+            slot_zero = &slot;
+        } else if (slot.slot == 1 && slot_one == nullptr)
+        {
+            slot_one = &slot;
+        }
+    }
+
+    if (current_version != nullptr)
+    {
+        *current_version = format_firmware_slot_value(slot_zero, "empty");
+    }
+
+    if (second_slot_version != nullptr)
+    {
+        *second_slot_version = format_firmware_slot_value(slot_one, "empty");
+    }
+
+    return true;
+}
+
 static QString format_export_byte_count(qint64 bytes)
 {
     static const char* suffixes[] = {"B", "KB", "MB", "GB", "TB"};
@@ -162,6 +264,12 @@ void ars_tracker_backend::reset_tracker_info_state()
     latest_tracker_info.bad_blocks.error.clear();
     latest_tracker_info.bad_blocks.status    = ARS_TRACKER_INFO_FIELD_IDLE;
     latest_tracker_info.badBlocksText.clear();
+    latest_tracker_info.firmware_current_version.value.clear();
+    latest_tracker_info.firmware_current_version.error.clear();
+    latest_tracker_info.firmware_current_version.status = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.firmware_second_slot.value.clear();
+    latest_tracker_info.firmware_second_slot.error.clear();
+    latest_tracker_info.firmware_second_slot.status = ARS_TRACKER_INFO_FIELD_IDLE;
 }
 
 void ars_tracker_backend::reset_export_state()
@@ -318,6 +426,9 @@ ars_tracker_info_field_t* ars_tracker_backend::tracker_info_field_for_step(
     } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
     {
         return &latest_tracker_info.bad_blocks;
+    } else if (step == TRACKER_INFO_STEP_FIRMWARE_STATE)
+    {
+        return &latest_tracker_info.firmware_current_version;
     }
 
     return nullptr;
@@ -362,6 +473,9 @@ ars_tracker_backend::tracker_info_step_t ars_tracker_backend::next_tracker_info_
         return TRACKER_INFO_STEP_BAD_BLOCKS;
     } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
     {
+        return TRACKER_INFO_STEP_FIRMWARE_STATE;
+    } else if (step == TRACKER_INFO_STEP_FIRMWARE_STATE)
+    {
         return TRACKER_INFO_STEP_SESSION_LIST;
     }
 
@@ -391,6 +505,9 @@ QStringList ars_tracker_backend::tracker_info_command_arguments(tracker_info_ste
     } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
     {
         return QStringList() << "bbm" << "bb";
+    } else if (step == TRACKER_INFO_STEP_FIRMWARE_STATE)
+    {
+        return QStringList() << "img" << "state";
     } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
     {
         return QStringList() << "meas" << "ls";
@@ -422,6 +539,9 @@ QString ars_tracker_backend::tracker_info_step_name(tracker_info_step_t step) co
     } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
     {
         return "bad blocks";
+    } else if (step == TRACKER_INFO_STEP_FIRMWARE_STATE)
+    {
+        return "firmware state";
     } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
     {
         return "session list";
@@ -433,6 +553,17 @@ QString ars_tracker_backend::tracker_info_step_name(tracker_info_step_t step) co
 void ars_tracker_backend::set_tracker_info_field_error(tracker_info_step_t step,
                                                        const QString&      message)
 {
+    if (step == TRACKER_INFO_STEP_FIRMWARE_STATE)
+    {
+        latest_tracker_info.firmware_current_version.status = ARS_TRACKER_INFO_FIELD_ERROR;
+        latest_tracker_info.firmware_current_version.error  = message;
+        latest_tracker_info.firmware_current_version.value  = QString("Error: %1").arg(message);
+        latest_tracker_info.firmware_second_slot.status     = ARS_TRACKER_INFO_FIELD_ERROR;
+        latest_tracker_info.firmware_second_slot.error      = message;
+        latest_tracker_info.firmware_second_slot.value      = QString("Error: %1").arg(message);
+        return;
+    }
+
     ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
     QString*                  text_field = tracker_info_text_for_step(step);
 
@@ -458,6 +589,20 @@ void ars_tracker_backend::begin_tracker_info_step(tracker_info_step_t step)
     QString                   command_text = tracker_info_command_arguments(step).join(' ');
 
     active_tracker_info_step = step;
+
+    if (step == TRACKER_INFO_STEP_FIRMWARE_STATE)
+    {
+        latest_tracker_info.firmware_current_version.status = ARS_TRACKER_INFO_FIELD_LOADING;
+        latest_tracker_info.firmware_current_version.error.clear();
+        latest_tracker_info.firmware_current_version.value = QString("Loading...");
+        latest_tracker_info.firmware_second_slot.status = ARS_TRACKER_INFO_FIELD_LOADING;
+        latest_tracker_info.firmware_second_slot.error.clear();
+        latest_tracker_info.firmware_second_slot.value = QString("Loading...");
+        log_debug() << "ArsTracker image state request sent";
+        emit tracker_info_changed(latest_tracker_info);
+        emit request_tracker_info_image_state();
+        return;
+    }
 
     if (field != nullptr)
     {
@@ -520,6 +665,16 @@ int ars_tracker_backend::tracker_info_error_count() const
         ++error_count;
     }
 
+    if (latest_tracker_info.firmware_current_version.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
+    if (latest_tracker_info.firmware_second_slot.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
     if (tracker_info_session_list_failed == true)
     {
         ++error_count;
@@ -535,7 +690,9 @@ void ars_tracker_backend::finish_tracker_info_refresh(const QString& message)
     log_debug() << "ArsTracker tracker info diagnostics final texts:"
                 << "battery=" << latest_tracker_info.batteryInfoText
                 << "memory=" << latest_tracker_info.memoryUsageText
-                << "badBlocks=" << latest_tracker_info.badBlocksText;
+                << "badBlocks=" << latest_tracker_info.badBlocksText
+                << "currentFirmware=" << latest_tracker_info.firmware_current_version.value
+                << "secondSlotFirmware=" << latest_tracker_info.firmware_second_slot.value;
     log_debug() << "ArsTracker tracker info diagnostics finished";
     emit tracker_info_changed(latest_tracker_info);
     emit tracker_info_loading_changed(false);
@@ -869,6 +1026,113 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
         {
             final_message = QString("Tracker info refreshed.");
         } else
+        {
+            final_message =
+                QString("Tracker info and sessions refreshed with %1 issue(s).")
+                    .arg(QString::number(error_count));
+        }
+    }
+
+    finish_tracker_info_refresh(final_message);
+}
+
+void ars_tracker_backend::handle_tracker_firmware_state_response(
+    group_status                status,
+    const QString&              error_message,
+    const QList<image_state_t>& images)
+{
+    if (tracker_info_loading == false || active_tracker_info_step != TRACKER_INFO_STEP_FIRMWARE_STATE)
+    {
+        return;
+    }
+
+    tracker_info_step_t next_step     = next_tracker_info_step(TRACKER_INFO_STEP_FIRMWARE_STATE);
+    bool                continue_flow = false;
+    QString             final_message;
+
+    if (status == STATUS_COMPLETE)
+    {
+        QString current_version_text;
+        QString second_slot_text;
+        QString parse_error;
+
+        log_debug() << "ArsTracker image state parsed image count:" << images.length();
+
+        if (parse_tracker_firmware_versions(images, &current_version_text, &second_slot_text,
+                                            &parse_error))
+        {
+            latest_tracker_info.firmware_current_version.status = ARS_TRACKER_INFO_FIELD_READY;
+            latest_tracker_info.firmware_current_version.error.clear();
+            latest_tracker_info.firmware_current_version.value = current_version_text;
+            latest_tracker_info.firmware_second_slot.status = ARS_TRACKER_INFO_FIELD_READY;
+            latest_tracker_info.firmware_second_slot.error.clear();
+            latest_tracker_info.firmware_second_slot.value = second_slot_text;
+
+            log_debug() << "ArsTracker firmware slot 0 formatted value:" << current_version_text;
+            log_debug() << "ArsTracker firmware slot 1 formatted value:" << second_slot_text;
+        }
+        else
+        {
+            set_tracker_info_field_error(TRACKER_INFO_STEP_FIRMWARE_STATE, parse_error);
+            log_warning() << "ArsTracker image state parse error:" << parse_error;
+        }
+
+        continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
+    }
+    else if (status == STATUS_TIMEOUT)
+    {
+        set_tracker_info_field_error(TRACKER_INFO_STEP_FIRMWARE_STATE,
+                                     QString("firmware state request timed out."));
+        log_warning() << "ArsTracker image state timeout";
+        continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
+    }
+    else if (status == STATUS_CANCELLED)
+    {
+        set_tracker_info_field_error(TRACKER_INFO_STEP_FIRMWARE_STATE,
+                                     QString("firmware state request cancelled."));
+        final_message = QString("Tracker info refresh cancelled while loading firmware state.");
+        log_warning() << "ArsTracker image state cancelled";
+    }
+    else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
+    {
+        set_tracker_info_field_error(TRACKER_INFO_STEP_FIRMWARE_STATE,
+                                     QString("Transport send failed."));
+        log_warning() << "ArsTracker image state transport error";
+        continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
+    }
+    else if (status == STATUS_TRANSPORT_DISCONNECTED)
+    {
+        set_tracker_info_field_error(TRACKER_INFO_STEP_FIRMWARE_STATE,
+                                     QString("Transport disconnected."));
+        final_message =
+            QString("Tracker info refresh failed: transport disconnected while loading firmware state.");
+        log_warning() << "ArsTracker image state transport disconnected";
+    }
+    else
+    {
+        QString message = error_message.isEmpty() ? QString("Request failed.") : error_message;
+        set_tracker_info_field_error(TRACKER_INFO_STEP_FIRMWARE_STATE, message);
+        log_warning() << "ArsTracker image state request failed:" << status << error_message;
+        continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
+    }
+
+    emit tracker_info_changed(latest_tracker_info);
+
+    if (continue_flow == true)
+    {
+        begin_tracker_info_step(next_step);
+        return;
+    }
+
+    if (final_message.isEmpty())
+    {
+        int error_count = tracker_info_error_count();
+
+        if (error_count == 0)
+        {
+            final_message = QString("Tracker info refreshed.");
+        }
+        else
         {
             final_message =
                 QString("Tracker info and sessions refreshed with %1 issue(s).")
@@ -2480,7 +2744,14 @@ void ars_tracker_backend::cancel_all()
     if (tracker_info_loading == true)
     {
         emit status_message("Cancelling tracker info refresh...");
-        emit request_cancel_tracker_info_shell_command();
+        if (active_tracker_info_step == TRACKER_INFO_STEP_FIRMWARE_STATE)
+        {
+            emit request_cancel_tracker_info_image_state();
+        }
+        else
+        {
+            emit request_cancel_tracker_info_shell_command();
+        }
         return;
     }
 

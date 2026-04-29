@@ -1884,7 +1884,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		label_ars_tracker_status_value = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_status_value->setObjectName("label_ars_tracker_status_value");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_status_value, 4, 0, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_status_value, 4, 0, 1, 1,
+																					 Qt::AlignTop | Qt::AlignLeft);
 
 		widget_ars_tracker_status_value = new QWidget(frame_ars_tracker_info);
 		widget_ars_tracker_status_value->setObjectName("widget_ars_tracker_status_value");
@@ -1906,7 +1907,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		horizontalLayout_ars_tracker_status_value->addWidget(edit_ars_tracker_status_value);
 		horizontalLayout_ars_tracker_status_value->setStretch(1, 1);
-		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_status_value, 4, 1, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_status_value, 4, 1, 1, 1,
+																					 Qt::AlignTop);
 
 		label_ars_tracker_sessions = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_sessions->setObjectName("label_ars_tracker_sessions");
@@ -1950,6 +1952,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		edit_ars_tracker_bad_blocks->setReadOnly(true);
 
 		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_bad_blocks, 3, 5, 1, 1);
+		gridLayout_ars_tracker_info->setRowStretch(0, 0);
+		gridLayout_ars_tracker_info->setRowStretch(1, 0);
+		gridLayout_ars_tracker_info->setRowStretch(2, 0);
+		gridLayout_ars_tracker_info->setRowStretch(3, 0);
+		gridLayout_ars_tracker_info->setRowStretch(4, 0);
+		gridLayout_ars_tracker_info->setRowStretch(5, 1);
 		gridLayout_ars_tracker_info->setColumnStretch(1, 1);
 		gridLayout_ars_tracker_info->setColumnStretch(3, 1);
 		gridLayout_ars_tracker_info->setColumnStretch(5, 1);

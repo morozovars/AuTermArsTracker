@@ -1833,7 +1833,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		gridLayout_ars_tracker_connection->addWidget(btn_ars_tracker_connect, 1, 2, 1, 2);
 
-		gridLayout_ars_tracker->addWidget(frame_ars_tracker_connection, 0, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_connection, 0, 0, 1, 2);
 
 		frame_ars_tracker_info = new QFrame(tab_ars_tracker);
 		frame_ars_tracker_info->setObjectName("frame_ars_tracker_info");
@@ -1845,12 +1845,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		label_ars_tracker_info_header = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_info_header->setObjectName("label_ars_tracker_info_header");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_info_header, 0, 0, 1, 5);
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_info_header, 0, 0, 1, 3);
 
 		btn_ars_tracker_info_refresh = new QPushButton(frame_ars_tracker_info);
 		btn_ars_tracker_info_refresh->setObjectName("btn_ars_tracker_info_refresh");
 
-		gridLayout_ars_tracker_info->addWidget(btn_ars_tracker_info_refresh, 0, 5, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(btn_ars_tracker_info_refresh, 0, 3, 1, 1);
 
 		label_ars_tracker_serial_number = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_serial_number->setObjectName("label_ars_tracker_serial_number");
@@ -1913,48 +1913,39 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_status_value, 4, 1, 1, 1,
 																					 Qt::AlignTop);
 
-		label_ars_tracker_sessions = new QLabel(frame_ars_tracker_info);
-		label_ars_tracker_sessions->setObjectName("label_ars_tracker_sessions");
-
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_sessions, 1, 2, 1, 2);
-
-		list_ars_tracker_sessions = new QListWidget(frame_ars_tracker_info);
-		list_ars_tracker_sessions->setObjectName("list_ars_tracker_sessions");
-
-		gridLayout_ars_tracker_info->addWidget(list_ars_tracker_sessions, 2, 2, 3, 2);
-
 		label_ars_tracker_battery_info = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_battery_info->setObjectName("label_ars_tracker_battery_info");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_battery_info, 1, 4, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_battery_info, 1, 2, 1, 1);
 
 		edit_ars_tracker_battery_info = new QLineEdit(frame_ars_tracker_info);
 		edit_ars_tracker_battery_info->setObjectName("edit_ars_tracker_battery_info");
 		edit_ars_tracker_battery_info->setReadOnly(true);
 
-		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_battery_info, 1, 5, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_battery_info, 1, 3, 1, 1);
 
 		label_ars_tracker_memory_usage = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_memory_usage->setObjectName("label_ars_tracker_memory_usage");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_memory_usage, 2, 4, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_memory_usage, 2, 2, 1, 1);
 
 		edit_ars_tracker_memory_usage = new QLineEdit(frame_ars_tracker_info);
 		edit_ars_tracker_memory_usage->setObjectName("edit_ars_tracker_memory_usage");
 		edit_ars_tracker_memory_usage->setReadOnly(true);
 
-		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_memory_usage, 2, 5, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_memory_usage, 2, 3, 1, 1);
 
 		label_ars_tracker_bad_blocks = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_bad_blocks->setObjectName("label_ars_tracker_bad_blocks");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_bad_blocks, 3, 4, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_bad_blocks, 3, 2, 1, 1);
 
 		edit_ars_tracker_bad_blocks = new QLineEdit(frame_ars_tracker_info);
 		edit_ars_tracker_bad_blocks->setObjectName("edit_ars_tracker_bad_blocks");
 		edit_ars_tracker_bad_blocks->setReadOnly(true);
 
-		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_bad_blocks, 3, 5, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_bad_blocks, 3, 3, 1, 1);
+
 		widget_ars_tracker_firmware_section = new QWidget(frame_ars_tracker_info);
 		widget_ars_tracker_firmware_section->setObjectName(
 				"widget_ars_tracker_firmware_section");
@@ -2063,8 +2054,9 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 																							 1, Qt::AlignLeft | Qt::AlignTop);
 		gridLayout_ars_tracker_firmware_section->setColumnStretch(1, 1);
 		gridLayout_ars_tracker_firmware_section->setRowStretch(5, 1);
-		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_firmware_section, 4, 4, 5, 2,
+		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_firmware_section, 4, 2, 5, 2,
 																					 Qt::AlignTop);
+
 		gridLayout_ars_tracker_info->setRowStretch(0, 0);
 		gridLayout_ars_tracker_info->setRowStretch(1, 0);
 		gridLayout_ars_tracker_info->setRowStretch(2, 0);
@@ -2077,34 +2069,51 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		gridLayout_ars_tracker_info->setRowStretch(9, 1);
 		gridLayout_ars_tracker_info->setColumnStretch(1, 1);
 		gridLayout_ars_tracker_info->setColumnStretch(3, 1);
-		gridLayout_ars_tracker_info->setColumnStretch(5, 1);
 
-		gridLayout_ars_tracker->addWidget(frame_ars_tracker_info, 1, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_info, 1, 0, 1, 1);
 
-		label_ars_tracker_destination = new QLabel(tab_ars_tracker);
+		frame_ars_tracker_sessions = new QFrame(tab_ars_tracker);
+		frame_ars_tracker_sessions->setObjectName("frame_ars_tracker_sessions");
+		frame_ars_tracker_sessions->setFrameShape(QFrame::Shape::StyledPanel);
+		gridLayout_ars_tracker_sessions = new QGridLayout(frame_ars_tracker_sessions);
+		gridLayout_ars_tracker_sessions->setSpacing(2);
+		gridLayout_ars_tracker_sessions->setObjectName("gridLayout_ars_tracker_sessions");
+		gridLayout_ars_tracker_sessions->setContentsMargins(6, 6, 6, 6);
+
+		label_ars_tracker_sessions = new QLabel(frame_ars_tracker_sessions);
+		label_ars_tracker_sessions->setObjectName("label_ars_tracker_sessions");
+
+		gridLayout_ars_tracker_sessions->addWidget(label_ars_tracker_sessions, 0, 0, 1, 1);
+
+		label_ars_tracker_destination = new QLabel(frame_ars_tracker_sessions);
 		label_ars_tracker_destination->setObjectName("label_ars_tracker_destination");
 
-		gridLayout_ars_tracker->addWidget(label_ars_tracker_destination, 2, 0, 1, 1);
+		gridLayout_ars_tracker_sessions->addWidget(label_ars_tracker_destination, 0, 1, 1, 1);
 
-		edit_ars_tracker_destination = new QLineEdit(tab_ars_tracker);
+		edit_ars_tracker_destination = new QLineEdit(frame_ars_tracker_sessions);
 		edit_ars_tracker_destination->setObjectName("edit_ars_tracker_destination");
 
-		gridLayout_ars_tracker->addWidget(edit_ars_tracker_destination, 2, 1, 1, 1);
+		gridLayout_ars_tracker_sessions->addWidget(edit_ars_tracker_destination, 0, 2, 1, 1);
 
-		btn_ars_tracker_destination = new QToolButton(tab_ars_tracker);
+		btn_ars_tracker_destination = new QToolButton(frame_ars_tracker_sessions);
 		btn_ars_tracker_destination->setObjectName("btn_ars_tracker_destination");
 
-		gridLayout_ars_tracker->addWidget(btn_ars_tracker_destination, 2, 2, 1, 1);
+		gridLayout_ars_tracker_sessions->addWidget(btn_ars_tracker_destination, 0, 3, 1, 1);
 
-		label_ars_tracker_files = new QLabel(tab_ars_tracker);
+		list_ars_tracker_sessions = new QListWidget(frame_ars_tracker_sessions);
+		list_ars_tracker_sessions->setObjectName("list_ars_tracker_sessions");
+
+		gridLayout_ars_tracker_sessions->addWidget(list_ars_tracker_sessions, 1, 0, 6, 1);
+
+		label_ars_tracker_files = new QLabel(frame_ars_tracker_sessions);
 		label_ars_tracker_files->setObjectName("label_ars_tracker_files");
 
-		gridLayout_ars_tracker->addWidget(label_ars_tracker_files, 3, 0, 1, 1);
+		gridLayout_ars_tracker_sessions->addWidget(label_ars_tracker_files, 1, 1, 1, 1);
 
-		list_ars_tracker_files = new QListWidget(tab_ars_tracker);
+		list_ars_tracker_files = new QListWidget(frame_ars_tracker_sessions);
 		list_ars_tracker_files->setObjectName("list_ars_tracker_files");
 
-		gridLayout_ars_tracker->addWidget(list_ars_tracker_files, 3, 1, 1, 2);
+		gridLayout_ars_tracker_sessions->addWidget(list_ars_tracker_files, 1, 2, 3, 2);
 
 		horizontalLayout_ars_tracker_actions = new QHBoxLayout();
 		horizontalLayout_ars_tracker_actions->setSpacing(2);
@@ -2114,40 +2123,54 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		horizontalLayout_ars_tracker_actions->addItem(horizontalSpacer_ars_tracker_actions);
 
-		btn_ars_tracker_delete = new QPushButton(tab_ars_tracker);
+		btn_ars_tracker_delete = new QPushButton(frame_ars_tracker_sessions);
 		btn_ars_tracker_delete->setObjectName("btn_ars_tracker_delete");
 		btn_ars_tracker_delete->setEnabled(false);
 
 		horizontalLayout_ars_tracker_actions->addWidget(btn_ars_tracker_delete);
 
-		btn_ars_tracker_download = new QPushButton(tab_ars_tracker);
+		btn_ars_tracker_download = new QPushButton(frame_ars_tracker_sessions);
 		btn_ars_tracker_download->setObjectName("btn_ars_tracker_download");
 		btn_ars_tracker_download->setEnabled(false);
 
 		horizontalLayout_ars_tracker_actions->addWidget(btn_ars_tracker_download);
 
-		btn_ars_tracker_cancel = new QPushButton(tab_ars_tracker);
+		btn_ars_tracker_cancel = new QPushButton(frame_ars_tracker_sessions);
 		btn_ars_tracker_cancel->setObjectName("btn_ars_tracker_cancel");
 		btn_ars_tracker_cancel->setEnabled(false);
 
 		horizontalLayout_ars_tracker_actions->addWidget(btn_ars_tracker_cancel);
 
-		gridLayout_ars_tracker->addLayout(horizontalLayout_ars_tracker_actions, 4, 0, 1, 3);
+		gridLayout_ars_tracker_sessions->addLayout(horizontalLayout_ars_tracker_actions, 6, 1, 1, 3);
 
 		lbl_ars_tracker_progress = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_progress->setObjectName("lbl_ars_tracker_progress");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 5, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 3, 0, 1, 2);
 
 		lbl_ars_tracker_status = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_status->setObjectName("lbl_ars_tracker_status");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 6, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 4, 0, 1, 2);
+
+		gridLayout_ars_tracker_sessions->setColumnStretch(0, 2);
+		gridLayout_ars_tracker_sessions->setColumnStretch(2, 3);
+		gridLayout_ars_tracker_sessions->setRowStretch(6, 0);
+		gridLayout_ars_tracker_sessions->setRowStretch(7, 1);
+
+		gridLayout_ars_tracker->addWidget(frame_ars_tracker_sessions, 1, 1, 1, 1);
 
 		verticalSpacer_ars_tracker_status =
 				new QSpacerItem(20, 40, QSizePolicy::Policy::Minimum, QSizePolicy::Policy::Expanding);
 
-		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 7, 0, 1, 1);
+		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 2, 0, 1, 2);
+		gridLayout_ars_tracker->setColumnStretch(0, 2);
+		gridLayout_ars_tracker->setColumnStretch(1, 3);
+		gridLayout_ars_tracker->setRowStretch(2, 1);
+
+		qDebug() << "ArsTracker UI layout regrouped: Tracker info + Sessions";
+		qDebug() << "ArsTracker Sessions block initialized with existing session list and file status widgets";
+		qDebug() << "ArsTracker operation status labels moved to bottom status area";
 
 
 		verticalLayout_2->addWidget(selector_group);

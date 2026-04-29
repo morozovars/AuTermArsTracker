@@ -710,6 +710,8 @@ private:
     QGridLayout*    gridLayout_ars_tracker_connection;
     QFrame *frame_ars_tracker_info;
     QGridLayout *gridLayout_ars_tracker_info;
+    QFrame *frame_ars_tracker_sessions;
+    QGridLayout *gridLayout_ars_tracker_sessions;
     QLabel *label_ars_tracker_info_header;
     QPushButton *btn_ars_tracker_info_refresh;
     QLabel *label_ars_tracker_port;

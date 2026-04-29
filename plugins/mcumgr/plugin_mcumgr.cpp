@@ -1781,12 +1781,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		label_ars_tracker_info_header = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_info_header->setObjectName("label_ars_tracker_info_header");
 
-		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_info_header, 0, 0, 1, 2);
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_info_header, 0, 0, 1, 5);
 
 		btn_ars_tracker_info_refresh = new QPushButton(frame_ars_tracker_info);
 		btn_ars_tracker_info_refresh->setObjectName("btn_ars_tracker_info_refresh");
 
-		gridLayout_ars_tracker_info->addWidget(btn_ars_tracker_info_refresh, 0, 3, 1, 1);
+		gridLayout_ars_tracker_info->addWidget(btn_ars_tracker_info_refresh, 0, 5, 1, 1);
 
 		label_ars_tracker_serial_number = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_serial_number->setObjectName("label_ars_tracker_serial_number");
@@ -1841,6 +1841,42 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		list_ars_tracker_sessions->setObjectName("list_ars_tracker_sessions");
 
 		gridLayout_ars_tracker_info->addWidget(list_ars_tracker_sessions, 2, 2, 3, 2);
+
+		label_ars_tracker_battery_info = new QLabel(frame_ars_tracker_info);
+		label_ars_tracker_battery_info->setObjectName("label_ars_tracker_battery_info");
+
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_battery_info, 1, 4, 1, 1);
+
+		edit_ars_tracker_battery_info = new QLineEdit(frame_ars_tracker_info);
+		edit_ars_tracker_battery_info->setObjectName("edit_ars_tracker_battery_info");
+		edit_ars_tracker_battery_info->setReadOnly(true);
+
+		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_battery_info, 1, 5, 1, 1);
+
+		label_ars_tracker_memory_usage = new QLabel(frame_ars_tracker_info);
+		label_ars_tracker_memory_usage->setObjectName("label_ars_tracker_memory_usage");
+
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_memory_usage, 2, 4, 1, 1);
+
+		edit_ars_tracker_memory_usage = new QLineEdit(frame_ars_tracker_info);
+		edit_ars_tracker_memory_usage->setObjectName("edit_ars_tracker_memory_usage");
+		edit_ars_tracker_memory_usage->setReadOnly(true);
+
+		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_memory_usage, 2, 5, 1, 1);
+
+		label_ars_tracker_bad_blocks = new QLabel(frame_ars_tracker_info);
+		label_ars_tracker_bad_blocks->setObjectName("label_ars_tracker_bad_blocks");
+
+		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_bad_blocks, 3, 4, 1, 1);
+
+		edit_ars_tracker_bad_blocks = new QLineEdit(frame_ars_tracker_info);
+		edit_ars_tracker_bad_blocks->setObjectName("edit_ars_tracker_bad_blocks");
+		edit_ars_tracker_bad_blocks->setReadOnly(true);
+
+		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_bad_blocks, 3, 5, 1, 1);
+		gridLayout_ars_tracker_info->setColumnStretch(1, 1);
+		gridLayout_ars_tracker_info->setColumnStretch(3, 1);
+		gridLayout_ars_tracker_info->setColumnStretch(5, 1);
 
 		gridLayout_ars_tracker->addWidget(frame_ars_tracker_info, 1, 0, 1, 3);
 
@@ -2362,6 +2398,15 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		edit_ars_tracker_status_value->setText(
 				QCoreApplication::translate("Form", "Not loaded", nullptr));
 		label_ars_tracker_sessions->setText(QCoreApplication::translate("Form", "Sessions:", nullptr));
+		label_ars_tracker_battery_info->setText(
+				QCoreApplication::translate("Form", "Battery Info:", nullptr));
+		edit_ars_tracker_battery_info->setText(QCoreApplication::translate("Form", "N/A", nullptr));
+		label_ars_tracker_memory_usage->setText(
+				QCoreApplication::translate("Form", "Memory usage:", nullptr));
+		edit_ars_tracker_memory_usage->setText(QCoreApplication::translate("Form", "N/A", nullptr));
+		label_ars_tracker_bad_blocks->setText(
+				QCoreApplication::translate("Form", "Bad blocks:", nullptr));
+		edit_ars_tracker_bad_blocks->setText(QCoreApplication::translate("Form", "N/A", nullptr));
 		label_ars_tracker_destination->setText(
 				QCoreApplication::translate("Form", "Destination:", nullptr));
 		btn_ars_tracker_destination->setText(QCoreApplication::translate("Form", "...", nullptr));
@@ -3015,6 +3060,7 @@ void plugin_mcumgr::serial_closed()
 		sync_ars_tracker_serial_controls(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
 				ars_tracker_export_loading);
+		ars_tracker_info_changed(ars_tracker->tracker_info());
 
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP) || defined(PLUGIN_MCUMGR_TRANSPORT_BLUETOOTH) || defined(PLUGIN_MCUMGR_TRANSPORT_LORAWAN)
 		if (active_transport() != uart_transport)
@@ -5812,9 +5858,9 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 		populate_ars_tracker_serial_ports(QList<ars_tracker_port_scan_result_t>(),
 																			ars_tracker_scan_selected_port, "Scanning...");
 		lbl_ars_tracker_status->setText("Scanning ArsTracker serial ports...");
-		sync_ars_tracker_serial_controls(
+		set_ars_tracker_controls_loading(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
-				ars_tracker_export_loading || ars_tracker_port_scan_active);
+				ars_tracker_export_loading);
 
 		if (ars_tracker_scan_pending_ports.isEmpty())
 		{
@@ -5873,9 +5919,9 @@ void plugin_mcumgr::finish_ars_tracker_port_scan(const QString &status_message)
 		log_debug() << "ArsTracker port scan finished. Filtered ports:" << filtered_ports;
 
 		lbl_ars_tracker_status->setText(status_message);
-		sync_ars_tracker_serial_controls(
+		set_ars_tracker_controls_loading(
 				ars_tracker_info_loading || ars_tracker_loading || ars_tracker_delete_loading ||
-				ars_tracker_export_loading || ars_tracker_port_scan_active);
+				ars_tracker_export_loading);
 
 		bool serial_open = false;
 		emit plugin_serial_is_open(&serial_open);
@@ -6358,6 +6404,12 @@ void plugin_mcumgr::on_btn_ars_tracker_info_refresh_clicked()
 {
 		QString backend_error;
 
+		if (ars_tracker_port_scan_active)
+		{
+				lbl_ars_tracker_status->setText("Wait for ArsTracker port scan to finish.");
+				return;
+		}
+
 		if (claim_transport(lbl_ars_tracker_status) == false)
 		{
 				return;
@@ -6528,11 +6580,36 @@ void plugin_mcumgr::ars_tracker_info_changed(const ars_tracker_info_t &info)
 
 				return "Not loaded";
 		};
+		auto set_tracker_info_value = [this](QLineEdit* widget, const char* label, const QString& value) {
+				if (widget == nullptr)
+				{
+						return;
+				}
 
-		edit_ars_tracker_serial_number->setText(field_display_text(info.serial_number));
-		edit_ars_tracker_board_id->setText(field_display_text(info.board_id));
-		edit_ars_tracker_type->setText(field_display_text(info.tracker_type));
-		edit_ars_tracker_status_value->setText(field_display_text(info.tracker_status));
+				widget->setText(value);
+				widget->setCursorPosition(0);
+				log_debug() << "ArsTracker UI set" << label << ":" << widget->text()
+										<< "widget" << widget << "objectName" << widget->objectName();
+		};
+
+		set_tracker_info_value(edit_ars_tracker_serial_number, "Serial number",
+												 field_display_text(info.serial_number));
+		set_tracker_info_value(edit_ars_tracker_board_id, "Board id",
+												 field_display_text(info.board_id));
+		set_tracker_info_value(edit_ars_tracker_type, "Type",
+												 field_display_text(info.tracker_type));
+		set_tracker_info_value(edit_ars_tracker_status_value, "Status",
+												 field_display_text(info.tracker_status));
+		set_tracker_info_value(edit_ars_tracker_battery_info, "Battery Info",
+												 info.batteryInfoText.isEmpty() ? field_display_text(info.battery_info) :
+																										 info.batteryInfoText);
+
+		set_tracker_info_value(edit_ars_tracker_memory_usage, "Memory usage",
+												 info.memoryUsageText.isEmpty() ? field_display_text(info.memory_usage) :
+																										 info.memoryUsageText);
+		set_tracker_info_value(edit_ars_tracker_bad_blocks, "Bad blocks",
+												 info.badBlocksText.isEmpty() ? field_display_text(info.bad_blocks) :
+																								 info.badBlocksText);
 }
 
 void plugin_mcumgr::ars_tracker_info_loading_changed(bool loading)
@@ -6991,16 +7068,17 @@ void plugin_mcumgr::handle_ars_tracker_shell_status(uint8_t user_data, group_sta
 
 void plugin_mcumgr::set_ars_tracker_controls_loading(bool loading)
 {
-		btn_ars_tracker_info_refresh->setEnabled(!loading);
-		list_ars_tracker_sessions->setEnabled(!loading);
-		edit_ars_tracker_destination->setEnabled(!loading);
-		btn_ars_tracker_destination->setEnabled(!loading);
-		sync_ars_tracker_serial_controls(loading);
+		bool controls_locked = loading || ars_tracker_port_scan_active;
+		btn_ars_tracker_info_refresh->setEnabled(!controls_locked);
+		list_ars_tracker_sessions->setEnabled(!controls_locked);
+		edit_ars_tracker_destination->setEnabled(!controls_locked);
+		btn_ars_tracker_destination->setEnabled(!controls_locked);
+		sync_ars_tracker_serial_controls(controls_locked);
 
 		bool has_selection = list_ars_tracker_sessions->currentItem() != nullptr;
 
-		btn_ars_tracker_delete->setEnabled(!loading && has_selection);
-		btn_ars_tracker_download->setEnabled(!loading && has_selection);
+		btn_ars_tracker_delete->setEnabled(!controls_locked && has_selection);
+		btn_ars_tracker_download->setEnabled(!controls_locked && has_selection);
 		btn_ars_tracker_cancel->setEnabled(ars_tracker_info_loading || ars_tracker_export_loading);
 }
 

@@ -150,6 +150,18 @@ void ars_tracker_backend::reset_tracker_info_state()
     latest_tracker_info.tracker_status.value.clear();
     latest_tracker_info.tracker_status.error.clear();
     latest_tracker_info.tracker_status.status = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.battery_info.value.clear();
+    latest_tracker_info.battery_info.error.clear();
+    latest_tracker_info.battery_info.status  = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.batteryInfoText.clear();
+    latest_tracker_info.memory_usage.value.clear();
+    latest_tracker_info.memory_usage.error.clear();
+    latest_tracker_info.memory_usage.status  = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.memoryUsageText.clear();
+    latest_tracker_info.bad_blocks.value.clear();
+    latest_tracker_info.bad_blocks.error.clear();
+    latest_tracker_info.bad_blocks.status    = ARS_TRACKER_INFO_FIELD_IDLE;
+    latest_tracker_info.badBlocksText.clear();
 }
 
 void ars_tracker_backend::reset_export_state()
@@ -297,6 +309,31 @@ ars_tracker_info_field_t* ars_tracker_backend::tracker_info_field_for_step(
     } else if (step == TRACKER_INFO_STEP_STATUS)
     {
         return &latest_tracker_info.tracker_status;
+    } else if (step == TRACKER_INFO_STEP_BATTERY_INFO)
+    {
+        return &latest_tracker_info.battery_info;
+    } else if (step == TRACKER_INFO_STEP_MEMORY_USAGE)
+    {
+        return &latest_tracker_info.memory_usage;
+    } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
+    {
+        return &latest_tracker_info.bad_blocks;
+    }
+
+    return nullptr;
+}
+
+QString* ars_tracker_backend::tracker_info_text_for_step(tracker_info_step_t step)
+{
+    if (step == TRACKER_INFO_STEP_BATTERY_INFO)
+    {
+        return &latest_tracker_info.batteryInfoText;
+    } else if (step == TRACKER_INFO_STEP_MEMORY_USAGE)
+    {
+        return &latest_tracker_info.memoryUsageText;
+    } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
+    {
+        return &latest_tracker_info.badBlocksText;
     }
 
     return nullptr;
@@ -315,6 +352,15 @@ ars_tracker_backend::tracker_info_step_t ars_tracker_backend::next_tracker_info_
     {
         return TRACKER_INFO_STEP_STATUS;
     } else if (step == TRACKER_INFO_STEP_STATUS)
+    {
+        return TRACKER_INFO_STEP_BATTERY_INFO;
+    } else if (step == TRACKER_INFO_STEP_BATTERY_INFO)
+    {
+        return TRACKER_INFO_STEP_MEMORY_USAGE;
+    } else if (step == TRACKER_INFO_STEP_MEMORY_USAGE)
+    {
+        return TRACKER_INFO_STEP_BAD_BLOCKS;
+    } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
     {
         return TRACKER_INFO_STEP_SESSION_LIST;
     }
@@ -336,6 +382,15 @@ QStringList ars_tracker_backend::tracker_info_command_arguments(tracker_info_ste
     } else if (step == TRACKER_INFO_STEP_STATUS)
     {
         return QStringList() << "status";
+    } else if (step == TRACKER_INFO_STEP_BATTERY_INFO)
+    {
+        return QStringList() << "bat" << "i";
+    } else if (step == TRACKER_INFO_STEP_MEMORY_USAGE)
+    {
+        return QStringList() << "mem" << "i";
+    } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
+    {
+        return QStringList() << "bbm" << "bb";
     } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
     {
         return QStringList() << "meas" << "ls";
@@ -358,6 +413,15 @@ QString ars_tracker_backend::tracker_info_step_name(tracker_info_step_t step) co
     } else if (step == TRACKER_INFO_STEP_STATUS)
     {
         return "tracker status";
+    } else if (step == TRACKER_INFO_STEP_BATTERY_INFO)
+    {
+        return "battery info";
+    } else if (step == TRACKER_INFO_STEP_MEMORY_USAGE)
+    {
+        return "memory usage";
+    } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
+    {
+        return "bad blocks";
     } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
     {
         return "session list";
@@ -370,6 +434,7 @@ void ars_tracker_backend::set_tracker_info_field_error(tracker_info_step_t step,
                                                        const QString&      message)
 {
     ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
+    QString*                  text_field = tracker_info_text_for_step(step);
 
     if (field == nullptr)
     {
@@ -379,11 +444,18 @@ void ars_tracker_backend::set_tracker_info_field_error(tracker_info_step_t step,
     field->status = ARS_TRACKER_INFO_FIELD_ERROR;
     field->error  = message;
     field->value  = QString("Error: %1").arg(message);
+
+    if (text_field != nullptr)
+    {
+        *text_field = field->value;
+    }
 }
 
 void ars_tracker_backend::begin_tracker_info_step(tracker_info_step_t step)
 {
     ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
+    QString*                  text_field = tracker_info_text_for_step(step);
+    QString                   command_text = tracker_info_command_arguments(step).join(' ');
 
     active_tracker_info_step = step;
 
@@ -391,6 +463,18 @@ void ars_tracker_backend::begin_tracker_info_step(tracker_info_step_t step)
     {
         field->status = ARS_TRACKER_INFO_FIELD_LOADING;
         field->error.clear();
+
+        if (text_field != nullptr)
+        {
+            field->value = QString("Loading...");
+            *text_field = field->value;
+        }
+    }
+
+    if (step == TRACKER_INFO_STEP_BATTERY_INFO || step == TRACKER_INFO_STEP_MEMORY_USAGE ||
+        step == TRACKER_INFO_STEP_BAD_BLOCKS)
+    {
+        log_debug() << "ArsTracker shell command" << command_text << "sent";
     }
 
     emit tracker_info_changed(latest_tracker_info);
@@ -421,6 +505,21 @@ int ars_tracker_backend::tracker_info_error_count() const
         ++error_count;
     }
 
+    if (latest_tracker_info.battery_info.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
+    if (latest_tracker_info.memory_usage.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
+    if (latest_tracker_info.bad_blocks.status == ARS_TRACKER_INFO_FIELD_ERROR)
+    {
+        ++error_count;
+    }
+
     if (tracker_info_session_list_failed == true)
     {
         ++error_count;
@@ -433,6 +532,11 @@ void ars_tracker_backend::finish_tracker_info_refresh(const QString& message)
 {
     tracker_info_loading     = false;
     active_tracker_info_step = TRACKER_INFO_STEP_NONE;
+    log_debug() << "ArsTracker tracker info diagnostics final texts:"
+                << "battery=" << latest_tracker_info.batteryInfoText
+                << "memory=" << latest_tracker_info.memoryUsageText
+                << "badBlocks=" << latest_tracker_info.badBlocksText;
+    log_debug() << "ArsTracker tracker info diagnostics finished";
     emit tracker_info_changed(latest_tracker_info);
     emit tracker_info_loading_changed(false);
     emit status_message(message);
@@ -482,6 +586,7 @@ bool ars_tracker_backend::begin_tracker_info_refresh(QString* error_message)
 
     tracker_info_loading             = true;
     tracker_info_session_list_failed = false;
+    log_debug() << "ArsTracker tracker info diagnostics started";
     emit tracker_info_loading_changed(true);
     emit status_message(QString("Loading tracker info and sessions..."));
     begin_tracker_info_step(TRACKER_INFO_STEP_SN);
@@ -503,9 +608,18 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
     QString             parsed_value;
     QString             parse_error;
     QString             final_message;
+    QString             command_text  = tracker_info_command_arguments(step).join(' ');
+    bool                diagnostics_step =
+        (step == TRACKER_INFO_STEP_BATTERY_INFO || step == TRACKER_INFO_STEP_MEMORY_USAGE ||
+         step == TRACKER_INFO_STEP_BAD_BLOCKS);
 
     if (status == STATUS_COMPLETE)
     {
+        if (diagnostics_step == true)
+        {
+            log_debug() << "ArsTracker" << command_text << "raw response:" << shell_output.trimmed();
+        }
+
         if (shell_ret != 0)
         {
             QString shell_error =
@@ -520,6 +634,11 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
             } else
             {
                 set_tracker_info_field_error(step, shell_error);
+
+                if (diagnostics_step == true)
+                {
+                    log_warning() << "ArsTracker" << command_text << "status error:" << shell_error;
+                }
             }
 
             continue_flow = (next_step != TRACKER_INFO_STEP_NONE);
@@ -543,6 +662,61 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
             {
                 parsed_ok = ars_tracker_parser::parse_status_output(shell_output, &parsed_value,
                                                                     &parse_error);
+            } else if (step == TRACKER_INFO_STEP_BATTERY_INFO)
+            {
+                ars_tracker_parser::battery_info_t battery_info;
+                parsed_ok = ars_tracker_parser::parse_battery_info_output(
+                    shell_output, &battery_info, &parsed_value, &parse_error);
+
+                if (parsed_ok == true)
+                {
+                    log_debug() << "ArsTracker bat i parsed:"
+                                << "volt=" << battery_info.volt_mV
+                                << "cur=" << battery_info.cur_mA
+                                << "soc=" << battery_info.soc
+                                << "full=" << battery_info.fullCap_mAh
+                                << "remain=" << battery_info.remainCap_mAh
+                                << "t2e=" << battery_info.t2eMin
+                                << "t2f=" << battery_info.t2fMin
+                                << "available=" << battery_info.availableCap_mAh
+                                << "temp=" << battery_info.temp
+                                << "cycles=" << battery_info.cycles;
+                    log_debug() << "ArsTracker bat i formatted UI value:" << parsed_value;
+                }
+            } else if (step == TRACKER_INFO_STEP_MEMORY_USAGE)
+            {
+                ars_tracker_parser::memory_usage_t memory_usage;
+                parsed_ok = ars_tracker_parser::parse_memory_usage_output(
+                    shell_output, &memory_usage, &parsed_value, &parse_error);
+
+                if (parsed_ok == true)
+                {
+                    log_debug() << "ArsTracker mem i parsed:"
+                                << "total=" << qulonglong(memory_usage.total_bytes)
+                                << "used=" << qulonglong(memory_usage.used_bytes)
+                                << "percent=" << QString::number(memory_usage.percent, 'f', 1);
+                    log_debug() << "ArsTracker mem i formatted UI value:" << parsed_value;
+                }
+            } else if (step == TRACKER_INFO_STEP_BAD_BLOCKS)
+            {
+                ars_tracker_parser::bad_blocks_t bad_blocks;
+                parsed_ok = ars_tracker_parser::parse_bad_blocks_output(
+                    shell_output, &bad_blocks, &parsed_value, &parse_error);
+
+                if (parsed_ok == true)
+                {
+                    if (bad_blocks.count_mismatch == true)
+                    {
+                        log_warning() << "ArsTracker bbm bb parsed block count mismatch:"
+                                      << "count=" << bad_blocks.count
+                                      << "parsed=" << bad_blocks.blocks.length();
+                    }
+
+                    log_debug() << "ArsTracker bbm bb parsed:"
+                                << "count=" << bad_blocks.count
+                                << "blocks=" << bad_blocks.blocks;
+                    log_debug() << "ArsTracker bbm bb formatted UI value:" << parsed_value;
+                }
             } else if (step == TRACKER_INFO_STEP_SESSION_LIST)
             {
                 QList<ars_tracker_session_t> parsed_sessions;
@@ -562,6 +736,7 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
             if (parsed_ok == true && step != TRACKER_INFO_STEP_SESSION_LIST)
             {
                 ars_tracker_info_field_t* field = tracker_info_field_for_step(step);
+                QString*                  text_field = tracker_info_text_for_step(step);
 
                 if (field != nullptr)
                 {
@@ -569,11 +744,22 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
                     field->error.clear();
                     field->status = ARS_TRACKER_INFO_FIELD_READY;
                 }
+
+                if (text_field != nullptr)
+                {
+                    *text_field = parsed_value;
+                }
             } else
             {
                 if (step != TRACKER_INFO_STEP_SESSION_LIST)
                 {
                     set_tracker_info_field_error(step, parse_error);
+
+                    if (diagnostics_step == true)
+                    {
+                        log_warning() << "ArsTracker" << command_text << "parse error:"
+                                      << parse_error;
+                    }
                 }
             }
 
@@ -593,6 +779,10 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
         final_message =
             QString("Tracker info refresh timed out while loading %1.")
                 .arg(tracker_info_step_name(step));
+        if (diagnostics_step == true)
+        {
+            log_warning() << "ArsTracker" << command_text << "timeout";
+        }
     } else if (status == STATUS_CANCELLED)
     {
         if (step == TRACKER_INFO_STEP_SESSION_LIST)
@@ -607,6 +797,10 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
         final_message =
             QString("Tracker info refresh cancelled while loading %1.")
                 .arg(tracker_info_step_name(step));
+        if (diagnostics_step == true)
+        {
+            log_warning() << "ArsTracker" << command_text << "cancelled";
+        }
     } else if (status == STATUS_PROCESSOR_TRANSPORT_ERROR)
     {
         if (step == TRACKER_INFO_STEP_SESSION_LIST)
@@ -619,6 +813,10 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
         final_message =
             QString("Tracker info refresh failed due to transport error while loading %1.")
                 .arg(tracker_info_step_name(step));
+        if (diagnostics_step == true)
+        {
+            log_warning() << "ArsTracker" << command_text << "transport error";
+        }
     } else if (status == STATUS_TRANSPORT_DISCONNECTED)
     {
         if (step == TRACKER_INFO_STEP_SESSION_LIST)
@@ -631,6 +829,10 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
         final_message =
             QString("Tracker info refresh failed: transport disconnected while loading %1.")
                 .arg(tracker_info_step_name(step));
+        if (diagnostics_step == true)
+        {
+            log_warning() << "ArsTracker" << command_text << "transport disconnected";
+        }
     } else
     {
         if (step == TRACKER_INFO_STEP_SESSION_LIST)
@@ -644,6 +846,11 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
         final_message =
             QString("Tracker info refresh failed while loading %1.")
                 .arg(tracker_info_step_name(step));
+        if (diagnostics_step == true)
+        {
+            log_warning() << "ArsTracker" << command_text << "status failure:" << status
+                          << shell_output;
+        }
     }
 
     emit tracker_info_changed(latest_tracker_info);

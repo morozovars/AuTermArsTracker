@@ -38,6 +38,12 @@ struct ars_tracker_info_t {
     ars_tracker_info_field_t board_id;
     ars_tracker_info_field_t tracker_type;
     ars_tracker_info_field_t tracker_status;
+    ars_tracker_info_field_t battery_info;
+    ars_tracker_info_field_t memory_usage;
+    ars_tracker_info_field_t bad_blocks;
+    QString batteryInfoText;
+    QString memoryUsageText;
+    QString badBlocksText;
 };
 
 Q_DECLARE_METATYPE(ars_tracker_info_t)
@@ -136,6 +142,9 @@ private:
         TRACKER_INFO_STEP_BID,
         TRACKER_INFO_STEP_TYPE,
         TRACKER_INFO_STEP_STATUS,
+        TRACKER_INFO_STEP_BATTERY_INFO,
+        TRACKER_INFO_STEP_MEMORY_USAGE,
+        TRACKER_INFO_STEP_BAD_BLOCKS,
         TRACKER_INFO_STEP_SESSION_LIST,
     };
 
@@ -181,6 +190,7 @@ private:
 
     void reset_tracker_info_state();
     ars_tracker_info_field_t *tracker_info_field_for_step(tracker_info_step_t step);
+    QString *tracker_info_text_for_step(tracker_info_step_t step);
     tracker_info_step_t next_tracker_info_step(tracker_info_step_t step) const;
     QStringList tracker_info_command_arguments(tracker_info_step_t step) const;
     QString tracker_info_step_name(tracker_info_step_t step) const;

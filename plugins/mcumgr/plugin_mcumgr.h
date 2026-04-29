@@ -710,6 +710,12 @@ private:
     QLineEdit *edit_ars_tracker_status_value;
     QLabel *label_ars_tracker_sessions;
     QListWidget *list_ars_tracker_sessions;
+    QLabel *label_ars_tracker_battery_info;
+    QLineEdit *edit_ars_tracker_battery_info;
+    QLabel *label_ars_tracker_memory_usage;
+    QLineEdit *edit_ars_tracker_memory_usage;
+    QLabel *label_ars_tracker_bad_blocks;
+    QLineEdit *edit_ars_tracker_bad_blocks;
     QLabel *label_ars_tracker_destination;
     QLineEdit *edit_ars_tracker_destination;
     QToolButton *btn_ars_tracker_destination;

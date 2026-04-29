@@ -185,6 +185,8 @@ class AutMainWindow
 signals:
     /* Emitted when a transport has received data (only processed when transport has been successfully locked using `plugin_set_status`) */
     void plugin_serial_receive(QByteArray *data);
+    /* Emitted whenever raw serial transport data is received, irrespective of plugin lock state */
+    void plugin_serial_receive_monitor(QByteArray *data);
     /* Emitted when a serial port error has occurred and the transport has been closed */
     //TODO: deal with other transport errors
     void plugin_serial_error(QSerialPort::SerialPortError speErrorCode);

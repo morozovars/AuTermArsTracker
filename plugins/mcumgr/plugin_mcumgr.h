@@ -243,6 +243,7 @@ signals:
 
 private slots:
     void serial_receive(QByteArray *data);
+    void serial_receive_monitor(QByteArray *data);
     void serial_error(QSerialPort::SerialPortError speErrorCode);
     void serial_bytes_written(qint64 intByteCount);
     void serial_about_to_close();
@@ -409,6 +410,8 @@ private:
     void update_ars_tracker_shell_controls(bool controls_locked);
     bool start_ars_tracker_shell_command(const QString &command, QString *error_message = nullptr);
     void append_ars_tracker_shell_output(const QString &text);
+    void append_ars_tracker_device_log(const QByteArray &data);
+    void append_ars_tracker_device_log_text(const QString &text);
     void handle_ars_tracker_shell_status(uint8_t user_data, group_status status,
                                          QString *error_string);
     QString ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase_t phase) const;
@@ -772,6 +775,10 @@ private:
     QPushButton *button_ars_tracker_shell_send;
     QToolButton *button_ars_tracker_shell_clear;
     AutScrollEdit *text_ars_tracker_shell_output;
+    QGroupBox *group_ars_tracker_device_logs;
+    QGridLayout *gridLayout_ars_tracker_device_logs;
+    QPlainTextEdit *text_ars_tracker_device_logs;
+    QPushButton *button_ars_tracker_device_logs_clear;
     QHBoxLayout *horizontalLayout_ars_tracker_actions;
     QSpacerItem *horizontalSpacer_ars_tracker_actions;
     QPushButton *btn_ars_tracker_delete;
@@ -849,6 +856,7 @@ private:
     smp_processor *processor;
     smp_group_array smp_groups;
     class smp_uart_auterm *uart_transport;
+    smp_uart_auterm *ars_tracker_log_monitor_transport;
     uint16_t enum_count;
     QList<uint16_t> enum_groups;
     uint16_t enum_single_id;

@@ -358,6 +358,7 @@ private slots:
 
 signals:
     void plugin_serial_receive(QByteArray *data);
+    void plugin_serial_receive_monitor(QByteArray *data);
     void plugin_serial_error(QSerialPort::SerialPortError speErrorCode);
     void plugin_serial_bytes_written(qint64 intByteCount);
     void plugin_serial_about_to_close();

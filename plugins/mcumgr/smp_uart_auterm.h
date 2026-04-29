@@ -40,10 +40,12 @@ public:
     uint16_t max_message_data_size(uint16_t mtu) override;
 
 private:
+    void emit_non_smp_uart_data(const QByteArray &data);
     void data_received(QByteArray *message);
 
 signals:
     void serial_write(QByteArray *data);
+    void non_smp_uart_data_received(const QByteArray &data);
 
 public slots:
     void serial_read(QByteArray *rec_data);

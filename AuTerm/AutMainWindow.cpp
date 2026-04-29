@@ -1631,6 +1631,7 @@ void AutMainWindow::SerialRead()
 		}
 
 #ifndef SKIPPLUGINS
+		emit plugin_serial_receive_monitor(&baOrigData);
 		if (gbPluginRunning == true)
 		{
 				//A plugin is running, siphon data to it

@@ -197,6 +197,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		ars_tracker_export_fs_size_response = 0;
 		ars_tracker_scan_serial_port = new QSerialPort(this);
 		ars_tracker_scan_transport = new smp_uart_auterm(this);
+		ars_tracker_log_monitor_transport = new smp_uart_auterm(this);
 		ars_tracker_scan_processor = new smp_processor(this);
 		ars_tracker_scan_shell_mgmt = new smp_group_shell_mgmt(ars_tracker_scan_processor);
 		ars_tracker_scan_port_index = 0;
@@ -2208,15 +2209,36 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		gridLayout_ars_tracker->addWidget(group_ars_tracker_shell, 2, 0, 1, 3);
 
+		group_ars_tracker_device_logs = new QGroupBox(tab_ars_tracker);
+		group_ars_tracker_device_logs->setObjectName("group_ars_tracker_device_logs");
+		gridLayout_ars_tracker_device_logs = new QGridLayout(group_ars_tracker_device_logs);
+		gridLayout_ars_tracker_device_logs->setSpacing(2);
+		gridLayout_ars_tracker_device_logs->setObjectName("gridLayout_ars_tracker_device_logs");
+		gridLayout_ars_tracker_device_logs->setContentsMargins(6, 6, 6, 6);
+
+		button_ars_tracker_device_logs_clear = new QPushButton(group_ars_tracker_device_logs);
+		button_ars_tracker_device_logs_clear->setObjectName("button_ars_tracker_device_logs_clear");
+		gridLayout_ars_tracker_device_logs->addWidget(button_ars_tracker_device_logs_clear, 0, 0, 1, 1,
+																							 Qt::AlignLeft);
+
+		text_ars_tracker_device_logs = new QPlainTextEdit(group_ars_tracker_device_logs);
+		text_ars_tracker_device_logs->setObjectName("text_ars_tracker_device_logs");
+		text_ars_tracker_device_logs->setReadOnly(true);
+		text_ars_tracker_device_logs->setMinimumHeight(160);
+		gridLayout_ars_tracker_device_logs->addWidget(text_ars_tracker_device_logs, 1, 0, 1, 1);
+		gridLayout_ars_tracker_device_logs->setColumnStretch(0, 1);
+
+		gridLayout_ars_tracker->addWidget(group_ars_tracker_device_logs, 3, 0, 1, 3);
+
 		lbl_ars_tracker_progress = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_progress->setObjectName("lbl_ars_tracker_progress");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 4, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_progress, 5, 0, 1, 3);
 
 		lbl_ars_tracker_status = new QLabel(tab_ars_tracker);
 		lbl_ars_tracker_status->setObjectName("lbl_ars_tracker_status");
 
-		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 5, 0, 1, 3);
+		gridLayout_ars_tracker->addWidget(lbl_ars_tracker_status, 6, 0, 1, 3);
 
 		gridLayout_ars_tracker_sessions->setColumnStretch(0, 2);
 		gridLayout_ars_tracker_sessions->setColumnStretch(2, 3);
@@ -2232,14 +2254,15 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		verticalSpacer_ars_tracker_status =
 				new QSpacerItem(20, 40, QSizePolicy::Policy::Minimum, QSizePolicy::Policy::Expanding);
 
-		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 3, 0, 1, 3);
+		gridLayout_ars_tracker->addItem(verticalSpacer_ars_tracker_status, 4, 0, 1, 3);
 		gridLayout_ars_tracker->setColumnStretch(0, 4);
 		gridLayout_ars_tracker->setColumnStretch(1, 3);
 		gridLayout_ars_tracker->setColumnStretch(2, 4);
-		gridLayout_ars_tracker->setRowStretch(3, 1);
+		gridLayout_ars_tracker->setRowStretch(4, 1);
 
 		qDebug() << "ArsTracker UI layout regrouped: Tracker info + Firmware + Sessions";
 		qDebug() << "ArsTracker shell block added below top row";
+		qDebug() << "ArsTracker device logs widget initialized";
 		qDebug() << "ArsTracker Sessions block initialized with compact session list and file status widgets";
 		qDebug() << "ArsTracker operation status labels moved to bottom status area";
 
@@ -2739,6 +2762,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 				QCoreApplication::translate("Form", "Send", nullptr));
 		button_ars_tracker_shell_clear->setText(
 				QCoreApplication::translate("Form", "Clear", nullptr));
+		group_ars_tracker_device_logs->setTitle(
+				QCoreApplication::translate("Form", "Device logs", nullptr));
+		button_ars_tracker_device_logs_clear->setText(
+				QCoreApplication::translate("Form", "Clear logs", nullptr));
 		btn_ars_tracker_delete->setText(
 				QCoreApplication::translate("Form", "Delete session", nullptr));
 		btn_ars_tracker_download->setText(
@@ -2784,6 +2811,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		connect(parent_window, SIGNAL(plugin_serial_receive(QByteArray*)), this,
 						SLOT(serial_receive(QByteArray*)));
+		connect(parent_window, SIGNAL(plugin_serial_receive_monitor(QByteArray*)), this,
+						SLOT(serial_receive_monitor(QByteArray*)));
 		connect(parent_window, SIGNAL(plugin_serial_error(QSerialPort::SerialPortError)), this,
 						SLOT(serial_error(QSerialPort::SerialPortError)));
 		connect(parent_window, SIGNAL(plugin_serial_bytes_written(qint64)), this,
@@ -2983,6 +3012,15 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						SLOT(on_btn_ars_tracker_shell_send_clicked()));
 		connect(button_ars_tracker_shell_clear, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_shell_clear_clicked()));
+		connect(button_ars_tracker_device_logs_clear, &QPushButton::clicked, this, [this]() {
+				if (text_ars_tracker_device_logs != nullptr)
+				{
+						text_ars_tracker_device_logs->clear();
+						log_debug() << "ArsTracker device logs cleared";
+				}
+		});
+		connect(ars_tracker_log_monitor_transport, &smp_uart_auterm::non_smp_uart_data_received, this,
+						&plugin_mcumgr::append_ars_tracker_device_log);
 		connect(edit_ars_tracker_shell_command, &QLineEdit::returnPressed, this,
 						&plugin_mcumgr::on_btn_ars_tracker_shell_send_clicked);
 		connect(btn_ars_tracker_destination, SIGNAL(clicked()), this,
@@ -3135,12 +3173,14 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		text_ars_tracker_shell_output->setup_scrollback(32);
 		text_ars_tracker_shell_output->set_line_mode(true);
 		text_ars_tracker_shell_output->set_vt100_mode(VT100_MODE_DECODE);
+		text_ars_tracker_device_logs->setFont(monospace_font);
 
 #ifndef SKIPPLUGIN_LOGGER
 		processor->set_logger(logger);
 		uart_transport->set_logger(logger);
 		ars_tracker_scan_processor->set_logger(logger);
 		ars_tracker_scan_transport->set_logger(logger);
+		ars_tracker_log_monitor_transport->set_logger(logger);
 		ars_tracker_scan_shell_mgmt->set_logger(logger);
 
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
@@ -3223,6 +3263,8 @@ plugin_mcumgr::~plugin_mcumgr()
 
 		disconnect(parent_window, SIGNAL(plugin_serial_receive(QByteArray*)), this,
 							 SLOT(serial_receive(QByteArray*)));
+		disconnect(parent_window, SIGNAL(plugin_serial_receive_monitor(QByteArray*)), this,
+							 SLOT(serial_receive_monitor(QByteArray*)));
 		disconnect(parent_window, SIGNAL(plugin_serial_error(QSerialPort::SerialPortError)), this,
 							 SLOT(serial_error(QSerialPort::SerialPortError)));
 		disconnect(parent_window, SIGNAL(plugin_serial_bytes_written(qint64)), this,
@@ -3337,6 +3379,7 @@ plugin_mcumgr::~plugin_mcumgr()
 		delete ars_tracker_scan_shell_mgmt;
 		delete ars_tracker_scan_processor;
 		delete ars_tracker_scan_transport;
+		delete ars_tracker_log_monitor_transport;
 		delete processor;
 		delete log_json;
 		delete uart_transport;
@@ -3396,6 +3439,29 @@ void plugin_mcumgr::serial_receive(QByteArray *data)
 		uart_transport->serial_read(data);
 }
 
+void plugin_mcumgr::serial_receive_monitor(QByteArray *data)
+{
+		if (data == nullptr || ars_tracker_log_monitor_transport == nullptr)
+		{
+				return;
+		}
+
+		if (active_transport() != uart_transport)
+		{
+				return;
+		}
+
+		bool serial_open = false;
+		bool serial_opening = false;
+		ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		if (serial_open == false || serial_opening == true || ars_tracker_has_selected_port() == false)
+		{
+				return;
+		}
+
+		ars_tracker_log_monitor_transport->serial_read(data);
+}
+
 void plugin_mcumgr::serial_bytes_written(qint64 bytes)
 {
 		Q_UNUSED(bytes);
@@ -3409,6 +3475,12 @@ void plugin_mcumgr::serial_opened()
 {
 		btn_transport_connect->setText("Close");
 		ars_tracker_serial_transition_active = false;
+		if (ars_tracker_log_monitor_transport != nullptr)
+		{
+				ars_tracker_log_monitor_transport->reset_state();
+		}
+		append_ars_tracker_device_log_text(
+				QString("===== Connected %1 =====\n").arg(ars_tracker_selected_port_name()));
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
 		if (ars_tracker_auto_info_refresh_pending == true &&
 				ars_tracker_info_refresh_started_for_current_connection == false)
@@ -3434,6 +3506,10 @@ void plugin_mcumgr::serial_closed()
 		ars_tracker_firmware_erase_active = false;
 		ars_tracker_shell_command_active = false;
 		ars_tracker_firmware_refresh_after_erase_pending = false;
+		if (ars_tracker_log_monitor_transport != nullptr)
+		{
+				ars_tracker_log_monitor_transport->reset_state();
+		}
 		refresh_ars_tracker_serial_ports();
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
 		ars_tracker_info_changed(ars_tracker->tracker_info());
@@ -7483,6 +7559,63 @@ void plugin_mcumgr::append_ars_tracker_shell_output(const QString &text)
 
 		text_ars_tracker_shell_output->add_dat_in_text(output_text.toUtf8());
 		text_ars_tracker_shell_output->update_display();
+}
+
+void plugin_mcumgr::append_ars_tracker_device_log(const QByteArray &data)
+{
+		if (data.isEmpty())
+		{
+				return;
+		}
+
+		QByteArray normalized = data;
+		normalized.replace("\r\n", "\n");
+		normalized.replace('\r', '\n');
+		QString decoded = QString::fromUtf8(normalized.constData(), normalized.size());
+		QString filtered;
+		filtered.reserve(decoded.size());
+
+		for (const QChar &ch : decoded)
+		{
+				if (ch == '\n' || ch == '\t')
+				{
+						filtered.append(ch);
+				}
+				else if (ch == QChar::fromLatin1('\0') || ch.unicode() == 0xfffd)
+				{
+						continue;
+				}
+				else if (ch.isPrint())
+				{
+						filtered.append(ch);
+				}
+		}
+
+		if (filtered.isEmpty())
+		{
+				return;
+		}
+
+		log_debug() << "ArsTracker device logs appended bytes:" << data.size();
+		append_ars_tracker_device_log_text(filtered);
+}
+
+void plugin_mcumgr::append_ars_tracker_device_log_text(const QString &text)
+{
+		if (text_ars_tracker_device_logs == nullptr || text.isEmpty())
+		{
+				return;
+		}
+
+		QString output_text = text;
+		output_text.replace("\r\n", "\n");
+		output_text.replace('\r', '\n');
+
+		QTextCursor cursor = text_ars_tracker_device_logs->textCursor();
+		cursor.movePosition(QTextCursor::End);
+		cursor.insertText(output_text);
+		text_ars_tracker_device_logs->setTextCursor(cursor);
+		text_ars_tracker_device_logs->ensureCursorVisible();
 }
 
 bool plugin_mcumgr::start_ars_tracker_shell_command(const QString &command, QString *error_message)

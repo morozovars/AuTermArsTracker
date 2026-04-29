@@ -69,6 +69,16 @@ smp_uart_auterm::~smp_uart_auterm()
 {
 }
 
+void smp_uart_auterm::emit_non_smp_uart_data(const QByteArray &data)
+{
+    if (data.isEmpty())
+    {
+        return;
+    }
+
+    emit non_smp_uart_data_received(data);
+}
+
 void smp_uart_auterm::reset_state()
 {
     SerialData.clear();
@@ -130,6 +140,37 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
     int32_t pos_other = SerialData.indexOf(smp_continuation_header);
     int32_t posA = SerialData.indexOf(0x0a, pos + 2);
     int32_t posA_other = SerialData.indexOf(0x0a, pos_other + 2);
+
+    while (true)
+    {
+        int32_t earliest_marker = -1;
+
+        if (pos >= 0 && pos_other >= 0)
+        {
+            earliest_marker = (pos < pos_other ? pos : pos_other);
+        }
+        else if (pos >= 0)
+        {
+            earliest_marker = pos;
+        }
+        else if (pos_other >= 0)
+        {
+            earliest_marker = pos_other;
+        }
+
+        if (earliest_marker > 0)
+        {
+            emit_non_smp_uart_data(SerialData.left(earliest_marker));
+            SerialData.remove(0, earliest_marker);
+            pos = SerialData.indexOf(smp_first_header);
+            pos_other = SerialData.indexOf(smp_continuation_header);
+            posA = SerialData.indexOf(0x0a, pos + 2);
+            posA_other = SerialData.indexOf(0x0a, pos_other + 2);
+            continue;
+        }
+
+        break;
+    }
 
     while ((pos != -1 && posA != -1) || (pos_other != -1 && posA_other != -1))
 //        while (pos != -1 && posA != -1 /*&& SMPWaitingForContinuation == false*/)
@@ -283,8 +324,25 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
         }
     }
 
+    if (SerialData.indexOf(smp_first_header) == -1 && SerialData.indexOf(smp_continuation_header) == -1)
+    {
+        int32_t line_break_pos = SerialData.lastIndexOf('\n');
+        int32_t carriage_return_pos = SerialData.lastIndexOf('\r');
+        if (carriage_return_pos > line_break_pos)
+        {
+            line_break_pos = carriage_return_pos;
+        }
+
+        if (line_break_pos >= 0)
+        {
+            emit_non_smp_uart_data(SerialData.left(line_break_pos + 1));
+            SerialData.remove(0, line_break_pos + 1);
+        }
+    }
+
     if (SerialData.length() > 10 && SerialData.indexOf(smp_first_header) == -1 && SerialData.indexOf(smp_continuation_header) == -1)
     {
+        emit_non_smp_uart_data(SerialData);
         log_error() << "Cleared garbage data in UART SMP transport buffer";
         SerialData.clear();
     }

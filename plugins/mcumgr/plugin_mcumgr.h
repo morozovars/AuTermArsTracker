@@ -181,6 +181,27 @@ struct ars_tracker_port_scan_result_t {
     QString serial_number;
 };
 
+struct ars_tracker_device_t {
+    QString portName;
+    QString serialNumber;
+    QString displayName;
+    QString side;
+    bool connected = false;
+    bool identified = false;
+    bool active = false;
+    ars_tracker_info_t info;
+    bool info_loaded = false;
+    bool info_refreshing = false;
+    QString currentInfoShellCommand;
+    int32_t shellRc = 0;
+    QList<image_state_t> imageStateList;
+    QSerialPort *serialPort = nullptr;
+    smp_uart_auterm *transport = nullptr;
+    smp_processor *processor = nullptr;
+    smp_group_shell_mgmt *shell = nullptr;
+    smp_group_img_mgmt *imgMgmt = nullptr;
+};
+
 class ars_tracker_port_combo_box : public QComboBox
 {
     Q_OBJECT
@@ -355,6 +376,10 @@ private slots:
     void ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file);
     void ars_tracker_request_cancel_file_download();
     void on_list_ars_tracker_sessions_itemSelectionChanged();
+    void handle_ars_tracker_persistent_shell_status(uint8_t user_data, group_status status,
+                                                    QString error_string);
+    void handle_ars_tracker_persistent_img_status(uint8_t user_data, group_status status,
+                                                  QString error_string);
 
 private:
     bool handleStream_shell(QCborStreamReader &reader, int32_t *new_rc, int32_t *new_ret, QString *new_data);
@@ -380,8 +405,23 @@ private:
     bool ars_tracker_main_serial_state(bool *open, bool *opening);
     ars_tracker_ui_state_t ars_tracker_current_ui_state(bool loading);
     QString ars_tracker_ui_state_to_string(ars_tracker_ui_state_t state);
+    QString ars_tracker_device_display_text(const QString &serial_number,
+                                            const QString &port_name) const;
     QString ars_tracker_port_display_text(const QString &port_name,
                                           const QString &serial_number) const;
+    void initialize_ars_tracker_scan_probe_context();
+    void destroy_ars_tracker_scan_probe_context();
+    void release_ars_tracker_device_resources(ars_tracker_device_t *device);
+    void disconnect_all_ars_tracker_devices();
+    void clear_ars_tracker_devices();
+    void upsert_ars_tracker_device(const QString &port_name, const QString &serial_number,
+                                   bool connected, bool active = false);
+    int ars_tracker_connected_device_count() const;
+    bool ars_tracker_has_connected_devices() const;
+    bool set_active_ars_tracker_device(const QString &port_name, bool auto_selected = false);
+    ars_tracker_device_t *find_ars_tracker_device_by_port(const QString &port_name);
+    ars_tracker_device_t *active_ars_tracker_device();
+    ars_tracker_device_t *persistent_ars_tracker_refresh_device();
     void refresh_ars_tracker_serial_ports();
     void populate_ars_tracker_serial_ports(const QList<ars_tracker_port_scan_result_t> &ports,
                                            const QString &selected_port,
@@ -892,6 +932,8 @@ private:
     smp_processor *ars_tracker_scan_processor;
     smp_group_shell_mgmt *ars_tracker_scan_shell_mgmt;
     QList<ars_tracker_port_scan_result_t> ars_tracker_scan_results;
+    QList<ars_tracker_device_t> ars_tracker_devices;
+    QString ars_tracker_persistent_info_refresh_port;
     QStringList ars_tracker_scan_pending_ports;
     QString ars_tracker_scan_selected_port;
     QString ars_tracker_scan_current_port;

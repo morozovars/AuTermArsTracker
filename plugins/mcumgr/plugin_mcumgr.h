@@ -777,7 +777,7 @@ private:
     AutScrollEdit *text_ars_tracker_shell_output;
     QGroupBox *group_ars_tracker_device_logs;
     QGridLayout *gridLayout_ars_tracker_device_logs;
-    QPlainTextEdit *text_ars_tracker_device_logs;
+    AutScrollEdit *text_ars_tracker_device_logs;
     QPushButton *button_ars_tracker_device_logs_clear;
     QHBoxLayout *horizontalLayout_ars_tracker_actions;
     QSpacerItem *horizontalSpacer_ars_tracker_actions;

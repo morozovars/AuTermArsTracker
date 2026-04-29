@@ -2221,8 +2221,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		gridLayout_ars_tracker_device_logs->addWidget(button_ars_tracker_device_logs_clear, 0, 0, 1, 1,
 																							 Qt::AlignLeft);
 
-		text_ars_tracker_device_logs = new QPlainTextEdit(group_ars_tracker_device_logs);
+		text_ars_tracker_device_logs = new AutScrollEdit(group_ars_tracker_device_logs);
 		text_ars_tracker_device_logs->setObjectName("text_ars_tracker_device_logs");
+		text_ars_tracker_device_logs->setPalette(palette);
+		text_ars_tracker_device_logs->setUndoRedoEnabled(false);
 		text_ars_tracker_device_logs->setReadOnly(true);
 		text_ars_tracker_device_logs->setMinimumHeight(160);
 		gridLayout_ars_tracker_device_logs->addWidget(text_ars_tracker_device_logs, 1, 0, 1, 1);
@@ -3015,7 +3017,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		connect(button_ars_tracker_device_logs_clear, &QPushButton::clicked, this, [this]() {
 				if (text_ars_tracker_device_logs != nullptr)
 				{
-						text_ars_tracker_device_logs->clear();
+						text_ars_tracker_device_logs->clear_dat_in();
+						text_ars_tracker_device_logs->update_display();
 						log_debug() << "ArsTracker device logs cleared";
 				}
 		});
@@ -3174,6 +3177,11 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		text_ars_tracker_shell_output->set_line_mode(true);
 		text_ars_tracker_shell_output->set_vt100_mode(VT100_MODE_DECODE);
 		text_ars_tracker_device_logs->setFont(monospace_font);
+		text_ars_tracker_device_logs->setTabStopDistance(
+				shell_font_metrics.horizontalAdvance(" ") * 8);
+		text_ars_tracker_device_logs->setup_scrollback(32);
+		text_ars_tracker_device_logs->set_line_mode(true);
+		text_ars_tracker_device_logs->set_vt100_mode(VT100_MODE_DECODE);
 
 #ifndef SKIPPLUGIN_LOGGER
 		processor->set_logger(logger);
@@ -3208,6 +3216,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		edit_SHELL_Output->set_serial_open(true);
 		text_ars_tracker_shell_output->set_serial_open(true);
+		text_ars_tracker_device_logs->set_serial_open(true);
 
 		// Setup list of timezones
 		QList<QByteArray> items = QTimeZone::availableTimeZoneIds();
@@ -5571,6 +5580,19 @@ void plugin_mcumgr::setup_finished()
 		logger->find_logger_plugin(parent_window);
 #endif
 
+		AutScrollEdit* terminal_widget = parent_window->findChild<AutScrollEdit*>("text_TermEditData");
+		if (terminal_widget != nullptr && text_ars_tracker_device_logs != nullptr)
+		{
+				text_ars_tracker_device_logs->setPalette(terminal_widget->palette());
+				text_ars_tracker_device_logs->setFont(terminal_widget->font());
+				text_ars_tracker_device_logs->setTabStopDistance(terminal_widget->tabStopDistance());
+				text_ars_tracker_device_logs->setup_scrollback(
+						terminal_widget->document()->maximumBlockCount());
+				text_ars_tracker_device_logs->set_vt100_mode(VT100_MODE_DECODE);
+				text_ars_tracker_device_logs->set_serial_open(true);
+				log_debug() << "ArsTracker device logs terminal widget initialized";
+		}
+
 #if defined(PLUGIN_MCUMGR_TRANSPORT_BLUETOOTH)
 		bluetooth_transport->setup_finished();
 #endif
@@ -7568,36 +7590,14 @@ void plugin_mcumgr::append_ars_tracker_device_log(const QByteArray &data)
 				return;
 		}
 
-		QByteArray normalized = data;
-		normalized.replace("\r\n", "\n");
-		normalized.replace('\r', '\n');
-		QString decoded = QString::fromUtf8(normalized.constData(), normalized.size());
-		QString filtered;
-		filtered.reserve(decoded.size());
-
-		for (const QChar &ch : decoded)
-		{
-				if (ch == '\n' || ch == '\t')
-				{
-						filtered.append(ch);
-				}
-				else if (ch == QChar::fromLatin1('\0') || ch.unicode() == 0xfffd)
-				{
-						continue;
-				}
-				else if (ch.isPrint())
-				{
-						filtered.append(ch);
-				}
-		}
-
-		if (filtered.isEmpty())
+		log_debug() << "ArsTracker device logs appended bytes:" << data.size();
+		if (text_ars_tracker_device_logs == nullptr)
 		{
 				return;
 		}
 
-		log_debug() << "ArsTracker device logs appended bytes:" << data.size();
-		append_ars_tracker_device_log_text(filtered);
+		text_ars_tracker_device_logs->add_dat_in_text(data);
+		text_ars_tracker_device_logs->update_display();
 }
 
 void plugin_mcumgr::append_ars_tracker_device_log_text(const QString &text)
@@ -7610,12 +7610,8 @@ void plugin_mcumgr::append_ars_tracker_device_log_text(const QString &text)
 		QString output_text = text;
 		output_text.replace("\r\n", "\n");
 		output_text.replace('\r', '\n');
-
-		QTextCursor cursor = text_ars_tracker_device_logs->textCursor();
-		cursor.movePosition(QTextCursor::End);
-		cursor.insertText(output_text);
-		text_ars_tracker_device_logs->setTextCursor(cursor);
-		text_ars_tracker_device_logs->ensureCursorVisible();
+		text_ars_tracker_device_logs->add_dat_in_text(output_text.toUtf8());
+		text_ars_tracker_device_logs->update_display();
 }
 
 bool plugin_mcumgr::start_ars_tracker_shell_command(const QString &command, QString *error_message)

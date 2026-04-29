@@ -60,6 +60,62 @@ static QString ars_tracker_scan_status_to_string(group_status status)
 		}
 }
 
+struct ars_tracker_parsed_status_t
+{
+		int code = -1;
+		QString name = "Unknown";
+		QString color = "808080";
+};
+
+static ars_tracker_parsed_status_t parse_ars_tracker_status_text(const QString &raw_status)
+{
+		ars_tracker_parsed_status_t parsed_status;
+		QString cleaned_status = raw_status.trimmed();
+		if (cleaned_status.isEmpty() || cleaned_status.compare("Not loaded", Qt::CaseInsensitive) == 0 ||
+				cleaned_status.compare("N/A", Qt::CaseInsensitive) == 0 ||
+				cleaned_status.startsWith("Loading", Qt::CaseInsensitive) ||
+				cleaned_status.startsWith("Error", Qt::CaseInsensitive))
+		{
+				return parsed_status;
+		}
+		QString first_token = cleaned_status.section(',', 0, 0).trimmed();
+		bool conversion_ok = false;
+		int code = first_token.toInt(&conversion_ok);
+
+		if (conversion_ok == false)
+		{
+				qWarning() << "ArsTracker status parse failed for raw value" << raw_status;
+				return parsed_status;
+		}
+
+		parsed_status.code = code;
+		switch (code)
+		{
+		case 0:
+				parsed_status.name = "Init";
+				parsed_status.color = "808080";
+				break;
+		case 1:
+				parsed_status.name = "Ready";
+				parsed_status.color = "1976D2";
+				break;
+		case 2:
+				parsed_status.name = "Active";
+				parsed_status.color = "2E7D32";
+				break;
+		case 3:
+				parsed_status.name = "Error";
+				parsed_status.color = "D32F2F";
+				break;
+		default:
+				qWarning() << "ArsTracker status code is unknown for raw value" << raw_status
+											<< "code" << code;
+				break;
+		}
+
+		return parsed_status;
+}
+
 enum tree_img_slot_info_columns
 {
 		TREE_IMG_SLOT_INFO_COLUMN_IMAGE_SLOT,
@@ -1830,11 +1886,27 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		gridLayout_ars_tracker_info->addWidget(label_ars_tracker_status_value, 4, 0, 1, 1);
 
-		edit_ars_tracker_status_value = new QLineEdit(frame_ars_tracker_info);
+		widget_ars_tracker_status_value = new QWidget(frame_ars_tracker_info);
+		widget_ars_tracker_status_value->setObjectName("widget_ars_tracker_status_value");
+		horizontalLayout_ars_tracker_status_value =
+				new QHBoxLayout(widget_ars_tracker_status_value);
+		horizontalLayout_ars_tracker_status_value->setObjectName(
+				"horizontalLayout_ars_tracker_status_value");
+		horizontalLayout_ars_tracker_status_value->setContentsMargins(0, 0, 0, 0);
+		horizontalLayout_ars_tracker_status_value->setSpacing(6);
+
+		label_ars_tracker_status_state = new QLabel(widget_ars_tracker_status_value);
+		label_ars_tracker_status_state->setObjectName("label_ars_tracker_status_state");
+
+		horizontalLayout_ars_tracker_status_value->addWidget(label_ars_tracker_status_state);
+
+		edit_ars_tracker_status_value = new QLineEdit(widget_ars_tracker_status_value);
 		edit_ars_tracker_status_value->setObjectName("edit_ars_tracker_status_value");
 		edit_ars_tracker_status_value->setReadOnly(true);
 
-		gridLayout_ars_tracker_info->addWidget(edit_ars_tracker_status_value, 4, 1, 1, 1);
+		horizontalLayout_ars_tracker_status_value->addWidget(edit_ars_tracker_status_value);
+		horizontalLayout_ars_tracker_status_value->setStretch(1, 1);
+		gridLayout_ars_tracker_info->addWidget(widget_ars_tracker_status_value, 4, 1, 1, 1);
 
 		label_ars_tracker_sessions = new QLabel(frame_ars_tracker_info);
 		label_ars_tracker_sessions->setObjectName("label_ars_tracker_sessions");
@@ -2399,6 +2471,9 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		edit_ars_tracker_type->setText(QCoreApplication::translate("Form", "Not loaded", nullptr));
 		label_ars_tracker_status_value->setText(
 				QCoreApplication::translate("Form", "Status:", nullptr));
+		label_ars_tracker_status_state->setText(
+				QString::fromUtf8("\xE2\x97\x8F Unknown"));
+		label_ars_tracker_status_state->setStyleSheet("color: #808080;");
 		edit_ars_tracker_status_value->setText(
 				QCoreApplication::translate("Form", "Not loaded", nullptr));
 		label_ars_tracker_sessions->setText(QCoreApplication::translate("Form", "Sessions:", nullptr));
@@ -6704,6 +6779,29 @@ void plugin_mcumgr::ars_tracker_status_message(const QString &message)
 		lbl_ars_tracker_status->setText(message);
 }
 
+void plugin_mcumgr::update_ars_tracker_status_indicator(const QString &raw_status)
+{
+		if (label_ars_tracker_status_state == nullptr)
+		{
+				return;
+		}
+
+		log_debug() << "ArsTracker status raw value:" << raw_status;
+		ars_tracker_parsed_status_t parsed_status = parse_ars_tracker_status_text(raw_status);
+		log_debug() << "ArsTracker parsed status code=" << parsed_status.code << "name="
+								<< parsed_status.name << "color=" << parsed_status.color;
+
+		QString indicator_text = QString::fromUtf8("\xE2\x97\x8F ") + parsed_status.name;
+		label_ars_tracker_status_state->setText(indicator_text);
+		label_ars_tracker_status_state->setStyleSheet(
+				QString("color: #%1;").arg(parsed_status.color));
+
+		log_debug() << "ArsTracker UI set parsed status indicator:" << indicator_text
+								<< "widget" << label_ars_tracker_status_state << "objectName"
+								<< label_ars_tracker_status_state->objectName() << "currentText"
+								<< label_ars_tracker_status_state->text();
+}
+
 void plugin_mcumgr::ars_tracker_info_changed(const ars_tracker_info_t &info)
 {
 		auto field_display_text = [](const ars_tracker_info_field_t& field) -> QString {
@@ -6744,6 +6842,7 @@ void plugin_mcumgr::ars_tracker_info_changed(const ars_tracker_info_t &info)
 												 field_display_text(info.tracker_type));
 		set_tracker_info_value(edit_ars_tracker_status_value, "Status",
 												 field_display_text(info.tracker_status));
+		update_ars_tracker_status_indicator(field_display_text(info.tracker_status));
 		set_tracker_info_value(edit_ars_tracker_battery_info, "Battery Info",
 												 info.batteryInfoText.isEmpty() ? field_display_text(info.battery_info) :
 																										 info.batteryInfoText);

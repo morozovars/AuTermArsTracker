@@ -351,6 +351,7 @@ private:
     bool update_settings_display();
     void show_transport_open_status();
     void size_abbreviation(uint32_t size, QString *output);
+    void update_ars_tracker_status_indicator(const QString &raw_status);
     void close_transport_windows();
     bool ars_tracker_transport_usable();
     bool ars_tracker_tab_is_active() const;
@@ -708,6 +709,9 @@ private:
     QLabel *label_ars_tracker_type;
     QLineEdit *edit_ars_tracker_type;
     QLabel *label_ars_tracker_status_value;
+    QWidget *widget_ars_tracker_status_value;
+    QHBoxLayout *horizontalLayout_ars_tracker_status_value;
+    QLabel *label_ars_tracker_status_state;
     QLineEdit *edit_ars_tracker_status_value;
     QLabel *label_ars_tracker_sessions;
     QListWidget *list_ars_tracker_sessions;

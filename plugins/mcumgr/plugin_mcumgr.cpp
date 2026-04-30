@@ -6237,6 +6237,47 @@ void plugin_mcumgr::set_group_transport_settings(smp_group *group, mcumgr_action
 													retries, effective_timeout, action);
 }
 
+void plugin_mcumgr::set_group_transport_settings_for_transport(
+		smp_group *group, smp_transport *transport, mcumgr_action_t action)
+{
+		if (group == nullptr || transport == nullptr)
+		{
+				return;
+		}
+
+		group->set_parameters((check_V2_Protocol->isChecked() ? 1 : 0), edit_MTU->value(),
+													transport->get_retries(), transport->get_timeout(), action);
+}
+
+void plugin_mcumgr::set_group_transport_settings_for_transport(
+		smp_group *group, smp_transport *transport, mcumgr_action_t action, uint32_t timeout)
+{
+		if (group == nullptr || transport == nullptr)
+		{
+				return;
+		}
+
+		group->set_parameters(
+				(check_V2_Protocol->isChecked() ? 1 : 0), edit_MTU->value(), transport->get_retries(),
+				(timeout >= transport->get_timeout() ? timeout : transport->get_timeout()), action);
+}
+
+void plugin_mcumgr::set_group_transport_settings_for_transport(
+		smp_group *group, smp_transport *transport, mcumgr_action_t action, uint32_t timeout,
+		uint8_t retries)
+{
+		if (group == nullptr || transport == nullptr)
+		{
+				return;
+		}
+
+		uint32_t effective_timeout =
+				(timeout >= transport->get_timeout() ? timeout : transport->get_timeout());
+
+		group->set_parameters((check_V2_Protocol->isChecked() ? 1 : 0), edit_MTU->value(),
+													retries, effective_timeout, action);
+}
+
 void plugin_mcumgr::on_btn_error_lookup_clicked()
 {
 		error_lookup_form->show();
@@ -6538,11 +6579,25 @@ void plugin_mcumgr::release_ars_tracker_device_resources(ars_tracker_device_t *d
 				return;
 		}
 
+		if (device->osMgmt != nullptr)
+		{
+				device->osMgmt->cancel();
+				delete device->osMgmt;
+				device->osMgmt = nullptr;
+		}
+
 		if (device->imgMgmt != nullptr)
 		{
 				device->imgMgmt->cancel();
 				delete device->imgMgmt;
 				device->imgMgmt = nullptr;
+		}
+
+		if (device->fsMgmt != nullptr)
+		{
+				device->fsMgmt->cancel();
+				delete device->fsMgmt;
+				device->fsMgmt = nullptr;
 		}
 
 		if (device->shell != nullptr)
@@ -6597,6 +6652,13 @@ void plugin_mcumgr::disconnect_all_ars_tracker_devices()
 				device.imageStateList.clear();
 		}
 		ars_tracker_persistent_info_refresh_port.clear();
+		ars_tracker_persistent_session_operation_port.clear();
+		ars_tracker_persistent_export_port.clear();
+		ars_tracker_persistent_shell_command_port.clear();
+		ars_tracker_persistent_firmware_port.clear();
+		ars_tracker_shell_command_active = false;
+		ars_tracker_firmware_upload_active = false;
+		ars_tracker_firmware_erase_active = false;
 }
 
 void plugin_mcumgr::clear_ars_tracker_devices()
@@ -6760,8 +6822,7 @@ bool plugin_mcumgr::set_active_ars_tracker_device(const QString &port_name, bool
 				if (lbl_ars_tracker_status != nullptr && ars_tracker_port_scan_active == false)
 				{
 						lbl_ars_tracker_status->setText(
-								QString("Selected %1. Persistent tracker operations will be enabled in next iteration.")
-										.arg(selected_device->displayName));
+								QString("Selected %1.").arg(selected_device->displayName));
 				}
 		}
 
@@ -7249,7 +7310,9 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 						device->transport = ars_tracker_scan_transport;
 						device->processor = ars_tracker_scan_processor;
 						device->shell = ars_tracker_scan_shell_mgmt;
+						device->fsMgmt = new smp_group_fs_mgmt(device->processor);
 						device->imgMgmt = new smp_group_img_mgmt(device->processor);
+						device->osMgmt = new smp_group_os_mgmt(device->processor);
 						device->imageStateList.clear();
 						device->shellRc = 0;
 						device->currentInfoShellCommand.clear();
@@ -7259,12 +7322,22 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 										 &plugin_mcumgr::handle_ars_tracker_scan_serial_write);
 						disconnect(device->serialPort, nullptr, this, nullptr);
 #ifndef SKIPPLUGIN_LOGGER
+						device->fsMgmt->set_logger(logger);
 						device->imgMgmt->set_logger(logger);
+						device->osMgmt->set_logger(logger);
 #endif
 						connect(device->shell, &smp_group_shell_mgmt::status, this,
 										&plugin_mcumgr::handle_ars_tracker_persistent_shell_status);
+						connect(device->fsMgmt, &smp_group_fs_mgmt::status, this,
+										&plugin_mcumgr::handle_ars_tracker_persistent_fs_status);
+						connect(device->fsMgmt, &smp_group_fs_mgmt::progress, this,
+										&plugin_mcumgr::handle_ars_tracker_persistent_fs_progress);
 						connect(device->imgMgmt, &smp_group_img_mgmt::status, this,
 										&plugin_mcumgr::handle_ars_tracker_persistent_img_status);
+						connect(device->imgMgmt, &smp_group_img_mgmt::progress, this,
+										&plugin_mcumgr::handle_ars_tracker_persistent_img_progress);
+						connect(device->osMgmt, &smp_group_os_mgmt::status, this,
+										&plugin_mcumgr::handle_ars_tracker_persistent_os_status);
 						connect(device->transport, &smp_uart_auterm::serial_write, this,
 										[this, persistent_port_name](QByteArray *data) {
 												ars_tracker_device_t *persistent_device =
@@ -7320,6 +7393,20 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 										[this, persistent_port_name](const QByteArray &data) {
 												log_debug() << "ArsTracker persistent device" << persistent_port_name
 																				<< "received non-SMP UART bytes" << data.size();
+												ars_tracker_device_t *active_device = active_ars_tracker_device();
+												if (active_device != nullptr &&
+														active_device->portName.compare(persistent_port_name,
+																											 Qt::CaseInsensitive) == 0)
+												{
+														append_ars_tracker_device_log(data);
+														log_debug() << "ArsTracker device log appended port="
+																				<< persistent_port_name << "bytes=" << data.size();
+												}
+												else
+												{
+														log_debug() << "ArsTracker device log ignored for inactive port="
+																				<< persistent_port_name;
+												}
 										});
 
 						ars_tracker_scan_serial_port = nullptr;
@@ -7718,10 +7805,21 @@ bool plugin_mcumgr::start_ars_tracker_firmware_upload(QString *error_message)
 				return false;
 		}
 
+		if (ars_tracker_has_connected_devices() && ars_tracker_has_active_transport() == false)
+		{
+				log_debug() << "ArsTracker firmware operation failed: no active persistent transport";
+				if (error_message != nullptr)
+				{
+						*error_message = "No active tracker selected.";
+				}
+				return false;
+		}
+
 		bool serial_open = false;
 		bool serial_opening = false;
 		ars_tracker_main_serial_state(&serial_open, &serial_opening);
-		if (serial_open == false || serial_opening == true)
+		if (ars_tracker_has_connected_devices() == false &&
+				(serial_open == false || serial_opening == true))
 		{
 				if (error_message != nullptr)
 				{
@@ -7749,7 +7847,7 @@ bool plugin_mcumgr::start_ars_tracker_firmware_upload(QString *error_message)
 				return false;
 		}
 
-		if (claim_transport(lbl_ars_tracker_status) == false)
+		if (ars_tracker_has_connected_devices() == false && claim_transport(lbl_ars_tracker_status) == false)
 		{
 				if (error_message != nullptr)
 				{
@@ -7758,19 +7856,66 @@ bool plugin_mcumgr::start_ars_tracker_firmware_upload(QString *error_message)
 				return false;
 		}
 
+		ars_tracker_device_t *device = active_ars_tracker_device();
+		smp_transport *transport = ars_tracker_has_connected_devices() ?
+														 static_cast<smp_transport *>(ars_tracker_active_transport()) :
+														 active_transport();
+		smp_processor *target_processor = ars_tracker_has_connected_devices() ?
+																				ars_tracker_active_processor() :
+																				processor;
+		smp_group_img_mgmt *target_image = ars_tracker_has_connected_devices() ?
+																			 ars_tracker_active_image() :
+																			 smp_groups.img_mgmt;
+		if (transport == nullptr || target_processor == nullptr || target_image == nullptr)
+		{
+				if (ars_tracker_has_connected_devices() == false)
+				{
+						relase_transport();
+				}
+				log_debug() << "ArsTracker firmware operation failed: no active persistent transport";
+				if (error_message != nullptr && error_message->isEmpty())
+				{
+						*error_message = "No active tracker transport available.";
+				}
+				return false;
+		}
+
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_persistent_firmware_port = device != nullptr ? device->portName : QString();
+				log_debug() << "ArsTracker firmware upload using persistent device port="
+										<< ars_tracker_persistent_firmware_port;
+		}
+		else
+		{
+				ars_tracker_persistent_firmware_port.clear();
+		}
+
 		log_debug() << "ArsTracker firmware upload started";
 		log_debug() << "ArsTracker firmware upload file:" << firmware_file;
 		mode = ACTION_ARS_TRACKER_FIRMWARE_UPLOAD;
-		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.img_mgmt);
+		target_processor->set_transport(transport);
+		if (ars_tracker_has_connected_devices())
+		{
+				set_group_transport_settings_for_transport(
+						target_image, transport, ACTION_ARS_TRACKER_FIRMWARE_UPLOAD);
+		}
+		else
+		{
+				set_group_transport_settings(smp_groups.img_mgmt);
+		}
 		ars_tracker_firmware_upload_hash.clear();
 
-		bool started = smp_groups.img_mgmt->start_firmware_update(
+		bool started = target_image->start_firmware_update(
 				0, firmware_file, false, &ars_tracker_firmware_upload_hash, timeout_erase_ms);
 
 		if (started == false)
 		{
-				relase_transport();
+				if (ars_tracker_has_connected_devices() == false)
+				{
+						relase_transport();
+				}
+				ars_tracker_persistent_firmware_port.clear();
 				if (error_message != nullptr && error_message->isEmpty())
 				{
 						*error_message = "Failed to start firmware upload.";
@@ -7905,18 +8050,53 @@ void plugin_mcumgr::on_btn_ars_tracker_info_refresh_clicked()
 
 void plugin_mcumgr::on_btn_ars_tracker_refresh_clicked()
 {
-		if (ars_tracker_has_connected_devices())
-		{
-				lbl_ars_tracker_status->setText(
-						"Persistent tracker operations will be enabled in next iteration.");
-				return;
-		}
-
 		QString backend_error;
 
 		if (ars_tracker->begin_session_list_request(&backend_error) == false)
 		{
 				lbl_ars_tracker_status->setText(backend_error);
+				return;
+		}
+
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_device_t *device = active_ars_tracker_device();
+				smp_uart_auterm *transport = ars_tracker_active_transport();
+				smp_processor *target_processor = ars_tracker_active_processor();
+				smp_group_shell_mgmt *target_shell = ars_tracker_active_shell();
+				if (device == nullptr || transport == nullptr || target_processor == nullptr ||
+						target_shell == nullptr)
+				{
+						lbl_ars_tracker_status->setText("No active tracker selected.");
+						log_debug() << "ArsTracker operation failed: no active persistent transport";
+						ars_tracker->handle_session_list_response(
+								STATUS_PROCESSOR_TRANSPORT_ERROR,
+								QString("No active tracker transport available."), -1);
+						return;
+				}
+
+				mode = ACTION_ARS_TRACKER_SESSION_LIST;
+				ars_tracker_shell_rc = 0;
+				ars_tracker_persistent_session_operation_port = device->portName;
+				target_processor->set_transport(transport);
+				set_group_transport_settings_for_transport(
+						target_shell, transport, ACTION_ARS_TRACKER_SESSION_LIST);
+
+				QStringList list_arguments = QStringList() << "meas" << "ls";
+				log_debug() << "ArsTracker sessions refresh using persistent device port="
+										<< device->portName;
+				bool started = target_shell->start_execute(&list_arguments, &ars_tracker_shell_rc);
+
+				if (started == false)
+				{
+						ars_tracker_persistent_session_operation_port.clear();
+						ars_tracker->handle_session_list_response(
+								STATUS_ERROR, QString("Failed to start shell command."), -1);
+				}
+				else
+				{
+						btn_cancel->setEnabled(true);
+				}
 				return;
 		}
 
@@ -7962,6 +8142,48 @@ void plugin_mcumgr::on_btn_ars_tracker_delete_clicked()
 				return;
 		}
 
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_device_t *device = active_ars_tracker_device();
+				smp_uart_auterm *transport = ars_tracker_active_transport();
+				smp_processor *target_processor = ars_tracker_active_processor();
+				smp_group_shell_mgmt *target_shell = ars_tracker_active_shell();
+				if (device == nullptr || transport == nullptr || target_processor == nullptr ||
+						target_shell == nullptr)
+				{
+						lbl_ars_tracker_status->setText("No active tracker selected.");
+						log_debug() << "ArsTracker operation failed: no active persistent transport";
+						ars_tracker->handle_session_delete_response(
+								STATUS_PROCESSOR_TRANSPORT_ERROR,
+								QString("No active tracker transport available."), -1);
+						return;
+				}
+
+				mode = ACTION_ARS_TRACKER_DELETE_SESSION;
+				ars_tracker_shell_rc = 0;
+				ars_tracker_persistent_session_operation_port = device->portName;
+				target_processor->set_transport(transport);
+				set_group_transport_settings_for_transport(
+						target_shell, transport, ACTION_ARS_TRACKER_DELETE_SESSION);
+
+				QStringList list_arguments = QStringList() << "meas" << "rm" << session_name;
+				log_debug() << "ArsTracker session delete using persistent device port="
+										<< device->portName << "session=" << session_name;
+				bool started = target_shell->start_execute(&list_arguments, &ars_tracker_shell_rc);
+
+				if (started == false)
+				{
+						ars_tracker_persistent_session_operation_port.clear();
+						ars_tracker->handle_session_delete_response(
+								STATUS_ERROR, QString("Failed to start shell command."), -1);
+				}
+				else
+				{
+						btn_cancel->setEnabled(true);
+				}
+				return;
+		}
+
 		if (claim_transport(lbl_ars_tracker_status) == false)
 		{
 				ars_tracker->handle_session_delete_response(STATUS_ERROR,
@@ -8000,18 +8222,40 @@ void plugin_mcumgr::on_btn_ars_tracker_download_clicked()
 				return;
 		}
 
-		if (claim_transport(lbl_ars_tracker_status) == false)
+		QString backend_error;
+
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_device_t *device = active_ars_tracker_device();
+				if (device == nullptr || ars_tracker_has_active_transport() == false ||
+						ars_tracker_active_fs() == nullptr)
+				{
+						lbl_ars_tracker_status->setText("No active tracker selected.");
+						log_debug() << "ArsTracker operation failed: no active persistent transport";
+						return;
+				}
+
+				ars_tracker_persistent_export_port = device->portName;
+				log_debug() << "ArsTracker session export using persistent device port="
+										<< device->portName;
+		}
+		else if (claim_transport(lbl_ars_tracker_status) == false)
 		{
 				return;
 		}
-
-		QString backend_error;
 
 		if (ars_tracker->begin_session_export(selected_item->data(Qt::UserRole).toString(),
 																					edit_ars_tracker_destination->text(),
 																					&backend_error) == false)
 		{
-				relase_transport();
+				if (ars_tracker_has_connected_devices())
+				{
+						ars_tracker_persistent_export_port.clear();
+				}
+				else
+				{
+						relase_transport();
+				}
 				lbl_ars_tracker_status->setText(backend_error);
 		}
 }
@@ -8066,10 +8310,18 @@ void plugin_mcumgr::on_btn_ars_tracker_firmware_erase_clicked()
 				return;
 		}
 
+		if (ars_tracker_has_connected_devices() && ars_tracker_has_active_transport() == false)
+		{
+				lbl_ars_tracker_status->setText("No active tracker selected.");
+				log_debug() << "ArsTracker firmware operation failed: no active persistent transport";
+				return;
+		}
+
 		bool serial_open = false;
 		bool serial_opening = false;
 		ars_tracker_main_serial_state(&serial_open, &serial_opening);
-		if (serial_open == false || serial_opening == true)
+		if (ars_tracker_has_connected_devices() == false &&
+				(serial_open == false || serial_opening == true))
 		{
 				lbl_ars_tracker_status->setText("Connect to ArsTracker before erasing second slot.");
 				return;
@@ -8085,21 +8337,67 @@ void plugin_mcumgr::on_btn_ars_tracker_firmware_erase_clicked()
 				return;
 		}
 
-		if (claim_transport(lbl_ars_tracker_status) == false)
+		if (ars_tracker_has_connected_devices() == false && claim_transport(lbl_ars_tracker_status) == false)
 		{
 				return;
 		}
 
+		ars_tracker_device_t *device = active_ars_tracker_device();
+		smp_uart_auterm *transport = ars_tracker_has_connected_devices() ?
+														 ars_tracker_active_transport() :
+														 nullptr;
+		smp_processor *target_processor = ars_tracker_has_connected_devices() ?
+																				ars_tracker_active_processor() :
+																				processor;
+		smp_group_img_mgmt *target_image = ars_tracker_has_connected_devices() ?
+																			 ars_tracker_active_image() :
+																			 smp_groups.img_mgmt;
+		if (target_processor == nullptr || target_image == nullptr ||
+				(ars_tracker_has_connected_devices() && transport == nullptr))
+		{
+				if (ars_tracker_has_connected_devices() == false)
+				{
+						relase_transport();
+				}
+				lbl_ars_tracker_status->setText("No active tracker transport available.");
+				log_debug() << "ArsTracker firmware operation failed: no active persistent transport";
+				return;
+		}
+
 		log_debug() << "ArsTracker firmware erase second slot requested";
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_persistent_firmware_port = device != nullptr ? device->portName : QString();
+				log_debug() << "ArsTracker firmware erase using persistent device port="
+										<< ars_tracker_persistent_firmware_port;
+		}
+		else
+		{
+				ars_tracker_persistent_firmware_port.clear();
+		}
 		log_debug() << "ArsTracker firmware erase second slot started";
 		mode = ACTION_ARS_TRACKER_FIRMWARE_ERASE;
-		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.img_mgmt, timeout_erase_ms);
-		bool started = smp_groups.img_mgmt->start_image_erase(1);
+		target_processor->set_transport(ars_tracker_has_connected_devices() ?
+																				 static_cast<smp_transport *>(transport) :
+																				 active_transport());
+		if (ars_tracker_has_connected_devices())
+		{
+				set_group_transport_settings_for_transport(
+						target_image, transport, ACTION_ARS_TRACKER_FIRMWARE_ERASE, timeout_erase_ms);
+		}
+		else
+		{
+				set_group_transport_settings(smp_groups.img_mgmt, timeout_erase_ms);
+		}
+		bool started = target_image->start_image_erase(1);
 
 		if (started == false)
 		{
-				relase_transport();
+				if (ars_tracker_has_connected_devices() == false)
+				{
+						relase_transport();
+				}
+				ars_tracker_persistent_firmware_port.clear();
 				lbl_ars_tracker_status->setText("Failed to start second slot erase.");
 				return;
 		}
@@ -8189,10 +8487,22 @@ bool plugin_mcumgr::start_ars_tracker_shell_command(const QString &command, QStr
 				return false;
 		}
 
+		if (ars_tracker_has_connected_devices() && ars_tracker_has_active_transport() == false)
+		{
+				QString disconnected_message = "Tracker is not connected";
+				log_debug() << "ArsTracker UI shell failed: no active persistent transport";
+				if (error_message != nullptr)
+				{
+						*error_message = disconnected_message;
+				}
+				return false;
+		}
+
 		bool serial_open = false;
 		bool serial_opening = false;
 		ars_tracker_main_serial_state(&serial_open, &serial_opening);
-		if (serial_open == false || serial_opening == true)
+		if (ars_tracker_has_connected_devices() == false &&
+				(serial_open == false || serial_opening == true))
 		{
 				QString disconnected_message = "Tracker is not connected";
 				log_debug() << "ArsTracker shell command skipped: disconnected";
@@ -8203,7 +8513,7 @@ bool plugin_mcumgr::start_ars_tracker_shell_command(const QString &command, QStr
 				return false;
 		}
 
-		if (claim_transport(lbl_ars_tracker_status) == false)
+		if (ars_tracker_has_connected_devices() == false && claim_transport(lbl_ars_tracker_status) == false)
 		{
 				QString claim_message = lbl_ars_tracker_status != nullptr ? lbl_ars_tracker_status->text() :
 																												QString("Error: Could not claim transport");
@@ -8220,7 +8530,10 @@ bool plugin_mcumgr::start_ars_tracker_shell_command(const QString &command, QStr
 		QStringList list_arguments = trimmed_command.split(re_temp_re, Qt::SkipEmptyParts);
 		if (list_arguments.isEmpty())
 		{
-				relase_transport();
+				if (ars_tracker_has_connected_devices() == false)
+				{
+						relase_transport();
+				}
 				if (error_message != nullptr)
 				{
 						*error_message = "No shell command to send";
@@ -8230,14 +8543,56 @@ bool plugin_mcumgr::start_ars_tracker_shell_command(const QString &command, QStr
 
 		log_debug() << "ArsTracker shell command requested:" << trimmed_command;
 		mode = ACTION_ARS_TRACKER_SHELL_COMMAND;
-		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.shell_mgmt);
+		smp_uart_auterm *persistent_transport = ars_tracker_active_transport();
+		smp_processor *target_processor = ars_tracker_has_connected_devices() ?
+																				ars_tracker_active_processor() :
+																				processor;
+		smp_group_shell_mgmt *target_shell = ars_tracker_has_connected_devices() ?
+																			 ars_tracker_active_shell() :
+																			 smp_groups.shell_mgmt;
+		if (target_processor == nullptr || target_shell == nullptr ||
+				(ars_tracker_has_connected_devices() && persistent_transport == nullptr))
+		{
+				if (ars_tracker_has_connected_devices() == false)
+				{
+						relase_transport();
+				}
+				log_debug() << "ArsTracker UI shell failed: no active persistent transport";
+				if (error_message != nullptr)
+				{
+						*error_message = "Tracker is not connected";
+				}
+				return false;
+		}
+
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_device_t *device = active_ars_tracker_device();
+				ars_tracker_persistent_shell_command_port =
+						device != nullptr ? device->portName : QString();
+				log_debug() << "ArsTracker UI shell command using persistent device port="
+										<< ars_tracker_persistent_shell_command_port << "command="
+										<< trimmed_command;
+				target_processor->set_transport(persistent_transport);
+				set_group_transport_settings_for_transport(
+						target_shell, persistent_transport, ACTION_ARS_TRACKER_SHELL_COMMAND);
+		}
+		else
+		{
+				ars_tracker_persistent_shell_command_port.clear();
+				target_processor->set_transport(active_transport());
+				set_group_transport_settings(smp_groups.shell_mgmt);
+		}
 		ars_tracker_shell_command_rc = 0;
-		bool started = smp_groups.shell_mgmt->start_execute(&list_arguments, &ars_tracker_shell_command_rc);
+		bool started = target_shell->start_execute(&list_arguments, &ars_tracker_shell_command_rc);
 		if (started == false)
 		{
 				mode = ACTION_IDLE;
-				relase_transport();
+				if (ars_tracker_has_connected_devices() == false)
+				{
+						relase_transport();
+				}
+				ars_tracker_persistent_shell_command_port.clear();
 				QString start_message = "Failed to start shell command.";
 				log_debug() << "ArsTracker shell command failed:" << start_message;
 				append_ars_tracker_shell_output(QString("> %1").arg(trimmed_command));
@@ -8291,11 +8646,35 @@ void plugin_mcumgr::on_btn_ars_tracker_cancel_clicked()
 
 				if (mode == ACTION_ARS_TRACKER_FIRMWARE_RESET)
 				{
-						smp_groups.os_mgmt->cancel();
+						if (ars_tracker_persistent_firmware_port.isEmpty() == false)
+						{
+								ars_tracker_device_t *device = find_ars_tracker_device_by_port(
+										ars_tracker_persistent_firmware_port);
+								if (device != nullptr && device->osMgmt != nullptr)
+								{
+										device->osMgmt->cancel();
+								}
+						}
+						else
+						{
+								smp_groups.os_mgmt->cancel();
+						}
 				}
 				else
 				{
-						smp_groups.img_mgmt->cancel();
+						if (ars_tracker_persistent_firmware_port.isEmpty() == false)
+						{
+								ars_tracker_device_t *device = find_ars_tracker_device_by_port(
+										ars_tracker_persistent_firmware_port);
+								if (device != nullptr && device->imgMgmt != nullptr)
+								{
+										device->imgMgmt->cancel();
+								}
+						}
+						else
+						{
+								smp_groups.img_mgmt->cancel();
+						}
 				}
 
 				return;
@@ -8304,7 +8683,19 @@ void plugin_mcumgr::on_btn_ars_tracker_cancel_clicked()
 		if (ars_tracker_shell_command_active == true)
 		{
 				lbl_ars_tracker_status->setText("Cancelling ArsTracker shell command...");
-				smp_groups.shell_mgmt->cancel();
+				if (ars_tracker_persistent_shell_command_port.isEmpty() == false)
+				{
+						ars_tracker_device_t *device = find_ars_tracker_device_by_port(
+								ars_tracker_persistent_shell_command_port);
+						if (device != nullptr && device->shell != nullptr)
+						{
+								device->shell->cancel();
+						}
+				}
+				else
+				{
+						smp_groups.shell_mgmt->cancel();
+				}
 				return;
 		}
 
@@ -8328,7 +8719,7 @@ void plugin_mcumgr::update_ars_tracker_status_indicator(const QString &raw_statu
 		log_debug() << "ArsTracker parsed status code=" << parsed_status.code << "name="
 								<< parsed_status.name << "color=" << parsed_status.color;
 
-		QString indicator_text = QString::fromUtf8("\xE2\x97\x8F ") + parsed_status.name;
+		QString indicator_text = QString("* ") + parsed_status.name;
 		label_ars_tracker_status_state->setText(indicator_text);
 		label_ars_tracker_status_state->setStyleSheet(
 				QString("color: #%1;").arg(parsed_status.color));
@@ -8355,6 +8746,7 @@ void plugin_mcumgr::update_ars_tracker_firmware_upload_controls(bool controls_lo
 				return;
 		}
 
+		bool persistent_transport_available = ars_tracker_has_active_transport();
 		bool serial_open = false;
 		bool serial_opening = false;
 		ars_tracker_main_serial_state(&serial_open, &serial_opening);
@@ -8370,17 +8762,22 @@ void plugin_mcumgr::update_ars_tracker_firmware_upload_controls(bool controls_lo
 				second_slot_value.startsWith("Error", Qt::CaseInsensitive) == false;
 
 		btn_ars_tracker_firmware_browse->setEnabled(!controls_locked);
-		btn_ars_tracker_firmware_upload->setEnabled(!controls_locked && serial_open == true &&
-																						 serial_opening == false &&
-																						 firmware_file_exists);
-		btn_ars_tracker_firmware_erase->setEnabled(!controls_locked && serial_open == true &&
-																					 serial_opening == false &&
-																					 second_slot_has_image);
+		btn_ars_tracker_firmware_upload->setEnabled(
+				!controls_locked &&
+				(persistent_transport_available == true ||
+				 (serial_open == true && serial_opening == false)) &&
+				firmware_file_exists);
+		btn_ars_tracker_firmware_erase->setEnabled(
+				!controls_locked &&
+				(persistent_transport_available == true ||
+				 (serial_open == true && serial_opening == false)) &&
+				second_slot_has_image);
 		log_debug() << "ArsTracker firmware UI controls:"
 								<< "browseEnabled=" << btn_ars_tracker_firmware_browse->isEnabled()
 								<< "uploadEnabled=" << btn_ars_tracker_firmware_upload->isEnabled()
 								<< "eraseEnabled=" << btn_ars_tracker_firmware_erase->isEnabled()
 								<< "serialOpen=" << serial_open << "serialOpening=" << serial_opening
+								<< "persistentTransport=" << persistent_transport_available
 								<< "fileExists=" << firmware_file_exists
 								<< "secondSlotHasImage=" << second_slot_has_image
 								<< "controlsLocked=" << controls_locked;
@@ -8394,10 +8791,14 @@ void plugin_mcumgr::update_ars_tracker_shell_controls(bool controls_locked)
 				return;
 		}
 
+		bool persistent_transport_available = ars_tracker_has_active_transport();
 		bool serial_open = false;
 		bool serial_opening = false;
 		ars_tracker_main_serial_state(&serial_open, &serial_opening);
-		bool send_enabled = serial_open == true && serial_opening == false && controls_locked == false;
+		bool send_enabled =
+				((persistent_transport_available == true) ||
+				 (serial_open == true && serial_opening == false)) &&
+				controls_locked == false;
 
 		edit_ars_tracker_shell_command->setEnabled(true);
 		button_ars_tracker_shell_send->setEnabled(send_enabled);
@@ -8499,6 +8900,10 @@ void plugin_mcumgr::ars_tracker_info_loading_changed(bool loading)
 				}
 				ars_tracker_persistent_info_refresh_port.clear();
 		}
+		if (loading == false)
+		{
+				mode = ACTION_IDLE;
+		}
 		if (loading == false && ars_tracker_auto_info_refresh_in_progress == true)
 		{
 				ars_tracker_auto_info_refresh_in_progress = false;
@@ -8562,12 +8967,22 @@ void plugin_mcumgr::ars_tracker_sessions_ready(const QList<ars_tracker_session_t
 void plugin_mcumgr::ars_tracker_loading_changed(bool loading)
 {
 		ars_tracker_loading = loading;
+		if (loading == false)
+		{
+				ars_tracker_persistent_session_operation_port.clear();
+				mode = ACTION_IDLE;
+		}
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
 }
 
 void plugin_mcumgr::ars_tracker_delete_loading_changed(bool loading)
 {
 		ars_tracker_delete_loading = loading;
+		if (loading == false)
+		{
+				ars_tracker_persistent_session_operation_port.clear();
+				mode = ACTION_IDLE;
+		}
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
 }
 
@@ -8584,6 +8999,11 @@ void plugin_mcumgr::on_list_ars_tracker_sessions_itemSelectionChanged()
 void plugin_mcumgr::ars_tracker_export_loading_changed(bool loading)
 {
 		ars_tracker_export_loading = loading;
+		if (loading == false)
+		{
+				ars_tracker_persistent_export_port.clear();
+				mode = ACTION_IDLE;
+		}
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
 }
 
@@ -8605,7 +9025,11 @@ void plugin_mcumgr::ars_tracker_export_finished(bool success, bool cancelled, co
 
 		reset_ars_tracker_export_fs_operation();
 		mode = ACTION_IDLE;
-		relase_transport();
+		if (ars_tracker_persistent_export_port.isEmpty())
+		{
+				relase_transport();
+		}
+		ars_tracker_persistent_export_port.clear();
 		btn_cancel->setEnabled(false);
 		lbl_ars_tracker_status->setText(message);
 }
@@ -8764,7 +9188,10 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 																															 group_status status,
 																															 QString error_string)
 {
-		if (user_data != ACTION_ARS_TRACKER_INFO_REFRESH)
+		if (user_data != ACTION_ARS_TRACKER_INFO_REFRESH &&
+				user_data != ACTION_ARS_TRACKER_SESSION_LIST &&
+				user_data != ACTION_ARS_TRACKER_DELETE_SESSION &&
+				user_data != ACTION_ARS_TRACKER_SHELL_COMMAND)
 		{
 				return;
 		}
@@ -8785,29 +9212,215 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				return;
 		}
 
-		if (ars_tracker_persistent_info_refresh_port.compare(device->portName, Qt::CaseInsensitive) != 0)
+		if (user_data == ACTION_ARS_TRACKER_INFO_REFRESH &&
+				ars_tracker_persistent_info_refresh_port.compare(device->portName, Qt::CaseInsensitive) != 0)
 		{
 				log_debug() << "ArsTracker persistent shell status ignored for stale device port="
 										<< device->portName;
 				return;
 		}
 
-		log_debug() << "ArsTracker persistent shell response port=" << device->portName
-								<< "command=\"" << device->currentInfoShellCommand << "\""
-								<< "response=\"" << error_string << "\"";
-		if (status != STATUS_COMPLETE)
+		if ((user_data == ACTION_ARS_TRACKER_SESSION_LIST ||
+				 user_data == ACTION_ARS_TRACKER_DELETE_SESSION) &&
+				ars_tracker_persistent_session_operation_port.compare(device->portName,
+																											Qt::CaseInsensitive) != 0)
 		{
-				log_warning() << "ArsTracker persistent tracker info refresh failed port="
-											<< device->portName << "reason=" << error_string;
+				log_debug() << "ArsTracker persistent session shell status ignored for stale device port="
+										<< device->portName;
+				return;
 		}
-		ars_tracker->handle_tracker_info_response(status, error_string, device->shellRc);
+
+		if (user_data == ACTION_ARS_TRACKER_SHELL_COMMAND &&
+				ars_tracker_persistent_shell_command_port.compare(device->portName,
+																										 Qt::CaseInsensitive) != 0)
+		{
+				log_debug() << "ArsTracker persistent ui shell status ignored for stale device port="
+										<< device->portName;
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKER_INFO_REFRESH)
+		{
+				log_debug() << "ArsTracker persistent shell response port=" << device->portName
+										<< "command=\"" << device->currentInfoShellCommand << "\""
+										<< "response=\"" << error_string << "\"";
+				if (status != STATUS_COMPLETE)
+				{
+						log_warning() << "ArsTracker persistent tracker info refresh failed port="
+													<< device->portName << "reason=" << error_string;
+				}
+				ars_tracker->handle_tracker_info_response(status, error_string, device->shellRc);
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKER_SHELL_COMMAND)
+		{
+				if (status == STATUS_COMPLETE)
+				{
+						log_debug() << "ArsTracker UI shell response port=" << device->portName
+												<< "response=" << error_string;
+						if (error_string.isEmpty() == false)
+						{
+								append_ars_tracker_shell_output(error_string);
+						}
+
+						ars_tracker_shell_command_active = false;
+						ars_tracker_persistent_shell_command_port.clear();
+						mode = ACTION_IDLE;
+						set_ars_tracker_controls_loading(ars_tracker_any_loading());
+
+						if (ars_tracker_shell_command_rc == 0)
+						{
+								lbl_ars_tracker_status->setText("Shell command finished");
+						}
+						else
+						{
+								QString rc_error = QString("Finished, error (ret): %1")
+																		 .arg(QString::number(ars_tracker_shell_command_rc));
+								append_ars_tracker_shell_output(QString("Error: %1").arg(rc_error));
+								lbl_ars_tracker_status->setText(rc_error);
+						}
+				}
+				else
+				{
+						ars_tracker_shell_command_active = false;
+						ars_tracker_persistent_shell_command_port.clear();
+						mode = ACTION_IDLE;
+						set_ars_tracker_controls_loading(ars_tracker_any_loading());
+
+						QString shell_error = error_string;
+						if (shell_error.isEmpty())
+						{
+								if (status == STATUS_TIMEOUT)
+								{
+										shell_error = "Command timed out";
+								}
+								else if (status == STATUS_CANCELLED)
+								{
+										shell_error = "Cancelled";
+								}
+								else
+								{
+										shell_error = "Shell command failed";
+								}
+						}
+
+						log_debug() << "ArsTracker shell command failed:" << shell_error;
+						append_ars_tracker_shell_output(QString("Error: %1").arg(shell_error));
+						lbl_ars_tracker_status->setText(shell_error);
+				}
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKER_SESSION_LIST)
+		{
+				ars_tracker->handle_session_list_response(status, error_string, ars_tracker_shell_rc);
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKER_DELETE_SESSION)
+		{
+				ars_tracker->handle_session_delete_response(status, error_string, ars_tracker_shell_rc);
+		}
+}
+
+void plugin_mcumgr::handle_ars_tracker_persistent_fs_status(uint8_t user_data,
+																														 group_status status,
+																														 QString error_string)
+{
+		if (user_data != ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT &&
+				user_data != ACTION_ARS_TRACKER_EXPORT_METADATA &&
+				user_data != ACTION_ARS_TRACKER_EXPORT_DOWNLOAD)
+		{
+				return;
+		}
+
+		QObject *signal_sender = sender();
+		ars_tracker_device_t *device = nullptr;
+		for (int i = 0; i < ars_tracker_devices.size(); ++i)
+		{
+				if (ars_tracker_devices[i].fsMgmt == signal_sender)
+				{
+						device = &ars_tracker_devices[i];
+						break;
+				}
+		}
+
+		if (device == nullptr)
+		{
+				return;
+		}
+
+		if (ars_tracker_persistent_export_port.compare(device->portName, Qt::CaseInsensitive) != 0)
+		{
+				log_debug() << "ArsTracker persistent fs status ignored for stale device port="
+										<< device->portName;
+				return;
+		}
+
+		handle_ars_tracker_export_fs_status(user_data, status, error_string);
+}
+
+void plugin_mcumgr::handle_ars_tracker_persistent_fs_progress(uint8_t user_data, uint8_t percent)
+{
+		if (user_data != ACTION_ARS_TRACKER_EXPORT_DOWNLOAD)
+		{
+				return;
+		}
+
+		QObject *signal_sender = sender();
+		ars_tracker_device_t *device = nullptr;
+		for (int i = 0; i < ars_tracker_devices.size(); ++i)
+		{
+				if (ars_tracker_devices[i].fsMgmt == signal_sender)
+				{
+						device = &ars_tracker_devices[i];
+						break;
+				}
+		}
+
+		if (device == nullptr)
+		{
+				return;
+		}
+
+		if (ars_tracker_persistent_export_port.compare(device->portName, Qt::CaseInsensitive) != 0)
+		{
+				log_debug() << "ArsTracker persistent fs progress ignored for stale device port="
+										<< device->portName;
+				return;
+		}
+
+		if (ars_tracker_export_fs_active == false ||
+				ars_tracker_export_fs_phase != ARS_TRACKER_EXPORT_FS_DOWNLOAD)
+		{
+				log_debug() << "ArsTracker export fs progress ignored as stale:"
+										<< "user_data" << int(user_data)
+										<< "percent" << int(percent)
+										<< "active" << ars_tracker_export_fs_active
+										<< "phase"
+										<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+										<< "seq" << ars_tracker_export_fs_sequence;
+				return;
+		}
+
+		log_debug() << "ArsTracker export fs progress seq"
+								<< ars_tracker_export_fs_sequence
+								<< "phase"
+								<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+								<< "remote" << ars_tracker_export_fs_remote_file
+								<< "percent" << int(percent);
+		ars_tracker->handle_file_download_progress(percent);
 }
 
 void plugin_mcumgr::handle_ars_tracker_persistent_img_status(uint8_t user_data,
 																														 group_status status,
 																														 QString error_string)
 {
-		if (user_data != ACTION_ARS_TRACKER_FIRMWARE_STATE)
+		if (user_data != ACTION_ARS_TRACKER_FIRMWARE_STATE &&
+				user_data != ACTION_ARS_TRACKER_FIRMWARE_UPLOAD &&
+				user_data != ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET &&
+				user_data != ACTION_ARS_TRACKER_FIRMWARE_ERASE)
 		{
 				return;
 		}
@@ -8828,19 +9441,257 @@ void plugin_mcumgr::handle_ars_tracker_persistent_img_status(uint8_t user_data,
 				return;
 		}
 
-		if (ars_tracker_persistent_info_refresh_port.compare(device->portName, Qt::CaseInsensitive) != 0)
+		if (user_data == ACTION_ARS_TRACKER_FIRMWARE_STATE &&
+				ars_tracker_persistent_info_refresh_port.compare(device->portName, Qt::CaseInsensitive) != 0)
 		{
 				log_debug() << "ArsTracker persistent image state status ignored for stale device port="
 										<< device->portName;
 				return;
 		}
 
-		if (status != STATUS_COMPLETE)
+		if ((user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD ||
+				 user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET ||
+				 user_data == ACTION_ARS_TRACKER_FIRMWARE_ERASE) &&
+				ars_tracker_persistent_firmware_port.compare(device->portName,
+																										 Qt::CaseInsensitive) != 0)
 		{
-				log_warning() << "ArsTracker persistent tracker info refresh failed port="
-											<< device->portName << "reason=" << error_string;
+				log_debug() << "ArsTracker persistent firmware status ignored for stale device port="
+										<< device->portName;
+				return;
 		}
-		ars_tracker->handle_tracker_firmware_state_response(status, error_string, device->imageStateList);
+
+		if (user_data == ACTION_ARS_TRACKER_FIRMWARE_STATE)
+		{
+				if (status != STATUS_COMPLETE)
+				{
+						log_warning() << "ArsTracker persistent tracker info refresh failed port="
+													<< device->portName << "reason=" << error_string;
+				}
+				ars_tracker->handle_tracker_firmware_state_response(
+						status, error_string, device->imageStateList);
+				return;
+		}
+
+		if (status == STATUS_COMPLETE)
+		{
+				if (user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD)
+				{
+						log_debug() << "ArsTracker firmware upload completed, hash="
+												<< ars_tracker_firmware_upload_hash;
+						lbl_ars_tracker_progress->setText("Firmware upload: 100%");
+						mode = ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET;
+						device->processor->set_transport(device->transport);
+						set_group_transport_settings_for_transport(
+								device->imgMgmt, device->transport, ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET);
+						bool started = device->imgMgmt->start_image_set(
+								&ars_tracker_firmware_upload_hash, true, nullptr);
+
+						if (started == true)
+						{
+								log_debug() << "ArsTracker firmware image confirm/test step started";
+								lbl_ars_tracker_status->setText("Confirming uploaded firmware...");
+								return;
+						}
+
+						error_string = "Firmware upload failed: could not start image state step.";
+				}
+				else if (user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET)
+				{
+						log_debug() << "ArsTracker firmware image confirm/test step completed";
+						lbl_ars_tracker_progress->setText("Image confirm/test step completed");
+						mode = ACTION_ARS_TRACKER_FIRMWARE_RESET;
+						if (device->osMgmt != nullptr)
+						{
+								device->processor->set_transport(device->transport);
+								set_group_transport_settings_for_transport(
+										device->osMgmt, device->transport, ACTION_ARS_TRACKER_FIRMWARE_RESET);
+								log_debug() << "ArsTracker firmware reset after upload requested";
+								bool started = device->osMgmt->start_reset(false, 0);
+
+								if (started == true)
+								{
+										lbl_ars_tracker_status->setText("Resetting after firmware upload...");
+										return;
+								}
+						}
+
+						error_string = "Firmware upload completed, but failed to send reset.";
+				}
+				else if (user_data == ACTION_ARS_TRACKER_FIRMWARE_ERASE)
+				{
+						log_debug() << "ArsTracker firmware erase second slot completed";
+						lbl_ars_tracker_progress->setText("Second slot erased");
+						lbl_ars_tracker_status->setText("Second slot erased");
+						ars_tracker_firmware_erase_active = false;
+						ars_tracker_firmware_refresh_after_erase_pending = true;
+						ars_tracker_persistent_firmware_port.clear();
+						mode = ACTION_IDLE;
+						set_ars_tracker_controls_loading(ars_tracker_any_loading());
+						if (ars_tracker_firmware_refresh_after_erase_pending == true)
+						{
+								ars_tracker_firmware_refresh_after_erase_pending = false;
+								QTimer::singleShot(0, this, [this]() {
+										log_debug() << "ArsTracker firmware image state refresh after erase";
+										QString error_message;
+
+										if (start_ars_tracker_info_refresh(&error_message) == false &&
+												error_message.isEmpty() == false)
+										{
+												log_warning()
+														<< "ArsTracker firmware image state refresh after erase failed:"
+														<< error_message;
+												lbl_ars_tracker_status->setText(error_message);
+										}
+								});
+						}
+						return;
+				}
+		}
+		else if (status == STATUS_UNSUPPORTED &&
+						 user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET)
+		{
+				if (device->osMgmt != nullptr)
+				{
+						mode = ACTION_ARS_TRACKER_FIRMWARE_RESET;
+						device->processor->set_transport(device->transport);
+						set_group_transport_settings_for_transport(
+								device->osMgmt, device->transport, ACTION_ARS_TRACKER_FIRMWARE_RESET);
+						log_debug() << "ArsTracker firmware reset after upload requested";
+						bool started = device->osMgmt->start_reset(false, 0);
+
+						if (started == true)
+						{
+								lbl_ars_tracker_status->setText("Resetting after firmware upload...");
+								return;
+						}
+				}
+
+				error_string =
+						"Firmware upload completed, but image state command is unsupported and reset failed to start.";
+		}
+
+		ars_tracker_firmware_upload_active = false;
+		ars_tracker_firmware_erase_active = false;
+		ars_tracker_persistent_firmware_port.clear();
+		mode = ACTION_IDLE;
+		set_ars_tracker_controls_loading(ars_tracker_any_loading());
+		if (error_string.isEmpty())
+		{
+				if (status == STATUS_TIMEOUT)
+				{
+						error_string = "Firmware operation timed out.";
+				}
+				else if (status == STATUS_CANCELLED)
+				{
+						error_string = "Firmware operation cancelled.";
+				}
+				else
+				{
+						error_string = "Firmware operation failed.";
+				}
+		}
+		lbl_ars_tracker_status->setText(
+				error_string);
+		log_warning() << "ArsTracker firmware operation failed:" << error_string;
+}
+
+void plugin_mcumgr::handle_ars_tracker_persistent_img_progress(uint8_t user_data, uint8_t percent)
+{
+		QObject *signal_sender = sender();
+		ars_tracker_device_t *device = nullptr;
+		for (int i = 0; i < ars_tracker_devices.size(); ++i)
+		{
+				if (ars_tracker_devices[i].imgMgmt == signal_sender)
+				{
+						device = &ars_tracker_devices[i];
+						break;
+				}
+		}
+
+		if (device == nullptr)
+		{
+				return;
+		}
+
+		if (ars_tracker_persistent_firmware_port.compare(device->portName, Qt::CaseInsensitive) != 0)
+		{
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD ||
+				user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET)
+		{
+				log_debug() << "ArsTracker firmware upload progress:" << int(percent);
+				lbl_ars_tracker_progress->setText(
+						QString("Firmware upload: %1%").arg(QString::number(percent)));
+				lbl_ars_tracker_status->setText(
+						QString("Firmware upload: %1%").arg(QString::number(percent)));
+		}
+}
+
+void plugin_mcumgr::handle_ars_tracker_persistent_os_status(uint8_t user_data,
+																													 group_status status,
+																													 QString error_string)
+{
+		if (user_data != ACTION_ARS_TRACKER_FIRMWARE_RESET)
+		{
+				return;
+		}
+
+		QObject *signal_sender = sender();
+		ars_tracker_device_t *device = nullptr;
+		for (int i = 0; i < ars_tracker_devices.size(); ++i)
+		{
+				if (ars_tracker_devices[i].osMgmt == signal_sender)
+				{
+						device = &ars_tracker_devices[i];
+						break;
+				}
+		}
+
+		if (device == nullptr)
+		{
+				return;
+		}
+
+		if (ars_tracker_persistent_firmware_port.compare(device->portName, Qt::CaseInsensitive) != 0)
+		{
+				log_debug() << "ArsTracker persistent os status ignored for stale device port="
+										<< device->portName;
+				return;
+		}
+
+		ars_tracker_firmware_upload_active = false;
+		ars_tracker_firmware_erase_active = false;
+		ars_tracker_persistent_firmware_port.clear();
+		mode = ACTION_IDLE;
+		set_ars_tracker_controls_loading(ars_tracker_any_loading());
+
+		if (status == STATUS_COMPLETE)
+		{
+				log_debug() << "ArsTracker firmware reset command sent";
+				lbl_ars_tracker_status->setText("Reset command sent");
+				return;
+		}
+
+		log_warning() << "ArsTracker firmware operation failed:" << error_string;
+		if (error_string.isEmpty())
+		{
+				if (status == STATUS_TIMEOUT)
+				{
+						error_string = "Firmware reset timed out.";
+				}
+				else if (status == STATUS_CANCELLED)
+				{
+						error_string = "Firmware reset cancelled.";
+				}
+				else
+				{
+						error_string = "Firmware reset failed.";
+				}
+		}
+		lbl_ars_tracker_status->setText(
+				error_string);
 }
 
 void plugin_mcumgr::ars_tracker_request_session_refresh_after_delete()
@@ -8864,6 +9715,97 @@ QString plugin_mcumgr::ars_tracker_export_fs_phase_name(ars_tracker_export_fs_ph
 		}
 
 		return "unknown";
+}
+
+bool plugin_mcumgr::ars_tracker_has_active_transport() const
+{
+		return ars_tracker_active_transport() != nullptr && ars_tracker_active_processor() != nullptr &&
+					 ars_tracker_active_shell() != nullptr;
+}
+
+smp_uart_auterm *plugin_mcumgr::ars_tracker_active_transport() const
+{
+		ars_tracker_device_t *device =
+				const_cast<plugin_mcumgr *>(this)->active_ars_tracker_device();
+		if (device != nullptr)
+		{
+				bool device_open = device->connected == true && device->transport != nullptr &&
+												 device->serialPort != nullptr && device->serialPort->isOpen() == true;
+				return device_open ? device->transport : nullptr;
+		}
+
+		if (ars_tracker_has_connected_devices())
+		{
+				return nullptr;
+		}
+
+		bool serial_open = false;
+		bool serial_opening = false;
+		const_cast<plugin_mcumgr *>(this)->ars_tracker_main_serial_state(&serial_open, &serial_opening);
+		return (serial_open == true && serial_opening == false &&
+						const_cast<plugin_mcumgr *>(this)->active_transport() == uart_transport) ?
+							 uart_transport :
+							 nullptr;
+}
+
+smp_processor *plugin_mcumgr::ars_tracker_active_processor() const
+{
+		ars_tracker_device_t *device =
+				const_cast<plugin_mcumgr *>(this)->active_ars_tracker_device();
+		if (device != nullptr)
+		{
+				return ars_tracker_active_transport() != nullptr ? device->processor : nullptr;
+		}
+
+		return ars_tracker_has_connected_devices() ? nullptr : processor;
+}
+
+smp_group_shell_mgmt *plugin_mcumgr::ars_tracker_active_shell() const
+{
+		ars_tracker_device_t *device =
+				const_cast<plugin_mcumgr *>(this)->active_ars_tracker_device();
+		if (device != nullptr)
+		{
+				return ars_tracker_active_transport() != nullptr ? device->shell : nullptr;
+		}
+
+		return ars_tracker_has_connected_devices() ? nullptr : smp_groups.shell_mgmt;
+}
+
+smp_group_fs_mgmt *plugin_mcumgr::ars_tracker_active_fs() const
+{
+		ars_tracker_device_t *device =
+				const_cast<plugin_mcumgr *>(this)->active_ars_tracker_device();
+		if (device != nullptr)
+		{
+				return ars_tracker_active_transport() != nullptr ? device->fsMgmt : nullptr;
+		}
+
+		return ars_tracker_has_connected_devices() ? nullptr : smp_groups.fs_mgmt;
+}
+
+smp_group_img_mgmt *plugin_mcumgr::ars_tracker_active_image() const
+{
+		ars_tracker_device_t *device =
+				const_cast<plugin_mcumgr *>(this)->active_ars_tracker_device();
+		if (device != nullptr)
+		{
+				return ars_tracker_active_transport() != nullptr ? device->imgMgmt : nullptr;
+		}
+
+		return ars_tracker_has_connected_devices() ? nullptr : smp_groups.img_mgmt;
+}
+
+smp_group_os_mgmt *plugin_mcumgr::ars_tracker_active_os() const
+{
+		ars_tracker_device_t *device =
+				const_cast<plugin_mcumgr *>(this)->active_ars_tracker_device();
+		if (device != nullptr)
+		{
+				return ars_tracker_active_transport() != nullptr ? device->osMgmt : nullptr;
+		}
+
+		return ars_tracker_has_connected_devices() ? nullptr : smp_groups.os_mgmt;
 }
 
 uint32_t plugin_mcumgr::begin_ars_tracker_export_fs_operation(
@@ -9002,15 +9944,49 @@ void plugin_mcumgr::handle_ars_tracker_export_fs_status(uint8_t user_data, group
 void plugin_mcumgr::ars_tracker_request_file_hash_support()
 {
 		mode = ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT;
-		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT);
+		smp_group_fs_mgmt *target_fs = smp_groups.fs_mgmt;
+		smp_transport *target_transport = active_transport();
+		smp_processor *target_processor = processor;
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_device_t *device =
+						find_ars_tracker_device_by_port(ars_tracker_persistent_export_port);
+				if (device == nullptr)
+				{
+						device = active_ars_tracker_device();
+				}
+				if (device == nullptr || device->transport == nullptr || device->processor == nullptr ||
+						device->fsMgmt == nullptr || device->serialPort == nullptr ||
+						device->serialPort->isOpen() == false)
+				{
+						log_debug() << "ArsTracker operation failed: no active persistent transport";
+						ars_tracker->handle_export_hash_support_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR,
+								QString("No active tracker transport available."), QList<hash_checksum_t>());
+						return;
+				}
+
+				ars_tracker_persistent_export_port = device->portName;
+				target_fs = device->fsMgmt;
+				target_transport = device->transport;
+				target_processor = device->processor;
+				log_debug() << "ArsTracker fs operation using persistent device port="
+										<< device->portName << "file=<hash-support>";
+				target_processor->set_transport(target_transport);
+				set_group_transport_settings_for_transport(
+						target_fs, target_transport, ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT);
+		}
+		else
+		{
+				target_processor->set_transport(active_transport());
+				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT);
+		}
 
 		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
 				ARS_TRACKER_EXPORT_FS_HASH_SUPPORT, QString());
 
-		bool started =
-				smp_groups.fs_mgmt->start_supported_hashes_checksums(
-						&ars_tracker_export_supported_hash_checksum_list);
+		bool started = target_fs->start_supported_hashes_checksums(
+				&ars_tracker_export_supported_hash_checksum_list);
 
 		if (started == false)
 		{
@@ -9034,21 +10010,70 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 																											const QString &hash_name)
 {
 		mode = ACTION_ARS_TRACKER_EXPORT_METADATA;
-		processor->set_transport(active_transport());
-		if (hash_name.isEmpty())
+		smp_group_fs_mgmt *target_fs = smp_groups.fs_mgmt;
+		smp_transport *target_transport = active_transport();
+		smp_processor *target_processor = processor;
+		if (ars_tracker_has_connected_devices())
 		{
-				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA);
+				ars_tracker_device_t *device =
+						find_ars_tracker_device_by_port(ars_tracker_persistent_export_port);
+				if (device == nullptr)
+				{
+						device = active_ars_tracker_device();
+				}
+				if (device == nullptr || device->transport == nullptr || device->processor == nullptr ||
+						device->fsMgmt == nullptr || device->serialPort == nullptr ||
+						device->serialPort->isOpen() == false)
+				{
+						log_debug() << "ArsTracker operation failed: no active persistent transport";
+						ars_tracker->handle_file_metadata_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR,
+								QString("No active tracker transport available."), QByteArray(), 0);
+						return;
+				}
+
+				ars_tracker_persistent_export_port = device->portName;
+				target_fs = device->fsMgmt;
+				target_transport = device->transport;
+				target_processor = device->processor;
+				log_debug() << "ArsTracker fs operation using persistent device port="
+										<< device->portName << "file=" << remote_file;
+				target_processor->set_transport(target_transport);
+				if (hash_name.isEmpty())
+				{
+						set_group_transport_settings_for_transport(
+								target_fs, target_transport, ACTION_ARS_TRACKER_EXPORT_METADATA);
+				}
+				else
+				{
+						set_group_transport_settings_for_transport(
+								target_fs, target_transport, ACTION_ARS_TRACKER_EXPORT_METADATA,
+								timeout_ars_tracker_metadata_ms, retries_ars_tracker_metadata);
+						log_debug() << "ArsTracker export metadata hash request using long timeout/no retry"
+												<< "remote" << remote_file
+												<< "hash type" << hash_name
+												<< "timeout ms" << timeout_ars_tracker_metadata_ms
+												<< "retries" << int(retries_ars_tracker_metadata);
+				}
 		}
 		else
 		{
-				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA,
-																		 timeout_ars_tracker_metadata_ms,
-																		 retries_ars_tracker_metadata);
-				log_debug() << "ArsTracker export metadata hash request using long timeout/no retry"
-										<< "remote" << remote_file
-										<< "hash type" << hash_name
-										<< "timeout ms" << timeout_ars_tracker_metadata_ms
-										<< "retries" << int(retries_ars_tracker_metadata);
+				target_processor->set_transport(active_transport());
+				if (hash_name.isEmpty())
+				{
+						set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA);
+				}
+				else
+				{
+						set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_METADATA,
+																			 timeout_ars_tracker_metadata_ms,
+																			 retries_ars_tracker_metadata);
+						log_debug() << "ArsTracker export metadata hash request using long timeout/no retry"
+												<< "remote" << remote_file
+												<< "hash type" << hash_name
+												<< "timeout ms" << timeout_ars_tracker_metadata_ms
+												<< "retries" << int(retries_ars_tracker_metadata);
+				}
 		}
 
 		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
@@ -9058,14 +10083,14 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 
 		if (hash_name.isEmpty())
 		{
-				started = smp_groups.fs_mgmt->start_status(
+				started = target_fs->start_status(
 						remote_file, &ars_tracker_export_fs_size_response);
 		}
 		else
 		{
-				started = smp_groups.fs_mgmt->start_hash_checksum(remote_file, hash_name,
-																													&ars_tracker_export_fs_hash_checksum_response,
-																													&ars_tracker_export_fs_size_response);
+				started = target_fs->start_hash_checksum(remote_file, hash_name,
+																									 &ars_tracker_export_fs_hash_checksum_response,
+																									 &ars_tracker_export_fs_size_response);
 		}
 
 		if (started == false)
@@ -9093,13 +10118,48 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file)
 {
 		mode = ACTION_ARS_TRACKER_EXPORT_DOWNLOAD;
-		processor->set_transport(active_transport());
-		set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_DOWNLOAD);
+		smp_group_fs_mgmt *target_fs = smp_groups.fs_mgmt;
+		smp_transport *target_transport = active_transport();
+		smp_processor *target_processor = processor;
+		if (ars_tracker_has_connected_devices())
+		{
+				ars_tracker_device_t *device =
+						find_ars_tracker_device_by_port(ars_tracker_persistent_export_port);
+				if (device == nullptr)
+				{
+						device = active_ars_tracker_device();
+				}
+				if (device == nullptr || device->transport == nullptr || device->processor == nullptr ||
+						device->fsMgmt == nullptr || device->serialPort == nullptr ||
+						device->serialPort->isOpen() == false)
+				{
+						log_debug() << "ArsTracker operation failed: no active persistent transport";
+						ars_tracker->handle_file_download_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR,
+								QString("No active tracker transport available."));
+						return;
+				}
+
+				ars_tracker_persistent_export_port = device->portName;
+				target_fs = device->fsMgmt;
+				target_transport = device->transport;
+				target_processor = device->processor;
+				log_debug() << "ArsTracker fs operation using persistent device port="
+										<< device->portName << "file=" << remote_file;
+				target_processor->set_transport(target_transport);
+				set_group_transport_settings_for_transport(
+						target_fs, target_transport, ACTION_ARS_TRACKER_EXPORT_DOWNLOAD);
+		}
+		else
+		{
+				target_processor->set_transport(active_transport());
+				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_DOWNLOAD);
+		}
 
 		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
 				ARS_TRACKER_EXPORT_FS_DOWNLOAD, remote_file, local_temp_file);
 
-		bool started = smp_groups.fs_mgmt->start_download(remote_file, local_temp_file);
+		bool started = target_fs->start_download(remote_file, local_temp_file);
 
 		if (started == false)
 		{
@@ -9133,6 +10193,17 @@ void plugin_mcumgr::ars_tracker_request_cancel_file_download()
 								<< "phase"
 								<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
 								<< "remote" << ars_tracker_export_fs_remote_file;
+		if (ars_tracker_persistent_export_port.isEmpty() == false)
+		{
+				ars_tracker_device_t *device =
+						find_ars_tracker_device_by_port(ars_tracker_persistent_export_port);
+				if (device != nullptr && device->fsMgmt != nullptr)
+				{
+						device->fsMgmt->cancel();
+						return;
+				}
+		}
+
 		smp_groups.fs_mgmt->cancel();
 }
 
@@ -9158,16 +10229,18 @@ void plugin_mcumgr::set_ars_tracker_controls_loading(bool loading)
 		bool controls_locked = loading || ars_tracker_port_scan_active;
 		bool persistent_mode_active = ars_tracker_has_connected_devices();
 		ars_tracker_device_t *persistent_active_device = active_ars_tracker_device();
+		bool active_transport_available = ars_tracker_has_active_transport();
 		QString persistent_tooltip =
-				persistent_mode_active ?
-						QString("Persistent tracker operations will be enabled in next iteration.") :
+				persistent_mode_active && active_transport_available == false ?
+						QString("No active tracker selected.") :
 						QString();
 		bool refresh_enabled = false;
 		QString refresh_tooltip = persistent_tooltip;
 		if (persistent_mode_active)
 		{
 				refresh_enabled = !controls_locked && persistent_active_device != nullptr &&
-													persistent_active_device->connected == true;
+													persistent_active_device->connected == true &&
+													active_transport_available == true;
 				refresh_tooltip.clear();
 		}
 		else
@@ -9176,25 +10249,38 @@ void plugin_mcumgr::set_ars_tracker_controls_loading(bool loading)
 		}
 		btn_ars_tracker_info_refresh->setEnabled(refresh_enabled);
 		btn_ars_tracker_info_refresh->setToolTip(refresh_tooltip);
-		list_ars_tracker_sessions->setEnabled(!controls_locked && persistent_mode_active == false);
-		edit_ars_tracker_destination->setEnabled(!controls_locked && persistent_mode_active == false);
-		btn_ars_tracker_destination->setEnabled(!controls_locked && persistent_mode_active == false);
+		list_ars_tracker_sessions->setEnabled(
+				!controls_locked &&
+				(persistent_mode_active == false || active_transport_available == true));
+		edit_ars_tracker_destination->setEnabled(
+				!controls_locked &&
+				(persistent_mode_active == false || active_transport_available == true));
+		btn_ars_tracker_destination->setEnabled(
+				!controls_locked &&
+				(persistent_mode_active == false || active_transport_available == true));
 		edit_ars_tracker_destination->setToolTip(persistent_tooltip);
 		btn_ars_tracker_destination->setToolTip(persistent_tooltip);
 		sync_ars_tracker_serial_controls(controls_locked);
 
 		bool has_selection = list_ars_tracker_sessions->currentItem() != nullptr;
 
-		btn_ars_tracker_delete->setEnabled(!controls_locked && persistent_mode_active == false &&
-																		 has_selection);
-		btn_ars_tracker_download->setEnabled(!controls_locked && persistent_mode_active == false &&
-																			 has_selection);
+		btn_ars_tracker_delete->setEnabled(
+				!controls_locked &&
+				(persistent_mode_active == false || active_transport_available == true) &&
+				has_selection);
+		btn_ars_tracker_download->setEnabled(
+				!controls_locked &&
+				(persistent_mode_active == false || active_transport_available == true) &&
+				has_selection);
 		btn_ars_tracker_delete->setToolTip(persistent_tooltip);
 		btn_ars_tracker_download->setToolTip(persistent_tooltip);
 		update_ars_tracker_firmware_upload_controls(controls_locked);
 		update_ars_tracker_shell_controls(controls_locked);
-		btn_ars_tracker_cancel->setEnabled(ars_tracker_info_loading || ars_tracker_export_loading ||
+		btn_ars_tracker_cancel->setEnabled(ars_tracker_info_loading || ars_tracker_loading ||
+																		 ars_tracker_delete_loading ||
+																		 ars_tracker_export_loading ||
 																		 ars_tracker_firmware_upload_active ||
+																		 ars_tracker_firmware_erase_active ||
 																		 ars_tracker_shell_command_active);
 }
 

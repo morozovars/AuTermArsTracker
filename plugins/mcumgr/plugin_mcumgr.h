@@ -190,6 +190,7 @@ struct ars_tracker_device_t {
     bool connected = false;
     bool identified = false;
     bool active = false;
+    bool reconnecting = false;
     ars_tracker_info_t info;
     bool info_loaded = false;
     bool info_refreshing = false;
@@ -437,6 +438,7 @@ private:
     bool ars_tracker_has_connected_devices() const;
     bool set_active_ars_tracker_device(const QString &port_name, bool auto_selected = false);
     ars_tracker_device_t *find_ars_tracker_device_by_port(const QString &port_name);
+    ars_tracker_device_t *find_ars_tracker_device_by_serial(const QString &serial_number);
     ars_tracker_device_t *active_ars_tracker_device();
     ars_tracker_device_t *persistent_ars_tracker_refresh_device();
     void schedule_ars_tracker_active_device_refresh(const QString &port_name);
@@ -444,9 +446,20 @@ private:
     void clear_ars_tracker_device_logs_view();
     void buffer_ars_tracker_device_log(ars_tracker_device_t *device, const QByteArray &data);
     bool ars_tracker_port_in_probe_backoff(const QString &port_name,
-                                           qint64 *remaining_ms = nullptr) const;
-    void ars_tracker_set_probe_backoff(const QString &port_name, const QString &reason);
+                                           qint64 *remaining_ms = nullptr,
+                                           QString *reason = nullptr) const;
+    void ars_tracker_set_probe_backoff(const QString &port_name, const QString &reason,
+                                       qint64 retry_ms = 30000);
     void ars_tracker_clear_probe_backoff(const QString &port_name);
+    qint64 ars_tracker_next_failed_port_retry_ms(const QString &port_name) const;
+    bool ars_tracker_serial_is_valid(const QString &serial_number,
+                                     QString *error_message = nullptr) const;
+    void request_ars_tracker_port_scan(const QString &source, bool ignore_cooldown = false,
+                                       bool ignore_backoff = false,
+                                       const QStringList &preferred_ports = QStringList());
+    void schedule_ars_tracker_port_scan_debounce(
+            const QString &source, const QStringList &preferred_ports = QStringList());
+    void refresh_ars_tracker_serial_ports_internal(const QString &source, bool allow_probe);
     void set_group_transport_settings_for_transport(smp_group *group, smp_transport *transport,
                                                     mcumgr_action_t action);
     void set_group_transport_settings_for_transport(smp_group *group, smp_transport *transport,
@@ -974,8 +987,17 @@ private:
     uint32_t ars_tracker_active_refresh_generation = 0;
     QByteArray ars_tracker_scan_probe_log_buffer;
     QHash<QString, qint64> ars_tracker_ignored_until_by_port;
+    QHash<QString, QString> ars_tracker_probe_backoff_reason_by_port;
+    QHash<QString, int> ars_tracker_probe_backoff_failures_by_port;
     QStringList ars_tracker_runtime_known_ports;
     QTimer *ars_tracker_runtime_port_monitor_timer = nullptr;
+    QElapsedTimer ars_tracker_last_scan_timer;
+    bool ars_tracker_port_scan_debounce_pending = false;
+    QString ars_tracker_pending_scan_source;
+    QStringList ars_tracker_pending_scan_ports;
+    QString ars_tracker_scan_request_source;
+    QStringList ars_tracker_scan_preferred_ports;
+    bool ars_tracker_scan_ignore_port_backoff = false;
     QStringList ars_tracker_scan_pending_ports;
     QString ars_tracker_scan_selected_port;
     QString ars_tracker_scan_current_port;

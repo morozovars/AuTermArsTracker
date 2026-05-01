@@ -28,6 +28,7 @@
 #include <QMainWindow>
 #include <QCryptographicHash>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QCborStreamReader>
 #include <QCborStreamWriter>
 #include <QCborArray>
@@ -195,6 +196,7 @@ struct ars_tracker_device_t {
     QString currentInfoShellCommand;
     int32_t shellRc = 0;
     QList<image_state_t> imageStateList;
+    QByteArray deviceLogBuffer;
     QSerialPort *serialPort = nullptr;
     smp_uart_auterm *transport = nullptr;
     smp_processor *processor = nullptr;
@@ -437,6 +439,14 @@ private:
     ars_tracker_device_t *find_ars_tracker_device_by_port(const QString &port_name);
     ars_tracker_device_t *active_ars_tracker_device();
     ars_tracker_device_t *persistent_ars_tracker_refresh_device();
+    void schedule_ars_tracker_active_device_refresh(const QString &port_name);
+    void refresh_ars_tracker_device_logs_view(ars_tracker_device_t *device);
+    void clear_ars_tracker_device_logs_view();
+    void buffer_ars_tracker_device_log(ars_tracker_device_t *device, const QByteArray &data);
+    bool ars_tracker_port_in_probe_backoff(const QString &port_name,
+                                           qint64 *remaining_ms = nullptr) const;
+    void ars_tracker_set_probe_backoff(const QString &port_name, const QString &reason);
+    void ars_tracker_clear_probe_backoff(const QString &port_name);
     void set_group_transport_settings_for_transport(smp_group *group, smp_transport *transport,
                                                     mcumgr_action_t action);
     void set_group_transport_settings_for_transport(smp_group *group, smp_transport *transport,
@@ -960,13 +970,24 @@ private:
     QString ars_tracker_persistent_export_port;
     QString ars_tracker_persistent_shell_command_port;
     QString ars_tracker_persistent_firmware_port;
+    QString ars_tracker_pending_active_refresh_port;
+    uint32_t ars_tracker_active_refresh_generation = 0;
+    QByteArray ars_tracker_scan_probe_log_buffer;
+    QHash<QString, qint64> ars_tracker_ignored_until_by_port;
+    QStringList ars_tracker_runtime_known_ports;
+    QTimer *ars_tracker_runtime_port_monitor_timer = nullptr;
     QStringList ars_tracker_scan_pending_ports;
     QString ars_tracker_scan_selected_port;
     QString ars_tracker_scan_current_port;
-    int ars_tracker_scan_port_index;
-    bool ars_tracker_scan_main_serial_open;
-    bool ars_tracker_scan_probe_active;
-    bool ars_tracker_scan_command_started;
+    QElapsedTimer ars_tracker_scan_probe_started_at;
+    qint64 ars_tracker_scan_pre_identification_log_bytes = 0;
+    int ars_tracker_scan_port_index = 0;
+    bool ars_tracker_scan_main_serial_open = false;
+    bool ars_tracker_scan_probe_active = false;
+    bool ars_tracker_scan_probe_finished = false;
+    bool ars_tracker_scan_param_sn_sent = false;
+    bool ars_tracker_scan_probe_backoff_current_port = false;
+    bool ars_tracker_scan_command_started = false;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

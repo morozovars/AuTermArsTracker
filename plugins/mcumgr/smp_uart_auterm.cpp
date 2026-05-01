@@ -60,6 +60,20 @@ static int uart_count_marker(const QByteArray &data, const QByteArray &marker)
     return count;
 }
 
+static int uart_partial_marker_suffix_len(const QByteArray &data, const QByteArray &marker)
+{
+    int max_len = qMin(data.length(), marker.length() - 1);
+    for (int len = max_len; len > 0; --len)
+    {
+        if (data.right(len) == marker.left(len))
+        {
+            return len;
+        }
+    }
+
+    return 0;
+}
+
 smp_uart_auterm::smp_uart_auterm(QObject *parent)
 {
     Q_UNUSED(parent);
@@ -76,6 +90,7 @@ void smp_uart_auterm::emit_non_smp_uart_data(const QByteArray &data)
         return;
     }
 
+    log_debug() << "smp_uart_auterm emitted non-SMP bytes len=" << data.size();
     emit non_smp_uart_data_received(data);
 }
 
@@ -160,6 +175,8 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
 
         if (earliest_marker > 0)
         {
+            log_debug() << "smp_uart_auterm emitted non-SMP prefix before SMP frame len="
+                        << earliest_marker;
             emit_non_smp_uart_data(SerialData.left(earliest_marker));
             SerialData.remove(0, earliest_marker);
             pos = SerialData.indexOf(smp_first_header);
@@ -324,27 +341,19 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
         }
     }
 
-    if (SerialData.indexOf(smp_first_header) == -1 && SerialData.indexOf(smp_continuation_header) == -1)
+    if (SMPWaitingForContinuation == false &&
+        SerialData.indexOf(smp_first_header) == -1 &&
+        SerialData.indexOf(smp_continuation_header) == -1)
     {
-        int32_t line_break_pos = SerialData.lastIndexOf('\n');
-        int32_t carriage_return_pos = SerialData.lastIndexOf('\r');
-        if (carriage_return_pos > line_break_pos)
-        {
-            line_break_pos = carriage_return_pos;
-        }
+        int keep_len = qMax(uart_partial_marker_suffix_len(SerialData, smp_first_header),
+                            uart_partial_marker_suffix_len(SerialData, smp_continuation_header));
+        int emit_len = SerialData.length() - keep_len;
 
-        if (line_break_pos >= 0)
+        if (emit_len > 0)
         {
-            emit_non_smp_uart_data(SerialData.left(line_break_pos + 1));
-            SerialData.remove(0, line_break_pos + 1);
+            emit_non_smp_uart_data(SerialData.left(emit_len));
+            SerialData.remove(0, emit_len);
         }
-    }
-
-    if (SerialData.length() > 10 && SerialData.indexOf(smp_first_header) == -1 && SerialData.indexOf(smp_continuation_header) == -1)
-    {
-        emit_non_smp_uart_data(SerialData);
-        log_error() << "Cleared garbage data in UART SMP transport buffer";
-        SerialData.clear();
     }
 }
 

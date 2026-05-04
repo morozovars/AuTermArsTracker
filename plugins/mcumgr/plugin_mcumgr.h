@@ -221,6 +221,7 @@ public:
 
 signals:
     void popup_about_to_show();
+    void popup_closed();
 
 protected:
     void showPopup() override
@@ -234,6 +235,12 @@ protected:
             suppress_popup_refresh = false;
         }
         QComboBox::showPopup();
+    }
+
+    void hidePopup() override
+    {
+        QComboBox::hidePopup();
+        emit popup_closed();
     }
 
 private:
@@ -393,6 +400,12 @@ private slots:
                                                  QString error_string);
 
 private:
+    enum ars_tracker_info_refresh_source_t : uint8_t {
+        ARS_TRACKER_INFO_REFRESH_INTERNAL = 0,
+        ARS_TRACKER_INFO_REFRESH_AUTO_AFTER_CONNECT,
+        ARS_TRACKER_INFO_REFRESH_MANUAL,
+    };
+
     bool handleStream_shell(QCborStreamReader &reader, int32_t *new_rc, int32_t *new_ret, QString *new_data);
     smp_transport *active_transport();
     bool claim_transport(QLabel *status);
@@ -407,9 +420,12 @@ private:
     void close_transport_windows();
     bool ars_tracker_transport_usable();
     bool ars_tracker_tab_is_active() const;
-    bool start_ars_tracker_info_refresh(QString *error_message = nullptr);
+    bool start_ars_tracker_info_refresh(
+            QString *error_message = nullptr,
+            ars_tracker_info_refresh_source_t source = ARS_TRACKER_INFO_REFRESH_INTERNAL);
     bool start_ars_tracker_firmware_upload(QString *error_message = nullptr);
     void maybe_auto_refresh_ars_tracker();
+    bool ars_tracker_combo_popup_is_open() const;
     QString ars_tracker_selected_port_name() const;
     bool ars_tracker_has_selected_port() const;
     bool ars_tracker_combo_has_selectable_port() const;
@@ -441,10 +457,13 @@ private:
     ars_tracker_device_t *find_ars_tracker_device_by_serial(const QString &serial_number);
     ars_tracker_device_t *active_ars_tracker_device();
     ars_tracker_device_t *persistent_ars_tracker_refresh_device();
-    void schedule_ars_tracker_active_device_refresh(const QString &port_name);
+    void schedule_ars_tracker_active_device_refresh(const QString &port_name,
+                                                    bool delayed_after_connect = false);
     void refresh_ars_tracker_device_logs_view(ars_tracker_device_t *device);
     void clear_ars_tracker_device_logs_view();
     void buffer_ars_tracker_device_log(ars_tracker_device_t *device, const QByteArray &data);
+    void handle_ars_tracker_persistent_non_smp_bytes(const QString &port_name,
+                                                     const QByteArray &data);
     bool ars_tracker_port_in_probe_backoff(const QString &port_name,
                                            qint64 *remaining_ms = nullptr,
                                            QString *reason = nullptr) const;
@@ -993,6 +1012,7 @@ private:
     QTimer *ars_tracker_runtime_port_monitor_timer = nullptr;
     QElapsedTimer ars_tracker_last_scan_timer;
     bool ars_tracker_port_scan_debounce_pending = false;
+    bool ars_tracker_combo_repopulate_deferred = false;
     QString ars_tracker_pending_scan_source;
     QStringList ars_tracker_pending_scan_ports;
     QString ars_tracker_scan_request_source;

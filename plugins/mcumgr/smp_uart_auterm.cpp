@@ -195,6 +195,16 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
         if (pos >= 0 && (pos_other == -1 || pos < pos_other))
         {
             //Start
+            if (SMPWaitingForContinuation == true || SMPBufferActualData.isEmpty() == false)
+            {
+                log_warning() << "UART SMP abandoning stale partial packet before new first frame"
+                              << "waiting length" << waiting_packet_length
+                              << "assembled length" << SMPBufferActualData.length();
+                SMPWaitingForContinuation = false;
+                SMPBufferActualData.clear();
+                waiting_packet_length = 0;
+            }
+
             //Check this header
             SMPBuffer.clear();
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
@@ -206,6 +216,9 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
             if (SMPBuffer.length() == 0)
             {
                 log_error() << "Failed decoding base64";
+                SMPWaitingForContinuation = false;
+                SMPBufferActualData.clear();
+                waiting_packet_length = 0;
             }
             else if (SMPBuffer.length() > 2)
             {
@@ -234,13 +247,19 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                                     << "assembled length including crc" << SMPBuffer.length()
                                     << "announced packet length" << waiting_packet_length;
                         SMPBuffer.remove((SMPBuffer.length() - 2), 2);
+                        SMPWaitingForContinuation = false;
+                        SMPBufferActualData.clear();
                         data_received(&SMPBuffer);
                     }
                     else
                     {
                         //CRC failure
                         log_error() << "CRC failure, expected " << message_crc << " but got " << crc;
+                        SMPWaitingForContinuation = false;
+                        SMPBufferActualData.clear();
                     }
+
+                    waiting_packet_length = 0;
                 }
                 else
                 {
@@ -251,6 +270,12 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                                 << "assembled length including crc" << SMPBufferActualData.length()
                                 << "announced packet length" << waiting_packet_length;
                 }
+            }
+            else
+            {
+                SMPWaitingForContinuation = false;
+                SMPBufferActualData.clear();
+                waiting_packet_length = 0;
             }
 
             SerialData.remove(pos, (posA - pos + 1));
@@ -274,6 +299,9 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
             if (SMPBuffer.length() == 0)
             {
                 log_error() << "Failed decoding base64";
+                SMPWaitingForContinuation = false;
+                SMPBufferActualData.clear();
+                waiting_packet_length = 0;
             }
             else if (SMPBuffer.length() > 0)
             {
@@ -310,12 +338,19 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
 
                     SMPBufferActualData.clear();
                     SMPWaitingForContinuation = false;
+                    waiting_packet_length = 0;
                 }
                 else
                 {
                     //More data expected in another packet
                     SMPWaitingForContinuation = true;
                 }
+            }
+            else
+            {
+                SMPWaitingForContinuation = false;
+                SMPBufferActualData.clear();
+                waiting_packet_length = 0;
             }
 
             SerialData.remove(pos_other, (posA_other - pos_other + 1));
@@ -339,10 +374,25 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                 posA_other = SerialData.indexOf(0x0a, pos_other + 2);
             }
         }
+        else if (pos_other != -1 && posA_other != -1)
+        {
+            log_warning() << "UART SMP stray continuation frame discarded"
+                          << "line bytes" << (posA_other - pos_other + 1)
+                          << "serial buffer length" << SerialData.length();
+            SerialData.remove(pos_other, (posA_other - pos_other + 1));
+
+            pos = SerialData.indexOf(smp_first_header);
+            posA = (pos == -1 ? -1 : SerialData.indexOf(0x0a, pos + 2));
+            pos_other = SerialData.indexOf(smp_continuation_header);
+            posA_other = (pos_other == -1 ? -1 : SerialData.indexOf(0x0a, pos_other + 2));
+        }
+        else
+        {
+            break;
+        }
     }
 
-    if (SMPWaitingForContinuation == false &&
-        SerialData.indexOf(smp_first_header) == -1 &&
+    if (SerialData.indexOf(smp_first_header) == -1 &&
         SerialData.indexOf(smp_continuation_header) == -1)
     {
         int keep_len = qMax(uart_partial_marker_suffix_len(SerialData, smp_first_header),
@@ -351,6 +401,17 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
 
         if (emit_len > 0)
         {
+            if (SMPWaitingForContinuation == true)
+            {
+                log_warning() << "UART SMP waiting state cleared by plain UART bytes"
+                              << "waiting length" << waiting_packet_length
+                              << "assembled length" << SMPBufferActualData.length()
+                              << "plain bytes" << emit_len;
+                SMPWaitingForContinuation = false;
+                SMPBufferActualData.clear();
+                waiting_packet_length = 0;
+            }
+
             emit_non_smp_uart_data(SerialData.left(emit_len));
             SerialData.remove(0, emit_len);
         }

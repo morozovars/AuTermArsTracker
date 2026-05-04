@@ -3032,7 +3032,29 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		connect(btn_ars_tracker_destination, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_destination_clicked()));
 		connect(combo_ars_tracker_port, &ars_tracker_port_combo_box::popup_about_to_show, this,
-						[this]() { refresh_ars_tracker_serial_ports_internal("combo", false); });
+						[this]() {
+								log_debug() << "ArsTracker combo popup opened: using cached devices, no scan";
+								QString selected_port = ars_tracker_selected_port_name();
+								ars_tracker_device_t *active_device = active_ars_tracker_device();
+								if (active_device != nullptr)
+								{
+										selected_port = active_device->portName;
+								}
+								populate_ars_tracker_serial_ports(
+										ars_tracker_scan_results, selected_port,
+										ars_tracker_scan_results.isEmpty() ? "No ArsTracker devices found" :
+																								 QString());
+						});
+		connect(combo_ars_tracker_port, &ars_tracker_port_combo_box::popup_closed, this,
+						[this]() {
+								if (ars_tracker_combo_repopulate_deferred == false)
+								{
+										return;
+								}
+
+								ars_tracker_combo_repopulate_deferred = false;
+								refresh_ars_tracker_serial_ports_internal("combo close", false);
+						});
 		connect(ars_tracker_runtime_port_monitor_timer, &QTimer::timeout, this, [this]() {
 				if (ars_tracker_port_scan_active == false)
 				{
@@ -3094,6 +3116,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 										combo_ars_tracker_port->itemData(index, Qt::UserRole).toString();
 								if (port_name.trimmed().isEmpty() == false)
 								{
+										log_debug() << "ArsTracker combo current index changed: selecting active device only, no scan"
+																<< "port=" << port_name;
 										set_active_ars_tracker_device(port_name, false);
 								}
 						});
@@ -6424,7 +6448,14 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 
 		if (ports_changed == false)
 		{
-				log_debug() << "ArsTracker port list unchanged for source=" << source;
+				if (source == "port monitor")
+				{
+						log_debug() << "ArsTracker port monitor no system port changes, no scan";
+				}
+				else
+				{
+						log_debug() << "ArsTracker port list unchanged for source=" << source;
+				}
 				sync_ars_tracker_serial_controls(ars_tracker_any_loading());
 				return;
 		}
@@ -7152,13 +7183,11 @@ bool plugin_mcumgr::set_active_ars_tracker_device(const QString &port_name, bool
 						{
 								log_debug() << "ArsTracker active device changed, scheduling tracker info refresh port="
 																<< selected_device->portName;
-								schedule_ars_tracker_active_device_refresh(selected_device->portName);
+								schedule_ars_tracker_active_device_refresh(
+										selected_device->portName,
+										auto_selected || selected_device->reconnecting);
 						}
 				}
-		}
-		else
-		{
-				refresh_ars_tracker_device_logs_view(selected_device);
 		}
 
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
@@ -7203,23 +7232,22 @@ ars_tracker_device_t *plugin_mcumgr::persistent_ars_tracker_refresh_device()
 		return nullptr;
 }
 
-void plugin_mcumgr::schedule_ars_tracker_active_device_refresh(const QString &port_name)
+void plugin_mcumgr::schedule_ars_tracker_active_device_refresh(const QString &port_name,
+																															 bool delayed_after_connect)
 {
 		ars_tracker_pending_active_refresh_port = port_name.trimmed();
 		++ars_tracker_active_refresh_generation;
 		uint32_t refresh_generation = ars_tracker_active_refresh_generation;
-		ars_tracker_device_t *scheduled_device =
-				find_ars_tracker_device_by_port(ars_tracker_pending_active_refresh_port);
-		int refresh_delay_ms =
-				scheduled_device != nullptr && scheduled_device->reconnecting == true ? 1800 : 150;
+		int refresh_delay_ms = delayed_after_connect ? 2000 : 150;
 
-		if (scheduled_device != nullptr && scheduled_device->reconnecting == true)
+		if (delayed_after_connect)
 		{
-				log_debug() << "ArsTracker device" << scheduled_device->portName
-										<< "reconnected, delaying auto refresh to capture boot logs.";
+				log_debug() << "ArsTracker auto info refresh delayed after connect port="
+										<< ars_tracker_pending_active_refresh_port
+										<< "delayMs=" << refresh_delay_ms;
 		}
 
-		QTimer::singleShot(refresh_delay_ms, this, [this, refresh_generation]() {
+		QTimer::singleShot(refresh_delay_ms, this, [this, refresh_generation, delayed_after_connect]() {
 				if (refresh_generation != ars_tracker_active_refresh_generation)
 				{
 						return;
@@ -7242,7 +7270,8 @@ void plugin_mcumgr::schedule_ars_tracker_active_device_refresh(const QString &po
 
 				if (ars_tracker_info_loading)
 				{
-						schedule_ars_tracker_active_device_refresh(device->portName);
+						schedule_ars_tracker_active_device_refresh(device->portName,
+																									 delayed_after_connect);
 						return;
 				}
 
@@ -7252,7 +7281,10 @@ void plugin_mcumgr::schedule_ars_tracker_active_device_refresh(const QString &po
 				log_debug() << "ArsTracker active device changed, tracker info refresh started port="
 										<< device->portName;
 				QString error_message;
-				if (start_ars_tracker_info_refresh(&error_message) == false &&
+				if (start_ars_tracker_info_refresh(
+								&error_message,
+								delayed_after_connect ? ARS_TRACKER_INFO_REFRESH_AUTO_AFTER_CONNECT :
+																			 ARS_TRACKER_INFO_REFRESH_INTERNAL) == false &&
 						error_message.isEmpty() == false)
 				{
 						log_warning() << "ArsTracker active device changed, tracker info refresh failed port="
@@ -7271,14 +7303,64 @@ void plugin_mcumgr::populate_ars_tracker_serial_ports(
 				return;
 		}
 
-		bool was_popup_visible =
-				combo_ars_tracker_port->view() != nullptr && combo_ars_tracker_port->view()->isVisible();
+		QStringList new_item_texts;
+		QStringList new_item_ports;
+		if (placeholder_text.isEmpty() == false)
+		{
+				new_item_texts.append(placeholder_text);
+				new_item_ports.append(QString());
+		}
+		else
+		{
+				for (const ars_tracker_port_scan_result_t &port : ports)
+				{
+						new_item_texts.append(
+								ars_tracker_port_display_text(port.port_name, port.serial_number));
+						new_item_ports.append(port.port_name);
+				}
+		}
+
+		bool combo_unchanged = combo_ars_tracker_port->count() == new_item_texts.count();
+		if (combo_unchanged)
+		{
+				for (int i = 0; i < new_item_texts.count(); ++i)
+				{
+						if (combo_ars_tracker_port->itemText(i) != new_item_texts.at(i) ||
+								combo_ars_tracker_port->itemData(i, Qt::UserRole).toString() !=
+										new_item_ports.at(i))
+						{
+								combo_unchanged = false;
+								break;
+						}
+				}
+		}
+
+		bool popup_open = ars_tracker_combo_popup_is_open();
+		if (combo_unchanged)
+		{
+				if (popup_open)
+				{
+						log_debug() << "ArsTracker combo repopulate skipped because popup open";
+				}
+				log_debug() << "ArsTracker UI port combo unchanged, skip repopulate";
+				return;
+		}
+
+		if (popup_open)
+		{
+				ars_tracker_combo_repopulate_deferred = true;
+				log_debug() << "ArsTracker combo repopulate deferred until popup close";
+				log_debug() << "ArsTracker UI port combo update deferred because popup is open";
+				return;
+		}
+
+		ars_tracker_combo_repopulate_deferred = false;
 		QSignalBlocker blocker(combo_ars_tracker_port);
 		combo_ars_tracker_port->clear();
 		log_debug() << "ArsTracker UI updating port combo. ports count:" << ports.count()
 								<< "selected port:" << selected_port
 								<< "placeholder:" << placeholder_text
-								<< "popup visible:" << was_popup_visible;
+								<< "popup visible:" << popup_open;
 
 		if (placeholder_text.isEmpty() == false)
 		{
@@ -7319,17 +7401,6 @@ void plugin_mcumgr::populate_ars_tracker_serial_ports(
 								<< combo_ars_tracker_port->count() << "current index:"
 								<< combo_ars_tracker_port->currentIndex() << "current data:"
 								<< combo_ars_tracker_port->currentData(Qt::UserRole).toString();
-
-		if (was_popup_visible == true && placeholder_text.isEmpty() == false)
-		{
-				combo_ars_tracker_port->hidePopup();
-				combo_ars_tracker_port->show_popup_without_refresh();
-		}
-		else if (was_popup_visible == true && ports.count() > 1)
-		{
-				combo_ars_tracker_port->hidePopup();
-				combo_ars_tracker_port->show_popup_without_refresh();
-		}
 }
 
 void plugin_mcumgr::start_ars_tracker_port_scan()
@@ -7977,29 +8048,8 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 										});
 						connect(device->transport, &smp_uart_auterm::non_smp_uart_data_received, this,
 										[this, persistent_port_name](const QByteArray &data) {
-												log_debug() << "ArsTracker persistent device" << persistent_port_name
-																				<< "received non-SMP UART bytes" << data.size();
-												ars_tracker_device_t *persistent_device =
-														find_ars_tracker_device_by_port(persistent_port_name);
-												if (persistent_device == nullptr)
-												{
-														return;
-												}
-												log_debug() << "ArsTracker persistent device log bytes port="
-																				<< persistent_port_name << "bytes="
-																				<< data.size() << "active="
-																				<< persistent_device->active;
-												buffer_ars_tracker_device_log(persistent_device, data);
-												if (persistent_device->active == true)
-												{
-														log_debug() << "ArsTracker device log appended port="
-																				<< persistent_port_name << "bytes=" << data.size();
-												}
-												else
-												{
-														log_debug() << "ArsTracker device log ignored for inactive port="
-																				<< persistent_port_name;
-												}
+												handle_ars_tracker_persistent_non_smp_bytes(
+														persistent_port_name, data);
 										});
 
 						ars_tracker_scan_serial_port = nullptr;
@@ -8303,7 +8353,14 @@ bool plugin_mcumgr::ars_tracker_tab_is_active() const
 		return selector_tab_root != nullptr && selector_tab_root->currentWidget() == tab_ars_tracker;
 }
 
-bool plugin_mcumgr::start_ars_tracker_info_refresh(QString *error_message)
+bool plugin_mcumgr::ars_tracker_combo_popup_is_open() const
+{
+		return combo_ars_tracker_port != nullptr && combo_ars_tracker_port->view() != nullptr &&
+					 combo_ars_tracker_port->view()->isVisible();
+}
+
+bool plugin_mcumgr::start_ars_tracker_info_refresh(
+		QString *error_message, ars_tracker_info_refresh_source_t source)
 {
 		if (error_message != nullptr)
 		{
@@ -8355,6 +8412,12 @@ bool plugin_mcumgr::start_ars_tracker_info_refresh(QString *error_message)
 								*error_message = backend_error;
 						}
 						return false;
+				}
+
+				if (source == ARS_TRACKER_INFO_REFRESH_MANUAL)
+				{
+						log_debug() << "ArsTracker manual info refresh started immediately port="
+												<< device->portName;
 				}
 
 				log_debug() << "ArsTracker persistent tracker info refresh started port="
@@ -8677,7 +8740,8 @@ void plugin_mcumgr::maybe_auto_refresh_ars_tracker()
 void plugin_mcumgr::on_btn_ars_tracker_info_refresh_clicked()
 {
 		QString backend_error;
-		if (start_ars_tracker_info_refresh(&backend_error) == false)
+		if (start_ars_tracker_info_refresh(&backend_error,
+																			 ARS_TRACKER_INFO_REFRESH_MANUAL) == false)
 		{
 				if (backend_error.isEmpty() == false)
 				{
@@ -9072,7 +9136,6 @@ void plugin_mcumgr::append_ars_tracker_device_log(const QByteArray &data)
 				return;
 		}
 
-		log_debug() << "ArsTracker device logs appended bytes:" << data.size();
 		if (text_ars_tracker_device_logs == nullptr)
 		{
 				return;
@@ -9115,6 +9178,27 @@ void plugin_mcumgr::refresh_ars_tracker_device_logs_view(ars_tracker_device_t *d
 								<< text_ars_tracker_device_logs->toPlainText().length();
 }
 
+void plugin_mcumgr::handle_ars_tracker_persistent_non_smp_bytes(const QString &port_name,
+																																const QByteArray &data)
+{
+		if (data.isEmpty())
+		{
+				return;
+		}
+
+		log_debug() << "ArsTracker persistent non-SMP bytes received port=" << port_name
+								<< "bytes=" << data.size();
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port_name);
+		if (device == nullptr)
+		{
+				log_debug() << "ArsTracker non-SMP bytes dropped: device not found for port="
+										<< port_name;
+				return;
+		}
+
+		buffer_ars_tracker_device_log(device, data);
+}
+
 void plugin_mcumgr::buffer_ars_tracker_device_log(ars_tracker_device_t *device, const QByteArray &data)
 {
 		if (device == nullptr || data.isEmpty())
@@ -9137,18 +9221,24 @@ void plugin_mcumgr::buffer_ars_tracker_device_log(ars_tracker_device_t *device, 
 		}
 
 		bool active = device->active == true;
-		log_debug() << "ArsTracker device log buffered port=" << device->portName
-								<< "bytes=" << data.size() << "totalBytes=" << device->deviceLogBuffer.size()
-								<< "active=" << active;
-
 		if (active == true)
 		{
+				log_debug() << "ArsTracker device log appended port=" << device->portName
+										<< "bytes=" << data.size() << "totalBytes="
+										<< device->deviceLogBuffer.size() << "active=" << active;
 				append_ars_tracker_device_log(data);
 				if (text_ars_tracker_device_logs != nullptr)
 				{
-						log_debug() << "ArsTracker device log append port=" << device->portName
-														<< "appendedBytes=" << data.size();
+						log_debug() << "ArsTracker device log view append active port="
+														<< device->portName << "chars="
+														<< QString::fromUtf8(data).length();
 				}
+		}
+		else
+		{
+				log_debug() << "ArsTracker device log buffered inactive port=" << device->portName
+										<< "bytes=" << data.size() << "totalBytes="
+										<< device->deviceLogBuffer.size();
 		}
 }
 

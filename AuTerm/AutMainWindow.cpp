@@ -2407,10 +2407,14 @@ void AutMainWindow::OpenDevice(bool from_plugin)
 				ui->label_SpeedConn->setText(ui->statusBar->currentMessage());
 #endif
 
-				//Switch to Terminal tab if not on terminal or speed testing tab
-				if (from_plugin == false && ui->selector_Tab->currentIndex() != ui->selector_Tab->indexOf(ui->tab_Term) && ui->selector_Tab->currentIndex() != ui->selector_Tab->indexOf(ui->tab_SpeedTest))
+				int term_tab_index = ui->selector_Tab->indexOf(ui->tab_Term);
+
+				// Switch to Terminal tab only when it is still visible in the UI.
+				if (from_plugin == false && term_tab_index >= 0 &&
+						ui->selector_Tab->currentIndex() != term_tab_index &&
+						ui->selector_Tab->currentIndex() != ui->selector_Tab->indexOf(ui->tab_SpeedTest))
 				{
-						ui->selector_Tab->setCurrentIndex(ui->selector_Tab->indexOf(ui->tab_Term));
+						ui->selector_Tab->setCurrentIndex(term_tab_index);
 				}
 
 				//Disable read-only mode
@@ -2623,15 +2627,7 @@ void AutMainWindow::apply_main_tab_filter()
 		{
 				QWidget *page = tabs->widget(i);
 				QString object_name = page != nullptr ? page->objectName() : QString();
-				QString tab_text = tabs->tabText(i);
-
-				bool keep_tab =
-						page == ui->tab_Term ||
-						object_name == "tab" ||
-						object_name == "tab_ars_tracker" ||
-						tab_text == "Terminal" ||
-						tab_text == "MCUmgr" ||
-						tab_text == "ArsTracker";
+				bool keep_tab = object_name == "tab_ars_tracker";
 
 				if (keep_tab == false)
 				{
@@ -2644,7 +2640,7 @@ void AutMainWindow::apply_main_tab_filter()
 				QWidget *page = tabs->widget(i);
 				QString object_name = page != nullptr ? page->objectName() : QString();
 
-				if (object_name == "tab_ars_tracker" || tabs->tabText(i) == "ArsTracker")
+				if (object_name == "tab_ars_tracker" || tabs->tabText(i) == "Tracker Inspector")
 				{
 						tabs->setCurrentIndex(i);
 						return;

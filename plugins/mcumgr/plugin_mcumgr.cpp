@@ -2788,7 +2788,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		lbl_ars_tracker_progress->setText(
 				QCoreApplication::translate("Form", "Files finished: 0/0", nullptr));
 		lbl_ars_tracker_status->setText(
-				QCoreApplication::translate("Form", "Open ArsTracker tab or refresh tracker info.", nullptr));
+				QCoreApplication::translate("Form", "Open Tracker Inspector tab or refresh tracker info.", nullptr));
 		//    tabWidget->setTabText(tabWidget->indexOf(tab), QCoreApplication::translate("Form",
 		//    "MCUmgr", nullptr));
 		label_7->setText(QCoreApplication::translate("Form", "Hash:", nullptr));
@@ -2805,7 +2805,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 
 		// Add code
 		tabWidget_orig->addTab(tab, QString("MCUmgr"));
-		tabWidget_orig->addTab(tab_ars_tracker, QString("ArsTracker"));
+		tabWidget_orig->addTab(tab_ars_tracker, QString("Tracker Inspector"));
 
 		// Signals
 		connect(this, SIGNAL(plugin_set_status(bool, bool, bool*)), parent_window,

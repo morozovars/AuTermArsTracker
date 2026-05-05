@@ -2627,7 +2627,7 @@ void AutMainWindow::apply_main_tab_filter()
 		{
 				QWidget *page = tabs->widget(i);
 				QString object_name = page != nullptr ? page->objectName() : QString();
-				bool keep_tab = object_name == "tab_ars_tracker";
+				bool keep_tab = object_name == "tab_ars_tracker" || object_name == "tab_ars_trackers";
 
 				if (keep_tab == false)
 				{

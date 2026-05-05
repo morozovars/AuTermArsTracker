@@ -18,6 +18,8 @@ SOURCES += \
     ../../AuTerm/AutScrollEdit.cpp \
     ../../AuTerm/AutEscape.cpp \
     ars_tracker_backend.cpp \
+    ars_tracker_multi_worker.cpp \
+    ars_tracker_scan_worker.cpp \
     ars_tracker_parser.cpp \
     crc16.cpp \
     debug_logger.cpp \
@@ -42,6 +44,8 @@ HEADERS += \
     ../../AuTerm/AutScrollEdit.h \
     ../../AuTerm/AutEscape.h \
     ars_tracker_backend.h \
+    ars_tracker_multi_worker.h \
+    ars_tracker_scan_worker.h \
     ars_tracker_parser.h \
     crc16.h \
     debug_logger.h \

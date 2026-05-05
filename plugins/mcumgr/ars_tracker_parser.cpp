@@ -162,6 +162,102 @@ bool ars_tracker_parser::parse_meas_ls_output(const QString &shell_output,
     return true;
 }
 
+bool ars_tracker_parser::is_supported_ars_serial(const QString &serial_number,
+                                                 QString *error_message)
+{
+    QString trimmed_serial = serial_number.trimmed();
+    QStringList serial_parts = trimmed_serial.split('.');
+
+    if (trimmed_serial.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Decoded serial is empty.");
+        }
+
+        return false;
+    }
+
+    if (serial_parts.length() < 4 || serial_parts.at(0) != "ARS" || serial_parts.at(1) != "1")
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Decoded serial format is not a supported ArsTracker serial.");
+        }
+
+        return false;
+    }
+
+    QString side_field = serial_parts.at(2).trimmed();
+    QString unique_field = serial_parts.last().trimmed();
+    if ((side_field != "1" && side_field != "2") || unique_field.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Decoded serial side or unique field is invalid.");
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+QString ars_tracker_parser::normalize_tracker_side_token(const QString &tracker_type)
+{
+    QString token = tracker_type.trimmed().toUpper();
+
+    if (token.startsWith("R"))
+    {
+        return QString("R");
+    }
+
+    if (token.startsWith("L"))
+    {
+        return QString("L");
+    }
+
+    return QString();
+}
+
+QString ars_tracker_parser::infer_tracker_side_from_serial(const QString &serial_number,
+                                                           bool *used_serial_fallback)
+{
+    if (used_serial_fallback != nullptr)
+    {
+        *used_serial_fallback = false;
+    }
+
+    QStringList serial_parts = serial_number.trimmed().split('.');
+    if (serial_parts.length() < 4)
+    {
+        return QString();
+    }
+
+    QString side_field = serial_parts.at(2).trimmed();
+    if (side_field == "1")
+    {
+        if (used_serial_fallback != nullptr)
+        {
+            *used_serial_fallback = true;
+        }
+
+        return QString("R");
+    }
+
+    if (side_field == "2")
+    {
+        if (used_serial_fallback != nullptr)
+        {
+            *used_serial_fallback = true;
+        }
+
+        return QString("L");
+    }
+
+    return QString();
+}
+
 bool ars_tracker_parser::parse_param_sn_output(const QString &shell_output, QString *decoded_serial,
                                                QString *error_message)
 {

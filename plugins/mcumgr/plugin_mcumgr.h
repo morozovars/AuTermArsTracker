@@ -34,7 +34,9 @@
 #include <QCborArray>
 #include <QCborMap>
 #include <QCborValue>
+#include <QThread>
 #include "AutPlugin.h"
+#include "ars_tracker_multi_worker.h"
 #include "smp_processor.h"
 #include "smp_group.h"
 #include "smp_uart_auterm.h"
@@ -52,6 +54,7 @@
 #include "ars_tracker_backend.h"
 
 class QSerialPort;
+class ars_tracker_scan_worker;
 
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
 #include "smp_udp.h"
@@ -187,8 +190,10 @@ struct ars_tracker_device_t {
     QString serialNumber;
     QString displayName;
     QString side;
+    QString lastConnectionError;
     bool connected = false;
     bool identified = false;
+    bool missing = false;
     bool active = false;
     bool reconnecting = false;
     ars_tracker_info_t info;
@@ -398,8 +403,37 @@ private slots:
     void handle_ars_tracker_persistent_img_progress(uint8_t user_data, uint8_t percent);
     void handle_ars_tracker_persistent_os_status(uint8_t user_data, group_status status,
                                                  QString error_string);
+    void on_btn_ars_trackers_scan_clicked();
+    void on_btn_ars_trackers_connect_all_clicked();
+    void on_btn_ars_trackers_disconnect_all_clicked();
+    void handle_ars_tracker_scan_worker_started(int total);
+    void handle_ars_tracker_scan_worker_port_started(const QString &port_name, int index, int total);
+    void handle_ars_tracker_scan_worker_port_opened(const QString &port_name);
+    void handle_ars_tracker_scan_worker_port_found(const QString &port_name,
+                                                   const QString &serial_number,
+                                                   const QString &response_text);
+    void handle_ars_tracker_scan_worker_port_failed(const QString &port_name,
+                                                    const QString &reason);
+    void handle_ars_tracker_scan_worker_finished();
+    void handle_ars_tracker_scan_worker_cancelled();
+    void handle_ars_tracker_scan_worker_debug_message(const QString &message);
+    void handle_ars_tracker_scan_worker_warning_message(const QString &message);
+    void handle_ars_tracker_multi_probe_finished(const QString &port_name, bool matched,
+                                                 const ars_tracker_multi_tracker_info &info);
+    void handle_ars_tracker_multi_tracker_updated(const ars_tracker_multi_tracker_info &info);
+    void handle_ars_tracker_multi_worker_finished(const QString &port_name);
 
 private:
+    enum ars_tracker_scan_probe_stage_t : uint8_t {
+        ARS_TRACKER_SCAN_PROBE_STAGE_IDLE = 0,
+        ARS_TRACKER_SCAN_PROBE_STAGE_OPENING,
+        ARS_TRACKER_SCAN_PROBE_STAGE_OPENED,
+        ARS_TRACKER_SCAN_PROBE_STAGE_COMMAND_SCHEDULED,
+        ARS_TRACKER_SCAN_PROBE_STAGE_COMMAND_SENT,
+        ARS_TRACKER_SCAN_PROBE_STAGE_WAITING_RESPONSE,
+        ARS_TRACKER_SCAN_PROBE_STAGE_COMPLETED,
+    };
+
     enum ars_tracker_info_refresh_source_t : uint8_t {
         ARS_TRACKER_INFO_REFRESH_INTERNAL = 0,
         ARS_TRACKER_INFO_REFRESH_AUTO_AFTER_CONNECT,
@@ -426,6 +460,24 @@ private:
     bool start_ars_tracker_firmware_upload(QString *error_message = nullptr);
     void maybe_auto_refresh_ars_tracker();
     bool ars_tracker_combo_popup_is_open() const;
+    ars_tracker_multi_worker_settings_t current_ars_tracker_multi_worker_settings() const;
+    void update_ars_tracker_multi_status(const QString &text);
+    void refresh_ars_tracker_multi_table_from_devices();
+    void refresh_ars_tracker_multi_table();
+    void schedule_ars_tracker_multi_table_refresh(bool immediate = false);
+    void update_ars_tracker_multi_controls();
+    QString format_ars_tracker_multi_tracker_cell(
+            const ars_tracker_multi_tracker_info &info) const;
+    void rebuild_ars_tracker_scan_results_from_devices();
+    void start_shared_ars_tracker_connect_all();
+    void continue_shared_ars_tracker_connect_all();
+    QString ars_tracker_device_connection_status(const ars_tracker_device_t &device) const;
+    QString ars_tracker_device_connection_error(const ars_tracker_device_t &device) const;
+    void start_ars_tracker_multi_scan(bool connect_after_scan = false);
+    void start_ars_tracker_multi_connect_all();
+    void stop_ars_tracker_multi_all();
+    void start_ars_tracker_multi_worker_for_port(const QString &port_name, bool hold_connection);
+    void cleanup_ars_tracker_multi_worker(const QString &port_name);
     QString ars_tracker_selected_port_name() const;
     bool ars_tracker_has_selected_port() const;
     bool ars_tracker_combo_has_selectable_port() const;
@@ -491,6 +543,8 @@ private:
                                            const QString &selected_port,
                                            const QString &placeholder_text = QString());
     void start_ars_tracker_port_scan();
+    void start_ars_tracker_port_scan_worker(const QStringList &ports);
+    void cleanup_ars_tracker_port_scan_worker();
     void finish_ars_tracker_port_scan(const QString &status_message);
     void begin_next_ars_tracker_port_probe();
     void send_ars_tracker_port_probe_command();
@@ -818,7 +872,9 @@ private:
     QSpacerItem *horizontalSpacer_24;
     QTabWidget *selector_tab_root;
     QWidget *tab_ars_tracker;
+    QWidget *tab_ars_trackers;
     QGridLayout *gridLayout_ars_tracker;
+    QGridLayout *gridLayout_ars_trackers;
     QFrame *frame_ars_tracker_connection;
     QGridLayout*    gridLayout_ars_tracker_connection;
     QFrame *frame_ars_tracker_info;
@@ -890,6 +946,12 @@ private:
     QPushButton *btn_ars_tracker_cancel;
     QLabel *lbl_ars_tracker_progress;
     QLabel *lbl_ars_tracker_status;
+    QLabel *label_ars_trackers_summary;
+    QTableWidget *table_ars_trackers;
+    QPushButton *btn_ars_trackers_scan;
+    QPushButton *btn_ars_trackers_connect_all;
+    QPushButton *btn_ars_trackers_disconnect_all;
+    QLabel *lbl_ars_trackers_status;
     QSpacerItem *verticalSpacer_ars_tracker_status;
     QWidget *tab_2;
     QWidget *verticalLayoutWidget;
@@ -997,6 +1059,10 @@ private:
     smp_group_shell_mgmt *ars_tracker_scan_shell_mgmt;
     QList<ars_tracker_port_scan_result_t> ars_tracker_scan_results;
     QList<ars_tracker_device_t> ars_tracker_devices;
+    QHash<QString, ars_tracker_multi_tracker_info> ars_tracker_multi_devices;
+    QHash<QString, ars_tracker_multi_worker*> ars_tracker_multi_workers;
+    QHash<QString, QThread*> ars_tracker_multi_threads;
+    QHash<QString, bool> ars_tracker_multi_worker_hold_mode;
     QString ars_tracker_persistent_info_refresh_port;
     QString ars_tracker_persistent_session_operation_port;
     QString ars_tracker_persistent_export_port;
@@ -1011,25 +1077,51 @@ private:
     QStringList ars_tracker_runtime_known_ports;
     QTimer *ars_tracker_runtime_port_monitor_timer = nullptr;
     QElapsedTimer ars_tracker_last_scan_timer;
+    bool ars_tracker_auto_probe_enabled = false;
+    bool ars_tracker_has_completed_scan = false;
     bool ars_tracker_port_scan_debounce_pending = false;
     bool ars_tracker_combo_repopulate_deferred = false;
+    bool ars_tracker_multi_scan_active = false;
+    bool ars_tracker_multi_connect_all_after_scan = false;
     QString ars_tracker_pending_scan_source;
     QStringList ars_tracker_pending_scan_ports;
     QString ars_tracker_scan_request_source;
     QStringList ars_tracker_scan_preferred_ports;
     bool ars_tracker_scan_ignore_port_backoff = false;
+    bool ars_tracker_scan_pending = false;
+    QString ars_tracker_scan_pending_request_source;
+    QStringList ars_tracker_scan_pending_preferred_ports;
+    bool ars_tracker_scan_pending_ignore_cooldown = true;
+    bool ars_tracker_scan_pending_ignore_backoff = false;
     QStringList ars_tracker_scan_pending_ports;
+    bool ars_tracker_scan_finished_after_device_removal = false;
     QString ars_tracker_scan_selected_port;
     QString ars_tracker_scan_current_port;
+    QString ars_tracker_scan_claim_target_port;
+    QString ars_tracker_scan_last_probe_failure_reason;
     QElapsedTimer ars_tracker_scan_probe_started_at;
+    QElapsedTimer ars_tracker_scan_probe_command_sent_at;
     qint64 ars_tracker_scan_pre_identification_log_bytes = 0;
+    quint64 ars_tracker_scan_probe_generation = 0;
+    quint64 ars_tracker_scan_active_probe_id = 0;
     int ars_tracker_scan_port_index = 0;
     bool ars_tracker_scan_main_serial_open = false;
+    QThread *ars_tracker_scan_probe_thread = nullptr;
+    QThread *ars_tracker_port_scan_worker_thread = nullptr;
+    ars_tracker_scan_worker *ars_tracker_port_scan_worker = nullptr;
+    ars_tracker_scan_probe_stage_t ars_tracker_scan_probe_stage =
+            ARS_TRACKER_SCAN_PROBE_STAGE_IDLE;
     bool ars_tracker_scan_probe_active = false;
     bool ars_tracker_scan_probe_finished = false;
     bool ars_tracker_scan_param_sn_sent = false;
     bool ars_tracker_scan_probe_backoff_current_port = false;
     bool ars_tracker_scan_command_started = false;
+    bool ars_tracker_scan_claim_matched_device = false;
+    bool ars_tracker_shared_connect_all_active = false;
+    QStringList ars_tracker_shared_connect_all_pending_ports;
+    QString ars_tracker_shared_connect_all_current_port;
+    bool ars_tracker_multi_table_refresh_scheduled = false;
+    int ars_tracker_multi_pending_probes = 0;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

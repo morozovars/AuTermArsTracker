@@ -36,6 +36,10 @@ struct bad_blocks_t {
 bool parse_meas_ls_output(const QString &shell_output,
                           QList<ars_tracker_session_t> *sessions,
                           QString *error_message);
+bool is_supported_ars_serial(const QString &serial_number, QString *error_message);
+QString normalize_tracker_side_token(const QString &tracker_type);
+QString infer_tracker_side_from_serial(const QString &serial_number,
+                                       bool *used_serial_fallback = nullptr);
 bool parse_param_sn_output(const QString &shell_output, QString *decoded_serial,
                            QString *error_message);
 bool parse_param_bid_output(const QString &shell_output, QString *board_id,

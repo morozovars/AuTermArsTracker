@@ -23,6 +23,7 @@
 #ifndef SKIPPLUGIN_LOGGER
 
 #include "debug_logger.h"
+#include <QMutexLocker>
 
 debug_logger::debug_logger(QObject *parent)
     : QIODevice{parent}
@@ -43,6 +44,7 @@ debug_logger::debug_logger(QObject *parent)
 
 debug_logger::~debug_logger()
 {
+    QMutexLocker locker(&state_mutex);
     if (plugin_active == true)
     {
         logger_pointer = nullptr;
@@ -64,16 +66,23 @@ qint64 debug_logger::writeData(const char *data, qint64 len)
         return len;
     }
 
-    if (plugin_active == true)
+    logger_options_snapshot_t snapshot = options_snapshot();
+    bool plugin_is_active = false;
     {
-        emit logger_log(logger_type, logger_title, message);
+        QMutexLocker locker(&state_mutex);
+        plugin_is_active = plugin_active;
     }
 
-    QByteArray category = logger_title.toUtf8();
-    QMessageLogger message_logger(logger_file, logger_line, logger_function,
+    if (plugin_is_active == true)
+    {
+        emit logger_log(snapshot.type, snapshot.title, message);
+    }
+
+    QByteArray category = snapshot.title.toUtf8();
+    QMessageLogger message_logger(snapshot.file, snapshot.line, snapshot.function,
                                   category.constData());
 
-    switch (logger_type)
+    switch (snapshot.type)
     {
     case log_level_error:
         message_logger.critical().noquote() << message;
@@ -106,8 +115,11 @@ void debug_logger::find_logger_plugin(const QObject *main_window)
         return;
     }
 
-    logger_pointer = logger.object;
-    plugin_active = true;
+    {
+        QMutexLocker locker(&state_mutex);
+        logger_pointer = logger.object;
+        plugin_active = true;
+    }
 
     connect(this, SIGNAL(logger_log(log_level_types,QString,QString)), logger_pointer, SLOT(log_message(log_level_types,QString,QString)));
     connect(this, SIGNAL(logger_set_visible(bool)), logger_pointer, SLOT(set_enabled(bool)));
@@ -116,11 +128,24 @@ void debug_logger::find_logger_plugin(const QObject *main_window)
 void debug_logger::set_options(QString title, log_level_types type, const char *file,
                                int line, const char *function)
 {
+    QMutexLocker locker(&state_mutex);
     logger_title = title;
     logger_type = type;
     logger_file = file;
     logger_line = line;
     logger_function = function;
+}
+
+debug_logger::logger_options_snapshot_t debug_logger::options_snapshot() const
+{
+    QMutexLocker locker(&state_mutex);
+    logger_options_snapshot_t snapshot;
+    snapshot.title = logger_title;
+    snapshot.type = logger_type;
+    snapshot.file = logger_file;
+    snapshot.line = logger_line;
+    snapshot.function = logger_function;
+    return snapshot;
 }
 
 #endif

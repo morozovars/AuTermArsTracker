@@ -27,6 +27,7 @@
 
 #ifndef SKIPPLUGIN_LOGGER
 #include <QIODevice>
+#include <QMutex>
 #include "../plugins/logger/plugin_logger.h"
 
 #define PLUGIN_NAME "mcumgr"
@@ -64,6 +65,19 @@ signals:
     void logger_set_visible(bool enabled);
 
 private:
+    struct logger_options_snapshot_t
+    {
+        QString title;
+        log_level_types type = log_level_debug;
+        const char *file = nullptr;
+        int line = 0;
+        const char *function = nullptr;
+    };
+
+    logger_options_snapshot_t options_snapshot() const;
+
+private:
+    mutable QMutex state_mutex;
     bool plugin_active;
     const QObject *logger_pointer;
     QString logger_title;

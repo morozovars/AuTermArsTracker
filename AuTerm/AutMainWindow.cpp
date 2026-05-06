@@ -2664,15 +2664,35 @@ void AutMainWindow::apply_main_tab_filter()
 								 << "widget=" << page;
 		}
 
+		int trackers_index = -1;
+		for (int i = 0; i < tabs->count(); ++i)
+		{
+				QWidget *page = tabs->widget(i);
+				QString object_name = page != nullptr ? page->objectName() : QString();
+				if (object_name == "tab_ars_trackers" || tabs->tabText(i) == "Trackers")
+				{
+						trackers_index = i;
+						break;
+				}
+		}
+		if (trackers_index > 0)
+		{
+				QWidget *trackers_page = tabs->widget(trackers_index);
+				QString trackers_title = tabs->tabText(trackers_index);
+				tabs->removeTab(trackers_index);
+				tabs->insertTab(0, trackers_page, trackers_title);
+				qDebug() << "Top tab order adjusted: Trackers moved to index 0";
+		}
+
 		for (int i = 0; i < tabs->count(); ++i)
 		{
 				QWidget *page = tabs->widget(i);
 				QString object_name = page != nullptr ? page->objectName() : QString();
 
-				if (object_name == "tab_ars_tracker" || tabs->tabText(i) == "Tracker Inspector")
+				if (object_name == "tab_ars_trackers" || tabs->tabText(i) == "Trackers")
 				{
 						tabs->setCurrentIndex(i);
-						qDebug() << "Default tab selected: Tracker Inspector index=" << i;
+						qDebug() << "Default tab selected: Trackers index=" << i;
 						return;
 				}
 		}

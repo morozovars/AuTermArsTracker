@@ -6378,23 +6378,18 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 
 		table_ars_trackers = new QTableWidget(tab_ars_trackers);
 		table_ars_trackers->setObjectName("table_ars_trackers");
-		table_ars_trackers->setColumnCount(7);
+		table_ars_trackers->setColumnCount(2);
 		table_ars_trackers->setRowCount(0);
 		table_ars_trackers->setEditTriggers(QAbstractItemView::NoEditTriggers);
-		table_ars_trackers->setSelectionBehavior(QAbstractItemView::SelectRows);
-		table_ars_trackers->setSelectionMode(QAbstractItemView::SingleSelection);
+		table_ars_trackers->setSelectionMode(QAbstractItemView::NoSelection);
 		table_ars_trackers->setAlternatingRowColors(true);
 		QStringList headers;
-		headers << "Pair ID"
-						<< "Right tracker"
-						<< "Right COM"
-						<< "Right state"
-						<< "Left tracker"
-						<< "Left COM"
-						<< "Left state";
+		headers << "Left trackers"
+						<< "Right trackers";
 		table_ars_trackers->setHorizontalHeaderLabels(headers);
 		table_ars_trackers->verticalHeader()->setVisible(false);
-		table_ars_trackers->horizontalHeader()->setStretchLastSection(true);
+		table_ars_trackers->horizontalHeader()->setStretchLastSection(false);
+		table_ars_trackers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 		gridLayout_ars_trackers->addWidget(table_ars_trackers, 1, 0, 1, 1);
 
 		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
@@ -6996,21 +6991,40 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				return;
 		}
 
-		struct paired_tracker_row_t {
-				QString pair_id = "-";
-				const ars_tracker_device_t *right = nullptr;
-				const ars_tracker_device_t *left = nullptr;
+		struct tracker_cell_view_t {
+				const ars_tracker_device_t *device = nullptr;
+				QString display_name;
+				QString port_name;
+				QString raw_status;
+				QString status_text;
+				QString status_color;
 		};
 
-		QHash<QString, paired_tracker_row_t> rows_by_pair;
-		int connected_count = 0;
-		int visible_devices = 0;
+		auto field_display_text = [](const ars_tracker_info_field_t &field) -> QString {
+				if (field.status == ARS_TRACKER_INFO_FIELD_ERROR)
+				{
+						return field.value.isEmpty() ? QString("Error: %1").arg(field.error) : field.value;
+				}
+				if (field.status == ARS_TRACKER_INFO_FIELD_LOADING)
+				{
+						return field.value.isEmpty() ? QString("Loading...") : field.value;
+				}
+				if (field.value.isEmpty() == false)
+				{
+						return field.value;
+				}
+				return "Not loaded";
+		};
+
+		QList<tracker_cell_view_t> left_items;
+		QList<tracker_cell_view_t> right_items;
 		QSet<QString> current_ports;
 		const QList<QSerialPortInfo> available_ports = QSerialPortInfo::availablePorts();
 		for (const QSerialPortInfo &info : available_ports)
 		{
 				current_ports.insert(info.portName().trimmed().toUpper());
 		}
+		int visible_devices = 0;
 
 		for (const ars_tracker_device_t &device : ars_tracker_devices)
 		{
@@ -7031,82 +7045,107 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 						continue;
 				}
 
-				QString pair_id = ars_tracker_pair_id_from_serial(device.serialNumber);
-				QString pair_key = pair_id.trimmed().isEmpty() ? QString("-") : pair_id;
-				paired_tracker_row_t row = rows_by_pair.value(pair_key);
-				row.pair_id = pair_key;
-
+				QString display_name = ars_tracker_device_display_text(device.serialNumber, device.portName);
+				QString raw_status = field_display_text(device.info.tracker_status);
+				ars_tracker_parsed_status_t parsed_status = parse_ars_tracker_status_text(raw_status);
+				tracker_cell_view_t item;
+				item.device = &device;
+				item.display_name = display_name;
+				item.port_name = port_name;
+				item.raw_status = raw_status;
+				item.status_text = QString("* ") + parsed_status.name;
+				item.status_color = QString("#%1").arg(parsed_status.color);
 				QString side = ars_tracker_side_label_from_serial_or_device(device);
 				if (side == "Right")
 				{
-						row.right = &device;
+						right_items.append(item);
 				}
-				else if (side == "Left")
+				else
 				{
-						row.left = &device;
+						left_items.append(item);
 				}
-				else if (row.right == nullptr)
-				{
-						row.right = &device;
-				}
-				else if (row.left == nullptr)
-				{
-						row.left = &device;
-				}
-				rows_by_pair.insert(pair_key, row);
 
 				++visible_devices;
-				++connected_count;
 		}
 
-		QStringList pair_ids = rows_by_pair.keys();
-		std::sort(pair_ids.begin(), pair_ids.end(), [](const QString &lhs, const QString &rhs) {
-				return QString::compare(lhs, rhs, Qt::CaseInsensitive) < 0;
-		});
+		auto by_display = [](const tracker_cell_view_t &lhs, const tracker_cell_view_t &rhs) {
+				return QString::compare(lhs.display_name, rhs.display_name, Qt::CaseInsensitive) < 0;
+		};
+		std::sort(left_items.begin(), left_items.end(), by_display);
+		std::sort(right_items.begin(), right_items.end(), by_display);
 
-		table_ars_trackers->setRowCount(pair_ids.count());
+		const int row_count = qMax(left_items.count(), right_items.count());
+		table_ars_trackers->clearContents();
+		table_ars_trackers->setRowCount(row_count);
+		table_ars_trackers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+		table_ars_trackers->verticalHeader()->setDefaultSectionSize(78);
+
+		auto make_tracker_cell_widget =
+				[this](const tracker_cell_view_t &item) -> QWidget * {
+				QWidget *cell = new QWidget(table_ars_trackers);
+				QVBoxLayout *layout = new QVBoxLayout(cell);
+				layout->setContentsMargins(6, 4, 6, 4);
+				layout->setSpacing(2);
+
+				QLabel *name_label = new QLabel(item.display_name, cell);
+				QFont bold_font = name_label->font();
+				bold_font.setBold(true);
+				name_label->setFont(bold_font);
+				layout->addWidget(name_label);
+
+				QLabel *port_label = new QLabel(item.port_name, cell);
+				layout->addWidget(port_label);
+
+				QLabel *status_label = new QLabel(item.status_text, cell);
+				status_label->setStyleSheet(QString("color: %1;").arg(item.status_color));
+				layout->addWidget(status_label);
+				layout->addStretch(1);
+
+				return cell;
+		};
+
 		int row_index = 0;
-		for (const QString &pair_id : pair_ids)
+		for (; row_index < row_count; ++row_index)
 		{
-				const paired_tracker_row_t row = rows_by_pair.value(pair_id);
-				const ars_tracker_device_t *right = row.right;
-				const ars_tracker_device_t *left = row.left;
-				QString right_serial = right != nullptr ? right->serialNumber : "-";
-				QString right_port = right != nullptr ? right->portName : "-";
-				QString right_state = right != nullptr ? ars_tracker_connection_state_text(*right) : "-";
-				QString left_serial = left != nullptr ? left->serialNumber : "-";
-				QString left_port = left != nullptr ? left->portName : "-";
-				QString left_state = left != nullptr ? ars_tracker_connection_state_text(*left) : "-";
-
-				table_ars_trackers->setItem(row_index, 0, new QTableWidgetItem(pair_id));
-				table_ars_trackers->setItem(row_index, 1, new QTableWidgetItem(right_serial));
-				table_ars_trackers->setItem(row_index, 2, new QTableWidgetItem(right_port));
-				table_ars_trackers->setItem(row_index, 3, new QTableWidgetItem(right_state));
-				table_ars_trackers->setItem(row_index, 4, new QTableWidgetItem(left_serial));
-				table_ars_trackers->setItem(row_index, 5, new QTableWidgetItem(left_port));
-				table_ars_trackers->setItem(row_index, 6, new QTableWidgetItem(left_state));
-
-				log_debug() << "Trackers row: pair=" << pair_id
-										<< "rightSerial=" << right_serial
-										<< "rightPort=" << right_port
-										<< "rightState=" << right_state
-										<< "leftSerial=" << left_serial
-										<< "leftPort=" << left_port
-										<< "leftState=" << left_state;
-				++row_index;
+				if (row_index < left_items.count())
+				{
+						const tracker_cell_view_t &item = left_items[row_index];
+						table_ars_trackers->setCellWidget(row_index, 0, make_tracker_cell_widget(item));
+						log_debug() << "Trackers item: side=Left"
+												<< "row=" << row_index
+												<< "display=" << item.display_name
+												<< "port=" << item.port_name
+												<< "statusRaw=" << item.raw_status
+												<< "statusText=" << item.status_text;
+				}
+				if (row_index < right_items.count())
+				{
+						const tracker_cell_view_t &item = right_items[row_index];
+						table_ars_trackers->setCellWidget(row_index, 1, make_tracker_cell_widget(item));
+						log_debug() << "Trackers item: side=Right"
+												<< "row=" << row_index
+												<< "display=" << item.display_name
+												<< "port=" << item.port_name
+												<< "statusRaw=" << item.raw_status
+												<< "statusText=" << item.status_text;
+				}
 		}
 
 		if (lbl_ars_trackers_status != nullptr)
 		{
 				lbl_ars_trackers_status->setText(
-						connected_count > 0 ?
-								QString("Connected trackers: %1").arg(connected_count) :
+						visible_devices > 0 ?
+								QString("Connected trackers: %1").arg(visible_devices) :
 								QString("No connected trackers"));
 		}
-		log_debug() << "Trackers table refresh: devices=" << ars_tracker_devices.count()
+		log_debug() << "Trackers table layout refresh: left=" << left_items.count()
+								<< "right=" << right_items.count()
+								<< "rows=" << row_count
+								<< "visibleDevices=" << visible_devices;
+		log_debug() << "Trackers table refresh: sourceDevices=" << ars_tracker_devices.count()
 								<< "visibleDevices=" << visible_devices
-								<< "pairs=" << pair_ids.count()
-								<< "connected=" << connected_count;
+								<< "pairs=0"
+								<< "connected=" << visible_devices;
 		ars_trackers_table_dirty = false;
 }
 

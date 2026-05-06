@@ -2627,12 +2627,41 @@ void AutMainWindow::apply_main_tab_filter()
 		{
 				QWidget *page = tabs->widget(i);
 				QString object_name = page != nullptr ? page->objectName() : QString();
-				bool keep_tab = object_name == "tab_ars_tracker";
+				QString title = tabs->tabText(i);
+				bool keep_tab = object_name == "tab_ars_tracker" ||
+												object_name == "tab_ars_trackers" ||
+												title == "Tracker Inspector" ||
+												title == "Trackers";
 
-				if (keep_tab == false)
+				if (keep_tab)
 				{
+						qDebug() << "Top tab kept by filter:"
+										 << "index=" << i
+										 << "title=" << title
+										 << "objectName=" << object_name;
+				}
+				else
+				{
+						qDebug() << "Top tab removed by filter:"
+										 << "index=" << i
+										 << "title=" << title
+										 << "objectName=" << object_name
+										 << "widget=" << page;
 						tabs->removeTab(i);
 				}
+		}
+
+		qDebug() << "Top-level tabs after filter:";
+		for (int i = 0; i < tabs->count(); ++i)
+		{
+				QWidget *page = tabs->widget(i);
+				QString object_name = page != nullptr ? page->objectName() : QString("<null>");
+				qDebug() << "index=" << i
+								 << "title=" << tabs->tabText(i)
+								 << "objectName=" << object_name
+								 << "visible=" << (page != nullptr ? page->isVisible() : false)
+								 << "enabled=" << tabs->isTabEnabled(i)
+								 << "widget=" << page;
 		}
 
 		for (int i = 0; i < tabs->count(); ++i)
@@ -2643,6 +2672,7 @@ void AutMainWindow::apply_main_tab_filter()
 				if (object_name == "tab_ars_tracker" || tabs->tabText(i) == "Tracker Inspector")
 				{
 						tabs->setCurrentIndex(i);
+						qDebug() << "Default tab selected: Tracker Inspector index=" << i;
 						return;
 				}
 		}

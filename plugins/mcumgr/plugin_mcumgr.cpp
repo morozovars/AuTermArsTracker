@@ -2806,6 +2806,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		// Add code
 		tabWidget_orig->addTab(tab, QString("MCUmgr"));
 		tabWidget_orig->addTab(tab_ars_tracker, QString("Tracker Inspector"));
+		setup_ars_trackers_tab(tabWidget_orig);
 
 		// Signals
 		connect(this, SIGNAL(plugin_set_status(bool, bool, bool*)), parent_window,
@@ -3063,6 +3064,10 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		});
 		connect(btn_ars_tracker_cancel, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_cancel_clicked()));
+		connect(btn_ars_trackers_scan_connect, SIGNAL(clicked()), this,
+						SLOT(on_btn_ars_trackers_scan_connect_clicked()));
+		connect(btn_ars_trackers_disconnect_all, SIGNAL(clicked()), this,
+						SLOT(on_btn_ars_trackers_disconnect_all_clicked()));
 		connect(ars_tracker, &ars_tracker_backend::status_message, this,
 						&plugin_mcumgr::ars_tracker_status_message);
 		connect(ars_tracker, &ars_tracker_backend::tracker_info_changed, this,
@@ -3180,6 +3185,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 																		"No ArsTracker devices found");
 		ars_tracker_runtime_port_monitor_timer->start();
 		request_ars_tracker_port_scan("startup", true, true);
+		schedule_ars_trackers_table_refresh("startup", false);
 		set_ars_tracker_controls_loading(false);
 		ars_tracker_info_changed(ars_tracker->tracker_info());
 
@@ -6340,6 +6346,113 @@ void plugin_mcumgr::on_btn_cancel_clicked()
 		processor->cancel();
 }
 
+void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
+{
+		if (tabWidget_orig == nullptr)
+		{
+				return;
+		}
+		log_debug() << QString("Trackers tab setup: tabWidget=%1 beforeCount=%2")
+											 .arg(reinterpret_cast<quintptr>(tabWidget_orig), 0, 16)
+											 .arg(tabWidget_orig->count());
+
+		tab_ars_trackers = new QWidget(tabWidget_orig);
+		tab_ars_trackers->setObjectName("tab_ars_trackers");
+		gridLayout_ars_trackers = new QGridLayout(tab_ars_trackers);
+		gridLayout_ars_trackers->setObjectName("gridLayout_ars_trackers");
+		gridLayout_ars_trackers->setContentsMargins(6, 6, 6, 6);
+		gridLayout_ars_trackers->setSpacing(4);
+
+		QHBoxLayout *buttons_layout = new QHBoxLayout();
+		buttons_layout->setObjectName("horizontalLayout_ars_trackers_buttons");
+		btn_ars_trackers_scan_connect = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_scan_connect->setObjectName("btn_ars_trackers_scan_connect");
+		btn_ars_trackers_scan_connect->setText("Scan / Connect all");
+		buttons_layout->addWidget(btn_ars_trackers_scan_connect);
+		btn_ars_trackers_disconnect_all = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_disconnect_all->setObjectName("btn_ars_trackers_disconnect_all");
+		btn_ars_trackers_disconnect_all->setText("Disconnect all");
+		buttons_layout->addWidget(btn_ars_trackers_disconnect_all);
+		buttons_layout->addStretch();
+		gridLayout_ars_trackers->addLayout(buttons_layout, 0, 0, 1, 1);
+
+		table_ars_trackers = new QTableWidget(tab_ars_trackers);
+		table_ars_trackers->setObjectName("table_ars_trackers");
+		table_ars_trackers->setColumnCount(7);
+		table_ars_trackers->setRowCount(0);
+		table_ars_trackers->setEditTriggers(QAbstractItemView::NoEditTriggers);
+		table_ars_trackers->setSelectionBehavior(QAbstractItemView::SelectRows);
+		table_ars_trackers->setSelectionMode(QAbstractItemView::SingleSelection);
+		table_ars_trackers->setAlternatingRowColors(true);
+		QStringList headers;
+		headers << "Pair ID"
+						<< "Right tracker"
+						<< "Right COM"
+						<< "Right state"
+						<< "Left tracker"
+						<< "Left COM"
+						<< "Left state";
+		table_ars_trackers->setHorizontalHeaderLabels(headers);
+		table_ars_trackers->verticalHeader()->setVisible(false);
+		table_ars_trackers->horizontalHeader()->setStretchLastSection(true);
+		gridLayout_ars_trackers->addWidget(table_ars_trackers, 1, 0, 1, 1);
+
+		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
+		lbl_ars_trackers_status->setObjectName("lbl_ars_trackers_status");
+		lbl_ars_trackers_status->setText("Trackers tab ready.");
+		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_status, 2, 0, 1, 1);
+
+		timer_ars_trackers_table_refresh = new QTimer(this);
+		timer_ars_trackers_table_refresh->setSingleShot(true);
+		connect(timer_ars_trackers_table_refresh, &QTimer::timeout, this, [this]() {
+				QString reason = ars_trackers_table_refresh_reason;
+				ars_trackers_table_refresh_pending = false;
+				ars_trackers_table_refresh_reason.clear();
+				bool force_when_inactive = ars_trackers_table_refresh_force_when_inactive;
+				ars_trackers_table_refresh_force_when_inactive = false;
+				if (ars_trackers_tab_is_active() == false && force_when_inactive == false)
+				{
+						ars_trackers_table_dirty = true;
+						log_debug() << "Trackers table refresh skipped/deferred because tab inactive reason="
+												<< reason;
+						return;
+				}
+				log_debug() << "Trackers table refresh executing reason=" << reason;
+				refresh_ars_trackers_table_from_devices();
+		});
+
+		int tracker_inspector_index = tabWidget_orig->indexOf(tab_ars_tracker);
+		int inserted_index = -1;
+		if (tracker_inspector_index >= 0)
+		{
+				inserted_index = tabWidget_orig->insertTab(
+						tracker_inspector_index + 1, tab_ars_trackers, QString("Trackers"));
+		}
+		else
+		{
+				inserted_index = tabWidget_orig->addTab(tab_ars_trackers, QString("Trackers"));
+		}
+		log_debug() << QString("Trackers tab added: index=%1 title=%2 afterCount=%3 visible=%4 enabled=%5")
+											 .arg(inserted_index)
+											 .arg(tabWidget_orig->tabText(inserted_index))
+											 .arg(tabWidget_orig->count())
+											 .arg(tab_ars_trackers->isVisible())
+											 .arg(tabWidget_orig->isTabEnabled(inserted_index));
+		for (int i = 0; i < tabWidget_orig->count(); ++i)
+		{
+				QWidget *page = tabWidget_orig->widget(i);
+				QString object_name = page != nullptr ? page->objectName() : QString("<null>");
+				log_debug() << "Top tabs after Trackers insert:"
+										<< "index=" << i
+										<< "title=" << tabWidget_orig->tabText(i)
+										<< "objectName=" << object_name
+										<< "visible=" << (page != nullptr ? page->isVisible() : false)
+										<< "enabled=" << tabWidget_orig->isTabEnabled(i)
+										<< "widget=" << page;
+		}
+		log_debug() << "Trackers tab initialized";
+}
+
 void plugin_mcumgr::on_selector_tab_currentChanged(int index)
 {
 	Q_UNUSED(index);
@@ -6347,6 +6460,10 @@ void plugin_mcumgr::on_selector_tab_currentChanged(int index)
 	{
 			refresh_ars_tracker_serial_ports_internal("tab", false);
 			sync_ars_tracker_serial_controls(ars_tracker_any_loading());
+	}
+	if (ars_trackers_tab_is_active())
+	{
+			schedule_ars_trackers_table_refresh("trackers-tab-active", true);
 	}
 		maybe_auto_refresh_ars_tracker();
 }
@@ -6462,6 +6579,7 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 
 		log_debug() << "ArsTracker port list changed for source=" << source << "ports="
 								<< changed_ports << "allowProbe=" << allow_probe;
+		schedule_ars_trackers_table_refresh("port-list-changed", false);
 
 		if (allow_probe == true)
 		{
@@ -6779,6 +6897,219 @@ QString plugin_mcumgr::ars_tracker_port_display_text(const QString &port_name,
 		return ars_tracker_device_display_text(serial_number, port_name);
 }
 
+QString plugin_mcumgr::ars_tracker_pair_id_from_serial(const QString &serial) const
+{
+		QString trimmed_serial = serial.trimmed();
+		if (trimmed_serial.isEmpty())
+		{
+				return QString("-");
+		}
+		QStringList parts = trimmed_serial.split('.');
+		if (parts.length() >= 4)
+		{
+				QString suffix = parts.last().trimmed();
+				return suffix.isEmpty() ? QString("-") : suffix;
+		}
+		return QString("-");
+}
+
+QString plugin_mcumgr::ars_tracker_side_label_from_serial_or_device(
+		const ars_tracker_device_t &device) const
+{
+		QString serial = device.serialNumber.trimmed();
+		QStringList parts = serial.split('.');
+		QString side_token = parts.length() >= 3 ? parts.at(2).trimmed() : QString();
+		if (side_token == "1")
+		{
+				return "Right";
+		}
+		if (side_token == "2")
+		{
+				return "Left";
+		}
+		QString side = device.side.trimmed();
+		if (side.compare("R", Qt::CaseInsensitive) == 0 || side.compare("Right", Qt::CaseInsensitive) == 0)
+		{
+				return "Right";
+		}
+		if (side.compare("L", Qt::CaseInsensitive) == 0 || side.compare("Left", Qt::CaseInsensitive) == 0)
+		{
+				return "Left";
+		}
+		return "-";
+}
+
+QString plugin_mcumgr::ars_tracker_connection_state_text(const ars_tracker_device_t &device) const
+{
+		bool connected = device.connected == true && device.serialPort != nullptr &&
+										 device.serialPort->isOpen() == true;
+		QString state = connected ? "Connected" : "Disconnected";
+		if (device.active)
+		{
+				state.append(" (Active)");
+		}
+		return state;
+}
+
+void plugin_mcumgr::schedule_ars_trackers_table_refresh(const QString &reason,
+																												bool force_when_inactive)
+{
+		QString trimmed_reason = reason.trimmed().isEmpty() ? QString("unknown") : reason.trimmed();
+		if (ars_trackers_tab_is_active() == false && force_when_inactive == false)
+		{
+				ars_trackers_table_dirty = true;
+				log_debug() << "Trackers table refresh skipped/deferred because tab inactive reason="
+										<< trimmed_reason;
+				return;
+		}
+
+		if (timer_ars_trackers_table_refresh == nullptr)
+		{
+				log_debug() << "Trackers table refresh executing reason=" << trimmed_reason;
+				refresh_ars_trackers_table_from_devices();
+				return;
+		}
+
+		if (ars_trackers_table_refresh_pending)
+		{
+				log_debug() << "Trackers table refresh coalesced reason=" << trimmed_reason;
+				ars_trackers_table_refresh_reason =
+						ars_trackers_table_refresh_reason.isEmpty() ?
+								trimmed_reason :
+								ars_trackers_table_refresh_reason % ";" % trimmed_reason;
+				ars_trackers_table_refresh_force_when_inactive =
+						ars_trackers_table_refresh_force_when_inactive || force_when_inactive;
+				return;
+		}
+
+		ars_trackers_table_refresh_pending = true;
+		ars_trackers_table_refresh_reason = trimmed_reason;
+		ars_trackers_table_refresh_force_when_inactive = force_when_inactive;
+		log_debug() << "Trackers table refresh scheduled reason=" << trimmed_reason;
+		timer_ars_trackers_table_refresh->start(150);
+}
+
+void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
+{
+		if (table_ars_trackers == nullptr)
+		{
+				return;
+		}
+
+		struct paired_tracker_row_t {
+				QString pair_id = "-";
+				const ars_tracker_device_t *right = nullptr;
+				const ars_tracker_device_t *left = nullptr;
+		};
+
+		QHash<QString, paired_tracker_row_t> rows_by_pair;
+		int connected_count = 0;
+		int visible_devices = 0;
+		QSet<QString> current_ports;
+		const QList<QSerialPortInfo> available_ports = QSerialPortInfo::availablePorts();
+		for (const QSerialPortInfo &info : available_ports)
+		{
+				current_ports.insert(info.portName().trimmed().toUpper());
+		}
+
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				QString port_name = device.portName.trimmed();
+				bool has_serial_port = device.serialPort != nullptr;
+				bool serial_open = has_serial_port && device.serialPort->isOpen();
+				bool system_port_present = current_ports.contains(port_name.toUpper());
+				bool visible = device.connected == true && has_serial_port && serial_open &&
+											 system_port_present;
+				if (visible == false)
+				{
+						log_debug() << "Trackers table skip stale device: port=" << port_name
+												<< "serial=" << device.serialNumber
+												<< "connected=" << device.connected
+												<< "hasSerialPort=" << has_serial_port
+												<< "open=" << serial_open
+												<< "systemPortPresent=" << system_port_present;
+						continue;
+				}
+
+				QString pair_id = ars_tracker_pair_id_from_serial(device.serialNumber);
+				QString pair_key = pair_id.trimmed().isEmpty() ? QString("-") : pair_id;
+				paired_tracker_row_t row = rows_by_pair.value(pair_key);
+				row.pair_id = pair_key;
+
+				QString side = ars_tracker_side_label_from_serial_or_device(device);
+				if (side == "Right")
+				{
+						row.right = &device;
+				}
+				else if (side == "Left")
+				{
+						row.left = &device;
+				}
+				else if (row.right == nullptr)
+				{
+						row.right = &device;
+				}
+				else if (row.left == nullptr)
+				{
+						row.left = &device;
+				}
+				rows_by_pair.insert(pair_key, row);
+
+				++visible_devices;
+				++connected_count;
+		}
+
+		QStringList pair_ids = rows_by_pair.keys();
+		std::sort(pair_ids.begin(), pair_ids.end(), [](const QString &lhs, const QString &rhs) {
+				return QString::compare(lhs, rhs, Qt::CaseInsensitive) < 0;
+		});
+
+		table_ars_trackers->setRowCount(pair_ids.count());
+		int row_index = 0;
+		for (const QString &pair_id : pair_ids)
+		{
+				const paired_tracker_row_t row = rows_by_pair.value(pair_id);
+				const ars_tracker_device_t *right = row.right;
+				const ars_tracker_device_t *left = row.left;
+				QString right_serial = right != nullptr ? right->serialNumber : "-";
+				QString right_port = right != nullptr ? right->portName : "-";
+				QString right_state = right != nullptr ? ars_tracker_connection_state_text(*right) : "-";
+				QString left_serial = left != nullptr ? left->serialNumber : "-";
+				QString left_port = left != nullptr ? left->portName : "-";
+				QString left_state = left != nullptr ? ars_tracker_connection_state_text(*left) : "-";
+
+				table_ars_trackers->setItem(row_index, 0, new QTableWidgetItem(pair_id));
+				table_ars_trackers->setItem(row_index, 1, new QTableWidgetItem(right_serial));
+				table_ars_trackers->setItem(row_index, 2, new QTableWidgetItem(right_port));
+				table_ars_trackers->setItem(row_index, 3, new QTableWidgetItem(right_state));
+				table_ars_trackers->setItem(row_index, 4, new QTableWidgetItem(left_serial));
+				table_ars_trackers->setItem(row_index, 5, new QTableWidgetItem(left_port));
+				table_ars_trackers->setItem(row_index, 6, new QTableWidgetItem(left_state));
+
+				log_debug() << "Trackers row: pair=" << pair_id
+										<< "rightSerial=" << right_serial
+										<< "rightPort=" << right_port
+										<< "rightState=" << right_state
+										<< "leftSerial=" << left_serial
+										<< "leftPort=" << left_port
+										<< "leftState=" << left_state;
+				++row_index;
+		}
+
+		if (lbl_ars_trackers_status != nullptr)
+		{
+				lbl_ars_trackers_status->setText(
+						connected_count > 0 ?
+								QString("Connected trackers: %1").arg(connected_count) :
+								QString("No connected trackers"));
+		}
+		log_debug() << "Trackers table refresh: devices=" << ars_tracker_devices.count()
+								<< "visibleDevices=" << visible_devices
+								<< "pairs=" << pair_ids.count()
+								<< "connected=" << connected_count;
+		ars_trackers_table_dirty = false;
+}
+
 void plugin_mcumgr::initialize_ars_tracker_scan_probe_context()
 {
 		destroy_ars_tracker_scan_probe_context();
@@ -6980,6 +7311,7 @@ void plugin_mcumgr::disconnect_all_ars_tracker_devices()
 		ars_tracker_firmware_erase_active = false;
 		clear_ars_tracker_device_logs_view();
 		log_debug() << "ArsTracker device logs cleared";
+		schedule_ars_trackers_table_refresh("disconnect-all", true);
 }
 
 void plugin_mcumgr::clear_ars_tracker_devices()
@@ -7188,6 +7520,10 @@ bool plugin_mcumgr::set_active_ars_tracker_device(const QString &port_name, bool
 										auto_selected || selected_device->reconnecting);
 						}
 				}
+		}
+		if (active_changed == true && ars_trackers_tab_is_active())
+		{
+				schedule_ars_trackers_table_refresh("active-changed", false);
 		}
 
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
@@ -7643,6 +7979,7 @@ void plugin_mcumgr::finish_ars_tracker_port_scan(const QString &status_message)
 		}
 
 		lbl_ars_tracker_status->setText(status_message);
+		schedule_ars_trackers_table_refresh("scan-finished", true);
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
 }
 
@@ -8353,6 +8690,11 @@ bool plugin_mcumgr::ars_tracker_tab_is_active() const
 		return selector_tab_root != nullptr && selector_tab_root->currentWidget() == tab_ars_tracker;
 }
 
+bool plugin_mcumgr::ars_trackers_tab_is_active() const
+{
+		return selector_tab_root != nullptr && selector_tab_root->currentWidget() == tab_ars_trackers;
+}
+
 bool plugin_mcumgr::ars_tracker_combo_popup_is_open() const
 {
 		return combo_ars_tracker_port != nullptr && combo_ars_tracker_port->view() != nullptr &&
@@ -8747,6 +9089,49 @@ void plugin_mcumgr::on_btn_ars_tracker_info_refresh_clicked()
 				{
 						lbl_ars_tracker_status->setText(backend_error);
 				}
+		}
+}
+
+void plugin_mcumgr::on_btn_ars_trackers_scan_connect_clicked()
+{
+		log_debug() << "Trackers Scan/Connect all clicked: using existing Tracker Inspector scan/claim flow";
+		schedule_ars_trackers_table_refresh("trackers-scan-connect-clicked", false);
+		request_ars_tracker_port_scan("trackers-tab", true, true);
+		if (lbl_ars_trackers_status != nullptr)
+		{
+				lbl_ars_trackers_status->setText("Scanning/connecting trackers...");
+		}
+}
+
+void plugin_mcumgr::on_btn_ars_trackers_disconnect_all_clicked()
+{
+		log_debug() << "Trackers Disconnect all clicked: using existing disconnect_all_ars_tracker_devices";
+		disconnect_all_ars_tracker_devices();
+		ars_tracker_scan_results.clear();
+		populate_ars_tracker_serial_ports(QList<ars_tracker_port_scan_result_t>(), QString(),
+																			"No ArsTracker devices found");
+		ars_tracker_info_changed(ars_tracker_info_t());
+		if (list_ars_tracker_sessions != nullptr)
+		{
+				list_ars_tracker_sessions->clear();
+		}
+		if (list_ars_tracker_files != nullptr)
+		{
+				list_ars_tracker_files->clear();
+		}
+		if (lbl_ars_tracker_progress != nullptr)
+		{
+				lbl_ars_tracker_progress->clear();
+		}
+		if (lbl_ars_tracker_status != nullptr)
+		{
+				lbl_ars_tracker_status->setText("Disconnected from all ArsTracker devices.");
+		}
+		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
+		schedule_ars_trackers_table_refresh("trackers-disconnect-all-clicked", true);
+		if (lbl_ars_trackers_status != nullptr)
+		{
+				lbl_ars_trackers_status->setText("Disconnected from all trackers.");
 		}
 }
 

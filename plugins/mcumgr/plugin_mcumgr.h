@@ -368,6 +368,8 @@ private slots:
     void on_btn_ars_tracker_shell_send_clicked();
     void on_btn_ars_tracker_shell_clear_clicked();
     void on_btn_ars_tracker_cancel_clicked();
+    void on_btn_ars_trackers_scan_connect_clicked();
+    void on_btn_ars_trackers_disconnect_all_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_info_changed(const ars_tracker_info_t &info);
     void ars_tracker_info_loading_changed(bool loading);
@@ -420,6 +422,14 @@ private:
     void close_transport_windows();
     bool ars_tracker_transport_usable();
     bool ars_tracker_tab_is_active() const;
+    bool ars_trackers_tab_is_active() const;
+    void setup_ars_trackers_tab(QTabWidget *tabWidget_orig);
+    void refresh_ars_trackers_table_from_devices();
+    void schedule_ars_trackers_table_refresh(const QString &reason,
+                                             bool force_when_inactive = false);
+    QString ars_tracker_pair_id_from_serial(const QString &serial) const;
+    QString ars_tracker_side_label_from_serial_or_device(const ars_tracker_device_t &device) const;
+    QString ars_tracker_connection_state_text(const ars_tracker_device_t &device) const;
     bool start_ars_tracker_info_refresh(
             QString *error_message = nullptr,
             ars_tracker_info_refresh_source_t source = ARS_TRACKER_INFO_REFRESH_INTERNAL);
@@ -818,7 +828,9 @@ private:
     QSpacerItem *horizontalSpacer_24;
     QTabWidget *selector_tab_root;
     QWidget *tab_ars_tracker;
+    QWidget *tab_ars_trackers = nullptr;
     QGridLayout *gridLayout_ars_tracker;
+    QGridLayout *gridLayout_ars_trackers = nullptr;
     QFrame *frame_ars_tracker_connection;
     QGridLayout*    gridLayout_ars_tracker_connection;
     QFrame *frame_ars_tracker_info;
@@ -890,6 +902,10 @@ private:
     QPushButton *btn_ars_tracker_cancel;
     QLabel *lbl_ars_tracker_progress;
     QLabel *lbl_ars_tracker_status;
+    QPushButton *btn_ars_trackers_scan_connect = nullptr;
+    QPushButton *btn_ars_trackers_disconnect_all = nullptr;
+    QTableWidget *table_ars_trackers = nullptr;
+    QLabel *lbl_ars_trackers_status = nullptr;
     QSpacerItem *verticalSpacer_ars_tracker_status;
     QWidget *tab_2;
     QWidget *verticalLayoutWidget;
@@ -1030,6 +1046,11 @@ private:
     bool ars_tracker_scan_param_sn_sent = false;
     bool ars_tracker_scan_probe_backoff_current_port = false;
     bool ars_tracker_scan_command_started = false;
+    bool ars_trackers_table_refresh_pending = false;
+    bool ars_trackers_table_dirty = false;
+    bool ars_trackers_table_refresh_force_when_inactive = false;
+    QString ars_trackers_table_refresh_reason;
+    QTimer *timer_ars_trackers_table_refresh = nullptr;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

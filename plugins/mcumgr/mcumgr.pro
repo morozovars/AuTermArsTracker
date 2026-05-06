@@ -20,6 +20,7 @@ SOURCES += \
     ars_tracker_backend.cpp \
     ars_tracker_multi_worker.cpp \
     ars_tracker_scan_worker.cpp \
+    ars_tracker_session_worker.cpp \
     ars_tracker_parser.cpp \
     crc16.cpp \
     debug_logger.cpp \
@@ -46,6 +47,7 @@ HEADERS += \
     ars_tracker_backend.h \
     ars_tracker_multi_worker.h \
     ars_tracker_scan_worker.h \
+    ars_tracker_session_worker.h \
     ars_tracker_parser.h \
     crc16.h \
     debug_logger.h \

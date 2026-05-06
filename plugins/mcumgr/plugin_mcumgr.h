@@ -29,6 +29,7 @@
 #include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QPointer>
 #include <QCborStreamReader>
 #include <QCborStreamWriter>
 #include <QCborArray>
@@ -55,6 +56,7 @@
 
 class QSerialPort;
 class ars_tracker_scan_worker;
+class ars_tracker_session_worker;
 
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
 #include "smp_udp.h"
@@ -422,6 +424,18 @@ private slots:
                                                  const ars_tracker_multi_tracker_info &info);
     void handle_ars_tracker_multi_tracker_updated(const ars_tracker_multi_tracker_info &info);
     void handle_ars_tracker_multi_worker_finished(const QString &port_name);
+    void handle_ars_tracker_session_connected(const QString &port_name, const QString &serial);
+    void handle_ars_tracker_session_disconnected(const QString &port_name, const QString &reason);
+    void handle_ars_tracker_session_status_changed(const QString &port_name,
+                                                   const QString &status,
+                                                   const QString &error_text);
+    void handle_ars_tracker_session_operation_failed(const QString &port_name,
+                                                     const QString &operation,
+                                                     const QString &error_text);
+    void handle_ars_tracker_session_log_message(const QString &port_name,
+                                                const QString &level,
+                                                const QString &text);
+    void handle_ars_tracker_session_thread_finished(const QString &serial);
 
 private:
     enum ars_tracker_scan_probe_stage_t : uint8_t {
@@ -476,6 +490,11 @@ private:
     void start_ars_tracker_multi_scan(bool connect_after_scan = false);
     void start_ars_tracker_multi_connect_all();
     void stop_ars_tracker_multi_all();
+    void start_ars_tracker_session_worker_for_device(const QString &port_name,
+                                                     const QString &serial);
+    void stop_all_ars_tracker_session_workers();
+    QString ars_tracker_session_status_for_device(const ars_tracker_device_t &device) const;
+    QString ars_tracker_session_error_for_device(const ars_tracker_device_t &device) const;
     void start_ars_tracker_multi_worker_for_port(const QString &port_name, bool hold_connection);
     void cleanup_ars_tracker_multi_worker(const QString &port_name);
     QString ars_tracker_selected_port_name() const;
@@ -1081,6 +1100,9 @@ private:
     bool ars_tracker_has_completed_scan = false;
     bool ars_tracker_port_scan_debounce_pending = false;
     bool ars_tracker_combo_repopulate_deferred = false;
+    QString ars_tracker_user_selected_serial;
+    QString ars_tracker_user_selected_port;
+    bool ars_tracker_active_selected_by_user = false;
     bool ars_tracker_multi_scan_active = false;
     bool ars_tracker_multi_connect_all_after_scan = false;
     QString ars_tracker_pending_scan_source;
@@ -1107,8 +1129,9 @@ private:
     int ars_tracker_scan_port_index = 0;
     bool ars_tracker_scan_main_serial_open = false;
     QThread *ars_tracker_scan_probe_thread = nullptr;
-    QThread *ars_tracker_port_scan_worker_thread = nullptr;
-    ars_tracker_scan_worker *ars_tracker_port_scan_worker = nullptr;
+    QPointer<QThread> ars_tracker_port_scan_worker_thread;
+    QPointer<ars_tracker_scan_worker> ars_tracker_port_scan_worker;
+    bool ars_tracker_scan_worker_cleanup_in_progress = false;
     ars_tracker_scan_probe_stage_t ars_tracker_scan_probe_stage =
             ARS_TRACKER_SCAN_PROBE_STAGE_IDLE;
     bool ars_tracker_scan_probe_active = false;
@@ -1120,6 +1143,14 @@ private:
     bool ars_tracker_shared_connect_all_active = false;
     QStringList ars_tracker_shared_connect_all_pending_ports;
     QString ars_tracker_shared_connect_all_current_port;
+    QElapsedTimer ars_tracker_shared_connect_all_total_timer;
+    QElapsedTimer ars_tracker_shared_connect_all_step_timer;
+    int ars_tracker_shared_connect_all_total_targets = 0;
+    QHash<QString, ars_tracker_session_worker*> ars_tracker_session_workers_by_serial;
+    QHash<QString, QThread*> ars_tracker_session_threads_by_serial;
+    QHash<QString, QString> ars_tracker_session_port_by_serial;
+    QHash<QString, QString> ars_tracker_session_status_by_serial;
+    QHash<QString, QString> ars_tracker_session_error_by_serial;
     bool ars_tracker_multi_table_refresh_scheduled = false;
     int ars_tracker_multi_pending_probes = 0;
     bool uart_transport_locked;

@@ -11133,14 +11133,16 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 		auto apply_timestamp_mode = [this, edit_name](bool enabled) {
 				if (enabled)
 				{
-						QString ts = QString::number(QDateTime::currentSecsSinceEpoch());
-						edit_name->setText(ts);
-						edit_name->setReadOnly(true);
-						log_debug() << "start_session_use_timestamp enabled=true value=" << ts;
+						edit_name->clear();
+						edit_name->setPlaceholderText("Generated on Start");
+						edit_name->setEnabled(false);
+						log_debug() << "start_session_use_timestamp enabled=true";
 				}
 				else
 				{
-						edit_name->setReadOnly(false);
+						edit_name->setPlaceholderText(QString());
+						edit_name->setEnabled(true);
+						edit_name->setFocus();
 						log_debug() << "start_session_use_timestamp enabled=false";
 				}
 		};
@@ -11172,9 +11174,15 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 				return;
 		}
 
-		QString session_name = edit_name->text().trimmed();
-		if (check_use_timestamp->isChecked() == false)
+		QString session_name;
+		if (check_use_timestamp->isChecked())
 		{
+				session_name = QString::number(QDateTime::currentSecsSinceEpoch());
+				log_debug() << "start_session_use_timestamp enabled=true value=" << session_name;
+		}
+		else
+		{
+				session_name = edit_name->text().trimmed();
 				QRegularExpression re("^[A-Za-z0-9]+$");
 				if (session_name.isEmpty() || !re.match(session_name).hasMatch())
 				{
@@ -11981,6 +11989,25 @@ void plugin_mcumgr::maybe_finish_ars_trackers_session_delete()
 				}
 		}
 		log_debug() << "session_delete_done success=" << success << "failed=" << failed;
+		for (const ars_trackers_sessions_delete_item_t &item : ars_trackers_sessions_delete_items)
+		{
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(item.port);
+				if (device == nullptr || device->connected == false || device->serialPort == nullptr ||
+						device->serialPort->isOpen() == false)
+				{
+						continue;
+				}
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device->portName, device->serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_STATUS,
+						"session-delete");
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device->portName, device->serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO,
+						"session-delete");
+				log_debug() << "session_delete_refresh_telemetry port=" << device->portName
+										<< "commands=status,bat i";
+		}
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
 		update_ars_trackers_sessions_aggregate_and_ui();
 }
 

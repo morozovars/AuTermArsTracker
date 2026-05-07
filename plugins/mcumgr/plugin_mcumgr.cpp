@@ -6525,14 +6525,15 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 
 		table_ars_trackers = new QTableWidget(tab_ars_trackers);
 		table_ars_trackers->setObjectName("table_ars_trackers");
-		table_ars_trackers->setColumnCount(2);
+		table_ars_trackers->setColumnCount(3);
 		table_ars_trackers->setRowCount(0);
 		table_ars_trackers->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		table_ars_trackers->setSelectionMode(QAbstractItemView::NoSelection);
 		table_ars_trackers->setAlternatingRowColors(true);
 		QStringList headers;
-		headers << "Left trackers"
-						<< "Right trackers";
+		headers << "Pair"
+						<< "Right tracker"
+						<< "Left tracker";
 		table_ars_trackers->setHorizontalHeaderLabels(headers);
 		table_ars_trackers->verticalHeader()->setVisible(false);
 		table_ars_trackers->horizontalHeader()->setStretchLastSection(false);
@@ -7351,6 +7352,70 @@ QString plugin_mcumgr::compact_ars_tracker_telemetry_text(const QString &raw_tex
 		return cleaned;
 }
 
+QString plugin_mcumgr::format_ars_tracker_battery_compact(const QString &raw_text) const
+{
+		const QString compact = compact_ars_tracker_telemetry_text(raw_text);
+		ars_tracker_parser::battery_info_t battery_info;
+		QString parse_error;
+		if (ars_tracker_parser::parse_battery_info_output(
+						compact, &battery_info, nullptr, &parse_error))
+		{
+				return QString("%1 mV  %2%").arg(battery_info.volt_mV).arg(battery_info.soc);
+		}
+
+		const QStringList fields = compact.split(',', Qt::KeepEmptyParts);
+		if (fields.size() >= 3)
+		{
+				bool volt_ok = false;
+				bool soc_ok = false;
+				const int volt_mv = fields.at(0).trimmed().toInt(&volt_ok, 10);
+				const int soc = fields.at(2).trimmed().toInt(&soc_ok, 10);
+				if (volt_ok && soc_ok)
+				{
+						return QString("%1 mV  %2%").arg(volt_mv).arg(soc);
+				}
+		}
+
+		return compact;
+}
+
+QString plugin_mcumgr::format_ars_tracker_memory_compact(const QString &raw_text) const
+{
+		const QString compact = compact_ars_tracker_telemetry_text(raw_text);
+		ars_tracker_parser::memory_usage_t memory_usage;
+		QString parse_error;
+		if (ars_tracker_parser::parse_memory_usage_output(
+						compact, &memory_usage, nullptr, &parse_error))
+		{
+				const double total_mb =
+						double(memory_usage.total_bytes) / (1024.0 * 1024.0);
+				const double used_mb =
+						double(memory_usage.used_bytes) / (1024.0 * 1024.0);
+				return QString("%1 MB / %2 MB")
+						.arg(qRound(total_mb))
+						.arg(qRound(used_mb));
+		}
+
+		const QStringList fields = compact.split(',', Qt::KeepEmptyParts);
+		if (fields.size() >= 2)
+		{
+				bool total_ok = false;
+				bool used_ok = false;
+				const quint64 total_bytes = fields.at(0).trimmed().toULongLong(&total_ok, 10);
+				const quint64 used_bytes = fields.at(1).trimmed().toULongLong(&used_ok, 10);
+				if (total_ok && used_ok)
+				{
+						const double total_mb = double(total_bytes) / (1024.0 * 1024.0);
+						const double used_mb = double(used_bytes) / (1024.0 * 1024.0);
+						return QString("%1 MB / %2 MB")
+								.arg(qRound(total_mb))
+								.arg(qRound(used_mb));
+				}
+		}
+
+		return compact;
+}
+
 void plugin_mcumgr::enqueue_ars_tracker_lightweight_telemetry_request(
 		const QString &port_name, const QString &serial_number,
 		ars_tracker_lightweight_telemetry_command_t command, const QString &reason)
@@ -7693,6 +7758,56 @@ void plugin_mcumgr::store_ars_tracker_lightweight_telemetry_response(
 								<< ars_tracker_lightweight_telemetry_command_to_string(command);
 }
 
+struct ars_tracker_serial_parts_t {
+		bool valid = false;
+		QString fullSerial;
+		QString pairId;
+		QString sideCode;
+		QString sideName;
+		bool isRight = false;
+		bool isLeft = false;
+};
+
+static ars_tracker_serial_parts_t parse_ars_tracker_serial_parts(const QString &serial)
+{
+		ars_tracker_serial_parts_t parts;
+		parts.fullSerial = serial.trimmed();
+		QStringList tokens = parts.fullSerial.split('.');
+		if (tokens.size() != 4)
+		{
+				parts.sideName = "Unknown";
+				return parts;
+		}
+		if (tokens.at(0).trimmed().compare("ARS", Qt::CaseInsensitive) != 0)
+		{
+				parts.sideName = "Unknown";
+				return parts;
+		}
+		parts.sideCode = tokens.at(2).trimmed();
+		parts.pairId = tokens.at(3).trimmed();
+		if (parts.pairId.isEmpty())
+		{
+				parts.sideName = "Unknown";
+				return parts;
+		}
+		parts.valid = true;
+		if (parts.sideCode == "1")
+		{
+				parts.isRight = true;
+				parts.sideName = "Right";
+		}
+		else if (parts.sideCode == "2")
+		{
+				parts.isLeft = true;
+				parts.sideName = "Left";
+		}
+		else
+		{
+				parts.sideName = "Unknown";
+		}
+		return parts;
+}
+
 bool plugin_mcumgr::ars_trackers_table_refresh_is_low_priority(const QString &reason) const
 {
 		QString normalized = reason.trimmed().toLower();
@@ -7881,6 +7996,13 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				QString battery_text;
 				QString memory_text;
 		};
+		struct tracker_pair_view_t {
+				QString pair_id;
+				tracker_cell_view_t right_item;
+				tracker_cell_view_t left_item;
+				bool has_right = false;
+				bool has_left = false;
+		};
 
 		auto field_display_text = [](const ars_tracker_info_field_t &field) -> QString {
 				if (field.status == ARS_TRACKER_INFO_FIELD_ERROR)
@@ -7898,8 +8020,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				return "Not loaded";
 		};
 
-		QList<tracker_cell_view_t> left_items;
-		QList<tracker_cell_view_t> right_items;
+		QMap<QString, tracker_pair_view_t> pair_map;
 		QSet<QString> current_ports;
 		const QList<QSerialPortInfo> available_ports = QSerialPortInfo::availablePorts();
 		for (const QSerialPortInfo &info : available_ports)
@@ -7992,25 +8113,91 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				if (device.telemetryBatteryLoaded)
 				{
 						item.battery_text =
-								QString("Battery: %1").arg(compact_ars_tracker_telemetry_text(device.telemetryBatteryRaw));
+								QString("Battery: %1").arg(format_ars_tracker_battery_compact(
+										device.telemetryBatteryRaw));
 				}
 				if (device.telemetryMemoryLoaded)
 				{
 						item.memory_text =
-								QString("Memory: %1").arg(compact_ars_tracker_telemetry_text(device.telemetryMemoryRaw));
+								QString("Memory: %1").arg(format_ars_tracker_memory_compact(
+										device.telemetryMemoryRaw));
 				}
 				if (ARS_TRACKERS_PERF_LOG)
 				{
 						build_status_format_ms += status_timer.elapsed();
 				}
-				QString side = ars_tracker_side_label_from_serial_or_device(device);
-				if (side == "Right")
+				ars_tracker_serial_parts_t serial_parts =
+						parse_ars_tracker_serial_parts(device.serialNumber);
+				QString pair_key;
+				if (serial_parts.valid)
 				{
-						right_items.append(item);
+						pair_key = serial_parts.pairId;
 				}
 				else
 				{
-						left_items.append(item);
+						pair_key = QString("unknown:%1").arg(port_name);
+						log_warning() << "ArsTracker invalid serial grouped as unknown port=" << port_name
+													<< "serial=" << device.serialNumber;
+				}
+				if (pair_map.contains(pair_key) == false)
+				{
+						tracker_pair_view_t pair;
+						pair.pair_id = pair_key;
+						pair_map.insert(pair_key, pair);
+				}
+				tracker_pair_view_t &pair = pair_map[pair_key];
+
+				bool is_right = serial_parts.isRight;
+				bool is_left = serial_parts.isLeft;
+				if (serial_parts.valid == false)
+				{
+						QString fallback_side = ars_tracker_side_label_from_serial_or_device(device);
+						is_right = fallback_side == "Right";
+						is_left = fallback_side == "Left";
+				}
+				if (is_right)
+				{
+						if (pair.has_right)
+						{
+								log_warning() << "ArsTracker duplicate right side in pair=" << pair_key
+															<< "port=" << port_name << "serial=" << device.serialNumber;
+						}
+						else
+						{
+								pair.right_item = item;
+								pair.has_right = true;
+						}
+				}
+				else if (is_left)
+				{
+						if (pair.has_left)
+						{
+								log_warning() << "ArsTracker duplicate left side in pair=" << pair_key
+															<< "port=" << port_name << "serial=" << device.serialNumber;
+						}
+						else
+						{
+								pair.left_item = item;
+								pair.has_left = true;
+						}
+				}
+				else
+				{
+						if (pair.has_right == false)
+						{
+								pair.right_item = item;
+								pair.has_right = true;
+						}
+						else if (pair.has_left == false)
+						{
+								pair.left_item = item;
+								pair.has_left = true;
+						}
+						else
+						{
+								log_warning() << "ArsTracker unknown side duplicate pair=" << pair_key
+															<< "port=" << port_name << "serial=" << device.serialNumber;
+						}
 				}
 
 				++visible_devices;
@@ -8040,18 +8227,18 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				perf_phase_timer.restart();
 		}
 
-		auto by_display = [](const tracker_cell_view_t &lhs, const tracker_cell_view_t &rhs) {
-				return QString::compare(lhs.display_name, rhs.display_name, Qt::CaseInsensitive) < 0;
-		};
-		std::sort(left_items.begin(), left_items.end(), by_display);
-		std::sort(right_items.begin(), right_items.end(), by_display);
+		QList<tracker_pair_view_t> pair_items = pair_map.values();
+		std::sort(pair_items.begin(), pair_items.end(),
+							[](const tracker_pair_view_t &lhs, const tracker_pair_view_t &rhs) {
+									return QString::compare(lhs.pair_id, rhs.pair_id, Qt::CaseInsensitive) < 0;
+							});
 		if (ARS_TRACKERS_PERF_LOG)
 		{
 				perf_sort_ms = perf_phase_timer.elapsed();
 				perf_phase_timer.restart();
 		}
 
-		const int row_count = qMax(left_items.count(), right_items.count());
+		const int row_count = pair_items.count();
 		table_ars_trackers->clearContents();
 		table_ars_trackers->setRowCount(row_count);
 		table_ars_trackers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -8120,6 +8307,20 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 
 				return cell;
 		};
+		auto make_placeholder_cell_widget =
+				[this](const QString &text) -> QWidget * {
+				QWidget *cell = new QWidget(table_ars_trackers);
+				QVBoxLayout *layout = new QVBoxLayout(cell);
+				layout->setContentsMargins(6, 4, 6, 4);
+				layout->setSpacing(2);
+				QLabel *label = new QLabel(text, cell);
+				label->setStyleSheet("color: #808080;");
+				layout->addWidget(label);
+				layout->addStretch(1);
+				return cell;
+		};
+		int complete_pairs = 0;
+		int incomplete_pairs = 0;
 
 		int row_index = 0;
 		for (; row_index < row_count; ++row_index)
@@ -8128,35 +8329,39 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				{
 						table_ars_trackers->setRowHeight(row_index, 200);
 				}
-				if (row_index < left_items.count())
+				const tracker_pair_view_t &pair = pair_items[row_index];
+				table_ars_trackers->setItem(row_index, 0, new QTableWidgetItem(pair.pair_id));
+				if (pair.has_right)
 				{
-						const tracker_cell_view_t &item = left_items[row_index];
-						table_ars_trackers->setCellWidget(row_index, 0, make_tracker_cell_widget(item));
+						table_ars_trackers->setCellWidget(row_index, 1,
+																				 make_tracker_cell_widget(pair.right_item));
 						++cells_created;
-						if (ARS_TRACKERS_PERF_VERBOSE)
-						{
-								log_debug() << "Trackers item: side=Left"
-														<< "row=" << row_index
-														<< "display=" << item.display_name
-														<< "port=" << item.port_name
-														<< "statusRaw=" << item.raw_status
-														<< "statusText=" << item.status_text;
-						}
 				}
-				if (row_index < right_items.count())
+				else
 				{
-						const tracker_cell_view_t &item = right_items[row_index];
-						table_ars_trackers->setCellWidget(row_index, 1, make_tracker_cell_widget(item));
+						table_ars_trackers->setCellWidget(
+								row_index, 1, make_placeholder_cell_widget("Right: not connected"));
 						++cells_created;
-						if (ARS_TRACKERS_PERF_VERBOSE)
-						{
-								log_debug() << "Trackers item: side=Right"
-														<< "row=" << row_index
-														<< "display=" << item.display_name
-														<< "port=" << item.port_name
-														<< "statusRaw=" << item.raw_status
-														<< "statusText=" << item.status_text;
-						}
+				}
+				if (pair.has_left)
+				{
+						table_ars_trackers->setCellWidget(row_index, 2,
+																				 make_tracker_cell_widget(pair.left_item));
+						++cells_created;
+				}
+				else
+				{
+						table_ars_trackers->setCellWidget(
+								row_index, 2, make_placeholder_cell_widget("Left: not connected"));
+						++cells_created;
+				}
+				if (pair.has_left && pair.has_right)
+				{
+						++complete_pairs;
+				}
+				else
+				{
+						++incomplete_pairs;
 				}
 		}
 		if (ARS_TRACKERS_PERF_LOG)
@@ -8168,18 +8373,21 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 		{
 				lbl_ars_trackers_status->setText(
 						visible_devices > 0 ?
-								QString("Connected trackers: %1").arg(visible_devices) :
+								QString("%1 pairs | %2 complete | %3 incomplete | %4 trackers connected")
+										.arg(pair_items.count())
+										.arg(complete_pairs)
+										.arg(incomplete_pairs)
+										.arg(visible_devices) :
 								QString("No connected trackers"));
 		}
 		if (ARS_TRACKERS_PERF_LOG)
 		{
-				log_debug() << "Trackers table layout refresh: left=" << left_items.count()
-										<< "right=" << right_items.count()
+				log_debug() << "Trackers table layout refresh: pairs=" << pair_items.count()
 										<< "rows=" << row_count
 										<< "visibleDevices=" << visible_devices;
 				log_debug() << "Trackers table refresh: sourceDevices=" << ars_tracker_devices.count()
 										<< "visibleDevices=" << visible_devices
-										<< "pairs=0"
+										<< "pairs=" << pair_items.count()
 										<< "connected=" << visible_devices;
 		}
 		if (ARS_TRACKERS_PERF_LOG)
@@ -8204,8 +8412,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 										<< "refresh_table"
 										<< "total_ms=" << total_ms
 										<< "devices=" << ars_tracker_devices.size()
-										<< "left=" << left_items.count()
-										<< "right=" << right_items.count()
+										<< "pairs=" << pair_items.count()
 										<< "rows=" << row_count
 										<< "cells_created=" << cells_created
 										<< "scroll=" << scroll_value

@@ -566,6 +566,8 @@ private:
             ars_tracker_lightweight_telemetry_command_t command, group_status status,
             const QString &response_text);
     QString compact_ars_tracker_telemetry_text(const QString &raw_text) const;
+    QString format_ars_tracker_battery_compact(const QString &raw_text) const;
+    QString format_ars_tracker_memory_compact(const QString &raw_text) const;
     void append_ars_tracker_shell_output(const QString &text);
     void append_ars_tracker_device_log(const QByteArray &data);
     void append_ars_tracker_device_log_text(const QString &text);

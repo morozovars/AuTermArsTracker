@@ -65,6 +65,7 @@ static const int ARS_TRACKERS_PORT_STABLE_MS = 1500;
 static const int ARS_TRACKERS_INITIAL_TELEMETRY_DELAY_MS = 1000;
 static const int ARS_TRACKERS_RESOURCE_ERROR_RESCAN_DELAY_MS = 2000;
 static const int ARS_TRACKERS_SESSION_LIST_TIMEOUT_MS = 15000;
+static const int ARS_TRACKERS_SESSION_DELETE_TIMEOUT_MS = 15000;
 
 struct ars_trackers_perf_stats_t
 {
@@ -6567,7 +6568,7 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 
 		table_ars_trackers_sessions = new QTableWidget(tab_ars_trackers);
 		table_ars_trackers_sessions->setObjectName("table_ars_trackers_sessions");
-		table_ars_trackers_sessions->setColumnCount(4);
+		table_ars_trackers_sessions->setColumnCount(5);
 		table_ars_trackers_sessions->setRowCount(0);
 		table_ars_trackers_sessions->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		table_ars_trackers_sessions->setSelectionMode(QAbstractItemView::NoSelection);
@@ -6575,7 +6576,7 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		table_ars_trackers_sessions->verticalHeader()->setVisible(false);
 		table_ars_trackers_sessions->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 		table_ars_trackers_sessions->setHorizontalHeaderLabels(
-				QStringList() << "Session" << "Trackers" << "Count" << "Status");
+				QStringList() << "Session" << "Trackers" << "Count" << "Status" << "Actions");
 		gridLayout_ars_trackers->addWidget(table_ars_trackers_sessions, 4, 0, 1, 1);
 
 		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
@@ -10974,6 +10975,14 @@ void plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked()
 
 void plugin_mcumgr::start_ars_trackers_sessions_refresh()
 {
+		if (ars_trackers_sessions_delete_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Delete in progress");
+				}
+				return;
+		}
 		if (ars_trackers_sessions_query_running)
 		{
 				if (lbl_ars_trackers_sessions_status != nullptr)
@@ -11069,6 +11078,148 @@ void plugin_mcumgr::start_ars_trackers_sessions_refresh()
 																	 timeout_port, timeout_generation);
 													 });
 		}
+}
+
+void plugin_mcumgr::on_ars_trackers_session_delete_clicked(const QString &session_name)
+{
+		QString session = session_name.trimmed();
+		if (session.isEmpty() || ars_trackers_sessions_presence_map.contains(session) == false)
+		{
+				return;
+		}
+		const ars_tracker_session_presence_t presence =
+				ars_trackers_sessions_presence_map.value(session);
+		if (presence.ports.isEmpty())
+		{
+				return;
+		}
+
+		log_debug() << "session_delete_confirm session=" << session
+								<< "trackers=" << presence.ports.size();
+		QDialog dialog(parent_window);
+		dialog.setWindowTitle("Delete session");
+		QVBoxLayout *layout = new QVBoxLayout(&dialog);
+		layout->addWidget(new QLabel(
+				QString("Delete session %1 from selected trackers?").arg(session), &dialog));
+		QList<QCheckBox *> checkboxes;
+		for (int i = 0; i < presence.ports.size(); ++i)
+		{
+				QString display = i < presence.trackerDisplays.size() ?
+						presence.trackerDisplays.at(i) :
+						presence.ports.at(i);
+				QCheckBox *cb = new QCheckBox(display, &dialog);
+				cb->setProperty("port", presence.ports.at(i));
+				cb->setChecked(true);
+				layout->addWidget(cb);
+				checkboxes.append(cb);
+		}
+		QHBoxLayout *buttons = new QHBoxLayout();
+		QPushButton *btn_delete = new QPushButton("Delete selected", &dialog);
+		QPushButton *btn_cancel = new QPushButton("Cancel", &dialog);
+		buttons->addStretch(1);
+		buttons->addWidget(btn_delete);
+		buttons->addWidget(btn_cancel);
+		layout->addLayout(buttons);
+		connect(btn_delete, &QPushButton::clicked, &dialog, &QDialog::accept);
+		connect(btn_cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+
+		if (dialog.exec() != QDialog::Accepted)
+		{
+				return;
+		}
+
+		QStringList selected_ports;
+		for (QCheckBox *cb : checkboxes)
+		{
+				if (cb->isChecked())
+				{
+						selected_ports.append(cb->property("port").toString());
+				}
+		}
+		start_ars_trackers_delete_session(session, selected_ports);
+}
+
+void plugin_mcumgr::start_ars_trackers_delete_session(const QString &session_name,
+																											const QStringList &ports)
+{
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Already loading");
+				}
+				return;
+		}
+		QString session = session_name.trimmed();
+		if (session.isEmpty() || ports.isEmpty())
+		{
+				return;
+		}
+
+		ars_trackers_sessions_delete_generation++;
+		ars_trackers_sessions_delete_running = true;
+		ars_trackers_sessions_delete_session_name = session;
+		ars_trackers_sessions_delete_items.clear();
+		log_debug() << "session_delete_start generation="
+								<< ars_trackers_sessions_delete_generation
+								<< "session=" << session
+								<< "trackers=" << ports.size();
+
+		for (const QString &port : ports)
+		{
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+				ars_trackers_sessions_delete_item_t item;
+				item.port = port;
+				item.sessionName = session;
+				if (device != nullptr)
+				{
+						item.serial = device->serialNumber;
+						item.displayName = device->displayName;
+				}
+				ars_trackers_sessions_delete_items.insert(port, item);
+
+				if (device == nullptr || device->connected == false || device->shell == nullptr ||
+						device->processor == nullptr || device->transport == nullptr ||
+						device->serialPort == nullptr || device->serialPort->isOpen() == false)
+				{
+						mark_ars_trackers_session_delete_done(port, false, "Device unavailable");
+						continue;
+				}
+
+				QString busy_reason;
+				if (ars_tracker_lightweight_telemetry_device_busy(*device, &busy_reason))
+				{
+						mark_ars_trackers_session_delete_done(
+								port, false, QString("Device busy: %1").arg(busy_reason));
+						continue;
+				}
+
+				device->telemetryRefreshing = true;
+				device->processor->set_transport(device->transport);
+				set_group_transport_settings_for_transport(
+						device->shell, device->transport, ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE,
+						ARS_TRACKERS_SESSION_DELETE_TIMEOUT_MS);
+				device->shellRc = 0;
+				QStringList args = QStringList() << "meas" << "rm" << session;
+				bool started = device->shell->start_execute(&args, &device->shellRc);
+				log_debug() << "session_delete_request_start port=" << port
+										<< "display=" << item.displayName
+										<< "started=" << started;
+				if (!started)
+				{
+						device->telemetryRefreshing = false;
+						mark_ars_trackers_session_delete_done(
+								port, false, "Failed to start shell command");
+						continue;
+				}
+
+				const int gen = ars_trackers_sessions_delete_generation;
+				QTimer::singleShot(ARS_TRACKERS_SESSION_DELETE_TIMEOUT_MS, this,
+													 [this, port, gen]() {
+															 handle_ars_trackers_session_delete_timeout(port, gen);
+													 });
+		}
+		update_ars_trackers_sessions_aggregate_and_ui();
 }
 
 void plugin_mcumgr::handle_ars_trackers_sessions_timeout(const QString &port, int generation)
@@ -11219,6 +11370,13 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 						table_ars_trackers_sessions->setItem(
 								row, 2, new QTableWidgetItem(QString::number(presence.trackerDisplays.size())));
 						table_ars_trackers_sessions->setItem(row, 3, new QTableWidgetItem(status));
+						QPushButton *delete_btn = new QPushButton("Delete...");
+						delete_btn->setEnabled(
+								ars_trackers_sessions_delete_running == false &&
+								presence.ports.isEmpty() == false);
+						connect(delete_btn, &QPushButton::clicked, this,
+										[this, session]() { on_ars_trackers_session_delete_clicked(session); });
+						table_ars_trackers_sessions->setCellWidget(row, 4, delete_btn);
 						row++;
 				}
 		}
@@ -11232,13 +11390,50 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 										.arg(finished_count)
 										.arg(ars_trackers_sessions_query_items.size()));
 				}
+				else if (ars_trackers_sessions_delete_running)
+				{
+						int delete_finished = 0;
+						for (const ars_trackers_sessions_delete_item_t &item :
+								 ars_trackers_sessions_delete_items)
+						{
+								if (item.finished)
+								{
+										delete_finished++;
+								}
+						}
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Deleting: %1 / %2 trackers...")
+										.arg(delete_finished)
+										.arg(ars_trackers_sessions_delete_items.size()));
+				}
 				else
 				{
-						lbl_ars_trackers_sessions_status->setText(
-								QString("Loaded from %1 / %2 trackers, %3 error(s)")
-										.arg(success_count)
-										.arg(ars_trackers_sessions_query_items.size())
-										.arg(failed_count));
+						const int total = ars_trackers_sessions_query_items.size();
+						const int sessions_total = ars_trackers_sessions_presence_map.size();
+						if (failed_count == 0 && sessions_total == 0)
+						{
+								lbl_ars_trackers_sessions_status->setText(
+										QString("Loaded from %1 / %2 trackers, no sessions found")
+												.arg(success_count)
+												.arg(total));
+						}
+						else if (failed_count == 0)
+						{
+								lbl_ars_trackers_sessions_status->setText(
+										QString("Loaded from %1 / %2 trackers, %3 session(s)")
+												.arg(success_count)
+												.arg(total)
+												.arg(sessions_total));
+						}
+						else
+						{
+								lbl_ars_trackers_sessions_status->setText(
+										QString("Loaded from %1 / %2 trackers, %3 failed, %4 session(s)")
+												.arg(success_count)
+												.arg(total)
+												.arg(failed_count)
+												.arg(sessions_total));
+						}
 				}
 		}
 }
@@ -11268,6 +11463,106 @@ void plugin_mcumgr::maybe_finish_ars_trackers_sessions_refresh()
 		log_debug() << "sessions_refresh_done success=" << success
 								<< "failed=" << failed
 								<< "sessions=" << ars_trackers_sessions_presence_map.size();
+}
+
+void plugin_mcumgr::handle_ars_trackers_session_delete_timeout(const QString &port, int generation)
+{
+		if (!ars_trackers_sessions_delete_running ||
+				generation != ars_trackers_sessions_delete_generation ||
+				ars_trackers_sessions_delete_items.contains(port) == false ||
+				ars_trackers_sessions_delete_items[port].finished)
+		{
+				return;
+		}
+		log_debug() << "session_delete_timeout port=" << port;
+		mark_ars_trackers_session_delete_done(port, false, "Timeout");
+}
+
+void plugin_mcumgr::mark_ars_trackers_session_delete_done(const QString &port, bool success,
+																													 const QString &error)
+{
+		if (ars_trackers_sessions_delete_items.contains(port) == false)
+		{
+				return;
+		}
+		ars_trackers_sessions_delete_item_t &item = ars_trackers_sessions_delete_items[port];
+		if (item.finished)
+		{
+				return;
+		}
+		item.finished = true;
+		item.success = success;
+		item.error = error;
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+		if (device != nullptr)
+		{
+				device->telemetryRefreshing = false;
+		}
+
+		if (success)
+		{
+				if (ars_trackers_sessions_query_items.contains(port))
+				{
+						QStringList &sessions = ars_trackers_sessions_query_items[port].sessions;
+						for (int i = sessions.size() - 1; i >= 0; --i)
+						{
+								if (sessions[i].trimmed().compare(
+												ars_trackers_sessions_delete_session_name.trimmed(),
+												Qt::CaseInsensitive) == 0)
+								{
+										sessions.removeAt(i);
+								}
+						}
+				}
+		}
+		update_ars_trackers_sessions_aggregate_and_ui();
+		maybe_finish_ars_trackers_session_delete();
+}
+
+void plugin_mcumgr::maybe_finish_ars_trackers_session_delete()
+{
+		int finished = 0;
+		int success = 0;
+		int failed = 0;
+		for (const ars_trackers_sessions_delete_item_t &item : ars_trackers_sessions_delete_items)
+		{
+				if (!item.finished)
+				{
+						continue;
+				}
+				finished++;
+				if (item.success)
+						success++;
+				else
+						failed++;
+		}
+		if (finished < ars_trackers_sessions_delete_items.size())
+		{
+				return;
+		}
+		ars_trackers_sessions_delete_running = false;
+		if (lbl_ars_trackers_sessions_status != nullptr)
+		{
+				if (failed == 0)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Deleted session %1 from %2 / %3 trackers")
+										.arg(ars_trackers_sessions_delete_session_name)
+										.arg(success)
+										.arg(ars_trackers_sessions_delete_items.size()));
+				}
+				else
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Deleted session %1 from %2 / %3 trackers, %4 failed")
+										.arg(ars_trackers_sessions_delete_session_name)
+										.arg(success)
+										.arg(ars_trackers_sessions_delete_items.size())
+										.arg(failed));
+				}
+		}
+		log_debug() << "session_delete_done success=" << success << "failed=" << failed;
+		update_ars_trackers_sessions_aggregate_and_ui();
 }
 
 void plugin_mcumgr::on_btn_ars_tracker_refresh_clicked()
@@ -12581,7 +12876,8 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				user_data != ACTION_ARS_TRACKER_DELETE_SESSION &&
 				user_data != ACTION_ARS_TRACKER_SHELL_COMMAND &&
 				user_data != ACTION_ARS_TRACKER_LIGHT_TELEMETRY &&
-				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_LIST)
+				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_LIST &&
+				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE)
 		{
 				return;
 		}
@@ -12788,9 +13084,9 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				bool ok = false;
 				if (status == STATUS_COMPLETE && device->shellRc == 0)
 				{
-						ok = ars_tracker_parser::parse_meas_ls_output(
+						bool parsed_ok = ars_tracker_parser::parse_meas_ls_output(
 								error_string, &parsed_sessions, &parse_error);
-						if (ok)
+						if (parsed_ok)
 						{
 								for (const ars_tracker_session_t &session : parsed_sessions)
 								{
@@ -12806,13 +13102,15 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 										}
 								}
 						}
+						// Empty/quiet `meas ls` is a valid success (tracker has no sessions).
+						ok = true;
 				}
 				QString failure_text = parse_error;
 				if (failure_text.isEmpty())
 				{
 						failure_text = error_string;
 				}
-				if (failure_text.isEmpty() && status != STATUS_COMPLETE)
+				if (failure_text.isEmpty() && !ok)
 				{
 						failure_text = "Command failed";
 				}
@@ -12823,6 +13121,20 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				log_debug() << "sessions_response port=" << device->portName
 										<< "success=" << ok
 										<< "sessions=" << sessions.size();
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE)
+		{
+				bool ok = (status == STATUS_COMPLETE && device->shellRc == 0);
+				QString err = error_string;
+				if (!ok && err.isEmpty())
+				{
+						err = "Delete command failed";
+				}
+				log_debug() << "session_delete_response port=" << device->portName
+										<< "success=" << ok;
+				mark_ars_trackers_session_delete_done(device->portName, ok, err);
 				return;
 		}
 

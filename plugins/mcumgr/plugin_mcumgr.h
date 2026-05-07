@@ -163,6 +163,7 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_SHELL_COMMAND,
     ACTION_ARS_TRACKER_LIGHT_TELEMETRY,
     ACTION_ARS_TRACKERS_MULTI_SESSION_LIST,
+    ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -245,6 +246,16 @@ struct ars_trackers_sessions_query_item_t {
     bool success = false;
     QString error;
     QStringList sessions;
+};
+
+struct ars_trackers_sessions_delete_item_t {
+    QString port;
+    QString serial;
+    QString displayName;
+    QString sessionName;
+    bool finished = false;
+    bool success = false;
+    QString error;
 };
 
 class ars_tracker_port_combo_box : public QComboBox
@@ -588,12 +599,19 @@ private:
     QString format_ars_tracker_battery_compact(const QString &raw_text) const;
     QString format_ars_tracker_memory_compact(const QString &raw_text) const;
     void start_ars_trackers_sessions_refresh();
+    void start_ars_trackers_delete_session(const QString &session_name,
+                                           const QStringList &ports);
+    void on_ars_trackers_session_delete_clicked(const QString &session_name);
     void update_ars_trackers_sessions_aggregate_and_ui();
     void mark_ars_trackers_sessions_query_done(const QString &port, bool success,
                                                const QString &error,
                                                const QStringList &sessions);
     void maybe_finish_ars_trackers_sessions_refresh();
     void handle_ars_trackers_sessions_timeout(const QString &port, int generation);
+    void mark_ars_trackers_session_delete_done(const QString &port, bool success,
+                                               const QString &error);
+    void maybe_finish_ars_trackers_session_delete();
+    void handle_ars_trackers_session_delete_timeout(const QString &port, int generation);
     void append_ars_tracker_shell_output(const QString &text);
     void append_ars_tracker_device_log(const QByteArray &data);
     void append_ars_tracker_device_log_text(const QString &text);
@@ -1143,6 +1161,10 @@ private:
     bool ars_trackers_sessions_query_running = false;
     QMap<QString, ars_trackers_sessions_query_item_t> ars_trackers_sessions_query_items;
     QMap<QString, ars_tracker_session_presence_t> ars_trackers_sessions_presence_map;
+    int ars_trackers_sessions_delete_generation = 0;
+    bool ars_trackers_sessions_delete_running = false;
+    QString ars_trackers_sessions_delete_session_name;
+    QMap<QString, ars_trackers_sessions_delete_item_t> ars_trackers_sessions_delete_items;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

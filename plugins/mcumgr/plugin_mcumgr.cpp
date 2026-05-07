@@ -7923,6 +7923,34 @@ static ars_tracker_serial_parts_t parse_ars_tracker_serial_parts(const QString &
 		return parts;
 }
 
+static QString format_ars_tracker_session_display_name(const QString &raw_name)
+{
+		QString name = raw_name.trimmed();
+		if (name.isEmpty())
+		{
+				return name;
+		}
+		for (const QChar &ch : name)
+		{
+				if (ch.isDigit() == false)
+				{
+						return name;
+				}
+		}
+		bool ok = false;
+		qint64 secs = name.toLongLong(&ok, 10);
+		if (!ok || secs < 1500000000LL || secs > 2500000000LL)
+		{
+				return name;
+		}
+		QDateTime dt = QDateTime::fromSecsSinceEpoch(secs).toLocalTime();
+		if (dt.isValid() == false)
+		{
+				return name;
+		}
+		return QString("%1 - %2").arg(name, dt.toString("dd MMM yyyy HH:mm"));
+}
+
 bool plugin_mcumgr::ars_trackers_table_refresh_is_low_priority(const QString &reason) const
 {
 		QString normalized = reason.trimmed().toLower();
@@ -8375,7 +8403,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				QWidget *cell = new QWidget(table_ars_trackers);
 				QVBoxLayout *layout = new QVBoxLayout(cell);
 				layout->setContentsMargins(6, 4, 6, 4);
-				layout->setSpacing(ARS_TRACKERS_LARGE_ROW_TEST_MODE ? 6 : 2);
+				layout->setSpacing(3);
 				if (ARS_TRACKERS_LARGE_ROW_TEST_MODE)
 				{
 						cell->setMinimumHeight(180);
@@ -8386,21 +8414,47 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				bold_font.setBold(true);
 				name_label->setFont(bold_font);
 				layout->addWidget(name_label);
+				QGridLayout *grid = new QGridLayout();
+				grid->setContentsMargins(0, 0, 0, 0);
+				grid->setHorizontalSpacing(16);
+				grid->setVerticalSpacing(2);
 
-				QLabel *port_label = new QLabel(item.port_name, cell);
-				layout->addWidget(port_label);
+				QString battery_value = item.battery_text;
+				if (battery_value.startsWith("Battery: "))
+				{
+						battery_value = battery_value.mid(QString("Battery: ").length());
+				}
+				QString memory_value = item.memory_text;
+				if (memory_value.startsWith("Memory: "))
+				{
+						memory_value = memory_value.mid(QString("Memory: ").length());
+				}
+				QString status_value = item.status_text;
+				if (status_value.startsWith("* "))
+				{
+						status_value = status_value.mid(2);
+				}
 
-				QLabel *status_label = new QLabel(item.status_text, cell);
+				QLabel *com_label = new QLabel(QString("COM: %1").arg(item.port_name), cell);
+				QLabel *bat_label = new QLabel(
+						QString("Battery: %1").arg(item.battery_text.isEmpty() ?
+								QString("-") :
+								battery_value),
+						cell);
+				QLabel *status_label = new QLabel(
+						QString("Status: %1").arg(status_value), cell);
 				status_label->setStyleSheet(QString("color: %1;").arg(item.status_color));
-				layout->addWidget(status_label);
-				if (item.battery_text.isEmpty() == false)
-				{
-						layout->addWidget(new QLabel(item.battery_text, cell));
-				}
-				if (item.memory_text.isEmpty() == false)
-				{
-						layout->addWidget(new QLabel(item.memory_text, cell));
-				}
+				QLabel *mem_label = new QLabel(
+						QString("Memory: %1").arg(item.memory_text.isEmpty() ?
+								QString("-") :
+								memory_value),
+						cell);
+
+				grid->addWidget(com_label, 0, 0);
+				grid->addWidget(bat_label, 0, 1);
+				grid->addWidget(status_label, 1, 0);
+				grid->addWidget(mem_label, 1, 1);
+				layout->addLayout(grid);
 				layout->addStretch(1);
 				if (ARS_TRACKERS_PERF_LOG)
 				{
@@ -8428,7 +8482,9 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				QVBoxLayout *layout = new QVBoxLayout(cell);
 				layout->setContentsMargins(6, 4, 6, 4);
 				layout->setSpacing(2);
-				QLabel *label = new QLabel(text, cell);
+				QStringList parts = text.split(':');
+				QString side = parts.size() > 0 ? parts.first().trimmed() : "Side";
+				QLabel *label = new QLabel(QString("%1:\nNot connected").arg(side), cell);
 				label->setStyleSheet("color: #808080;");
 				layout->addWidget(label);
 				layout->addStretch(1);
@@ -11748,7 +11804,9 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 								status = has_complete_pair ? "Complete pair" : "Partial";
 						}
 
-						table_ars_trackers_sessions->setItem(row, 0, new QTableWidgetItem(session));
+						table_ars_trackers_sessions->setItem(
+								row, 0,
+								new QTableWidgetItem(format_ars_tracker_session_display_name(session)));
 						table_ars_trackers_sessions->setItem(
 								row, 1, new QTableWidgetItem(presence.trackerDisplays.join(", ")));
 						table_ars_trackers_sessions->setItem(

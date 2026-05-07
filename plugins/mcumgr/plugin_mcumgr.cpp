@@ -66,6 +66,7 @@ static const int ARS_TRACKERS_INITIAL_TELEMETRY_DELAY_MS = 1000;
 static const int ARS_TRACKERS_RESOURCE_ERROR_RESCAN_DELAY_MS = 2000;
 static const int ARS_TRACKERS_SESSION_LIST_TIMEOUT_MS = 15000;
 static const int ARS_TRACKERS_SESSION_DELETE_TIMEOUT_MS = 15000;
+static const bool ARS_TRACKERS_STARTUP_LIFETIME_TRACE = true;
 
 struct ars_trackers_perf_stats_t
 {
@@ -7504,6 +7505,11 @@ void plugin_mcumgr::enqueue_ars_tracker_initial_lightweight_telemetry(
 		{
 				return;
 		}
+		if (ars_tracker_pending_initial_telemetry_ports.contains(
+						device.portName, Qt::CaseInsensitive) && reason != "scan-finished")
+		{
+				return;
+		}
 
 		if (device.telemetryStatusLoaded == false)
 		{
@@ -7519,6 +7525,36 @@ void plugin_mcumgr::enqueue_ars_tracker_initial_lightweight_telemetry(
 		{
 				enqueue_ars_tracker_lightweight_telemetry_request(
 						device.portName, device.serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO, reason);
+		}
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+}
+
+void plugin_mcumgr::start_pending_ars_tracker_initial_lightweight_telemetry()
+{
+		if (ars_tracker_pending_initial_telemetry_ports.isEmpty())
+		{
+				return;
+		}
+		QStringList ports = ars_tracker_pending_initial_telemetry_ports;
+		ars_tracker_pending_initial_telemetry_ports.clear();
+		if (ARS_TRACKERS_STARTUP_LIFETIME_TRACE)
+		{
+				log_debug() << "scan finished, pending telemetry count=" << ports.size();
+		}
+		for (const QString &port : ports)
+		{
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+				if (device == nullptr || device->connected == false || device->serialPort == nullptr ||
+						device->serialPort->isOpen() == false)
+				{
+						continue;
+				}
+				if (ARS_TRACKERS_STARTUP_LIFETIME_TRACE)
+				{
+						log_debug() << "pending initial telemetry started after scan port=" << port;
+				}
+				enqueue_ars_tracker_initial_lightweight_telemetry(*device, "scan-finished");
 		}
 		QTimer::singleShot(0, this,
 											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
@@ -7603,6 +7639,15 @@ bool plugin_mcumgr::ars_tracker_lightweight_telemetry_device_busy(
 
 void plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command()
 {
+		if (ars_tracker_port_scan_active || ars_tracker_scan_probe_active)
+		{
+				if (ARS_TRACKERS_STARTUP_LIFETIME_TRACE)
+				{
+						log_debug() << "Lightweight telemetry paused because scan is running queue="
+												<< ars_tracker_lightweight_telemetry_queue.size();
+				}
+				return;
+		}
 		if (ars_tracker_lightweight_telemetry_enabled == false || ars_tracker_lightweight_telemetry_active)
 		{
 				return;
@@ -8717,6 +8762,7 @@ void plugin_mcumgr::remove_ars_tracker_device_by_port(const QString &port_name,
 				}
 		}
 		ars_tracker_lightweight_telemetry_queue = filtered_queue;
+		ars_tracker_pending_initial_telemetry_ports.removeAll(trimmed_port);
 
 		bool telemetry_active_removed = false;
 		if (ars_tracker_lightweight_telemetry_active &&
@@ -8891,6 +8937,7 @@ void plugin_mcumgr::disconnect_all_ars_tracker_devices()
 		ars_tracker_firmware_upload_active = false;
 		ars_tracker_firmware_erase_active = false;
 		ars_tracker_lightweight_telemetry_queue.clear();
+		ars_tracker_pending_initial_telemetry_ports.clear();
 		ars_tracker_lightweight_telemetry_active = false;
 		ars_tracker_lightweight_telemetry_active_port.clear();
 		ars_tracker_lightweight_telemetry_active_serial.clear();
@@ -9599,6 +9646,8 @@ void plugin_mcumgr::finish_ars_tracker_port_scan(const QString &status_message)
 		lbl_ars_tracker_status->setText(status_message);
 		schedule_ars_trackers_table_refresh("scan-finished", true);
 		process_pending_ars_tracker_port_removals("scan-finished");
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_pending_ars_tracker_initial_lightweight_telemetry);
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
 		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
 		{
@@ -10190,6 +10239,24 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 						}
 						QTimer::singleShot(ARS_TRACKERS_INITIAL_TELEMETRY_DELAY_MS, this,
 														 [this, telemetry_port, telemetry_serial, reconnected_device]() {
+																 if (ars_tracker_port_scan_active ||
+																		 ars_tracker_scan_probe_active ||
+																		 ars_tracker_scan_current_port.isEmpty() == false)
+																 {
+																		 if (ars_tracker_pending_initial_telemetry_ports.contains(
+																						 telemetry_port, Qt::CaseInsensitive) == false)
+																		 {
+																				 ars_tracker_pending_initial_telemetry_ports.append(
+																						 telemetry_port);
+																		 }
+																		 if (ARS_TRACKERS_STARTUP_LIFETIME_TRACE)
+																		 {
+																				 log_debug()
+																						 << "Lightweight telemetry initial postponed until scan finish port="
+																						 << telemetry_port;
+																		 }
+																		 return;
+																 }
 																 ars_tracker_device_t *delayed_device =
 																		 find_ars_tracker_device_by_port(telemetry_port);
 																 if (delayed_device == nullptr ||

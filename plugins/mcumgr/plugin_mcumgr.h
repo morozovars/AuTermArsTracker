@@ -581,6 +581,7 @@ private:
     bool start_ars_tracker_shell_command(const QString &command, QString *error_message = nullptr);
     void enqueue_ars_tracker_initial_lightweight_telemetry(
             const ars_tracker_device_t &device, const QString &reason);
+    void start_pending_ars_tracker_initial_lightweight_telemetry();
     void enqueue_ars_tracker_lightweight_telemetry_request(
             const QString &port_name, const QString &serial_number,
             ars_tracker_lightweight_telemetry_command_t command, const QString &reason);
@@ -1150,6 +1151,7 @@ private:
     qint64 ars_trackers_last_scroll_event_ms = -1;
     qint64 ars_trackers_last_scroll_log_ms = -1;
     bool ars_tracker_lightweight_telemetry_enabled = true;
+    QStringList ars_tracker_pending_initial_telemetry_ports;
     QQueue<ars_tracker_lightweight_telemetry_request_t> ars_tracker_lightweight_telemetry_queue;
     bool ars_tracker_lightweight_telemetry_active = false;
     QString ars_tracker_lightweight_telemetry_active_port;

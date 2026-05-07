@@ -6416,6 +6416,14 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				refresh_ars_trackers_table_from_devices();
 		});
 
+		if (timer_ars_tracker_lightweight_telemetry_timeout == nullptr)
+		{
+				timer_ars_tracker_lightweight_telemetry_timeout = new QTimer(this);
+				timer_ars_tracker_lightweight_telemetry_timeout->setSingleShot(true);
+				connect(timer_ars_tracker_lightweight_telemetry_timeout, &QTimer::timeout, this,
+								&plugin_mcumgr::handle_ars_tracker_lightweight_telemetry_timeout);
+		}
+
 		int tracker_inspector_index = tabWidget_orig->indexOf(tab_ars_tracker);
 		int inserted_index = -1;
 		if (tracker_inspector_index >= 0)
@@ -6946,6 +6954,321 @@ QString plugin_mcumgr::ars_tracker_connection_state_text(const ars_tracker_devic
 		return state;
 }
 
+QString plugin_mcumgr::ars_tracker_lightweight_telemetry_command_to_string(
+		ars_tracker_lightweight_telemetry_command_t command) const
+{
+		switch (command)
+		{
+		case ARS_TRACKER_LIGHT_TELEMETRY_STATUS:
+				return "status";
+		case ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO:
+				return "bat i";
+		case ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO:
+				return "mem i";
+		default:
+				return "unknown";
+		}
+}
+
+QString plugin_mcumgr::compact_ars_tracker_telemetry_text(const QString &raw_text) const
+{
+		QString cleaned = raw_text;
+		cleaned.replace('\r', ' ');
+		cleaned.replace('\n', ' ');
+		cleaned = cleaned.simplified();
+		return cleaned;
+}
+
+void plugin_mcumgr::enqueue_ars_tracker_lightweight_telemetry_request(
+		const QString &port_name, const QString &serial_number,
+		ars_tracker_lightweight_telemetry_command_t command, const QString &reason)
+{
+		QString port = port_name.trimmed();
+		if (port.isEmpty() || ars_tracker_lightweight_telemetry_enabled == false)
+		{
+				return;
+		}
+
+		for (const ars_tracker_lightweight_telemetry_request_t &queued :
+				 ars_tracker_lightweight_telemetry_queue)
+		{
+				if (queued.portName.compare(port, Qt::CaseInsensitive) == 0 &&
+						queued.command == command)
+				{
+						log_debug() << "Lightweight telemetry duplicate skipped: port=" << port
+												<< "command="
+												<< ars_tracker_lightweight_telemetry_command_to_string(command);
+						return;
+				}
+		}
+		if (ars_tracker_lightweight_telemetry_active &&
+				ars_tracker_lightweight_telemetry_active_port.compare(port, Qt::CaseInsensitive) == 0 &&
+				ars_tracker_lightweight_telemetry_active_command == command)
+		{
+				log_debug() << "Lightweight telemetry duplicate skipped: port=" << port
+										<< "command="
+										<< ars_tracker_lightweight_telemetry_command_to_string(command);
+				return;
+		}
+
+		ars_tracker_lightweight_telemetry_request_t request;
+		request.portName = port;
+		request.serialNumber = serial_number.trimmed();
+		request.command = command;
+		ars_tracker_lightweight_telemetry_queue.enqueue(request);
+		log_debug() << "Lightweight telemetry enqueue initial: port=" << request.portName
+								<< "serial=" << request.serialNumber
+								<< "reason=" << reason
+								<< "command="
+								<< ars_tracker_lightweight_telemetry_command_to_string(command);
+}
+
+void plugin_mcumgr::enqueue_ars_tracker_initial_lightweight_telemetry(
+		const ars_tracker_device_t &device, const QString &reason)
+{
+		if (ars_tracker_lightweight_telemetry_enabled == false)
+		{
+				return;
+		}
+
+		if (device.telemetryStatusLoaded == false)
+		{
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device.portName, device.serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_STATUS, reason);
+		}
+		if (device.telemetryBatteryLoaded == false)
+		{
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device.portName, device.serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO, reason);
+		}
+		if (device.telemetryMemoryLoaded == false)
+		{
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device.portName, device.serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO, reason);
+		}
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+}
+
+bool plugin_mcumgr::ars_tracker_lightweight_telemetry_device_busy(
+		const ars_tracker_device_t &device, QString *busy_reason) const
+{
+		QString port = device.portName.trimmed();
+		if (device.info_refreshing)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "info_refreshing";
+				}
+				return true;
+		}
+		if (ars_tracker_persistent_info_refresh_port.compare(port, Qt::CaseInsensitive) == 0)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "persistent_info_refresh";
+				}
+				return true;
+		}
+		if (ars_tracker_shell_command_active &&
+				ars_tracker_persistent_shell_command_port.compare(port, Qt::CaseInsensitive) == 0)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "manual_shell_active";
+				}
+				return true;
+		}
+		if ((ars_tracker_loading || ars_tracker_delete_loading) &&
+				ars_tracker_persistent_session_operation_port.compare(port, Qt::CaseInsensitive) == 0)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "session_operation_active";
+				}
+				return true;
+		}
+		if (ars_tracker_export_loading &&
+				ars_tracker_persistent_export_port.compare(port, Qt::CaseInsensitive) == 0)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "export_active";
+				}
+				return true;
+		}
+		if ((ars_tracker_firmware_upload_active || ars_tracker_firmware_erase_active) &&
+				ars_tracker_persistent_firmware_port.compare(port, Qt::CaseInsensitive) == 0)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "firmware_active";
+				}
+				return true;
+		}
+		return false;
+}
+
+void plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command()
+{
+		if (ars_tracker_lightweight_telemetry_enabled == false || ars_tracker_lightweight_telemetry_active)
+		{
+				return;
+		}
+
+		while (ars_tracker_lightweight_telemetry_queue.isEmpty() == false)
+		{
+				ars_tracker_lightweight_telemetry_request_t request =
+						ars_tracker_lightweight_telemetry_queue.dequeue();
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(request.portName);
+				if (device == nullptr && request.serialNumber.isEmpty() == false)
+				{
+						device = find_ars_tracker_device_by_serial(request.serialNumber);
+				}
+				if (device == nullptr)
+				{
+						log_debug() << "Lightweight telemetry command skipped invalid device: port="
+												<< request.portName << "reason=device_not_found";
+						continue;
+				}
+				if (device->connected == false || device->serialPort == nullptr ||
+						device->serialPort->isOpen() == false || device->shell == nullptr ||
+						device->processor == nullptr || device->transport == nullptr)
+				{
+						log_debug() << "Lightweight telemetry command skipped invalid device: port="
+												<< device->portName << "reason=disconnected_or_missing_stack";
+						continue;
+				}
+				QString busy_reason;
+				if (ars_tracker_lightweight_telemetry_device_busy(*device, &busy_reason))
+				{
+						if (request.deferCount < 3)
+						{
+								request.deferCount++;
+								ars_tracker_lightweight_telemetry_queue.enqueue(request);
+								QTimer::singleShot(200, this,
+																	 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+						}
+						log_debug() << "Lightweight telemetry command skipped invalid device: port="
+												<< device->portName << "reason=" << busy_reason;
+						continue;
+				}
+
+				QStringList args;
+				switch (request.command)
+				{
+				case ARS_TRACKER_LIGHT_TELEMETRY_STATUS:
+						args << "status";
+						break;
+				case ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO:
+						args << "bat"
+								 << "i";
+						break;
+				case ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO:
+						args << "mem"
+								 << "i";
+						break;
+				}
+
+				device->processor->set_transport(device->transport);
+				device->shell->set_parameters((check_V2_Protocol->isChecked() ? 1 : 0), edit_MTU->value(),
+																			device->transport->get_retries(), 2000,
+																			ACTION_ARS_TRACKER_LIGHT_TELEMETRY);
+				device->shellRc = 0;
+				device->telemetryRefreshing = true;
+				ars_tracker_lightweight_telemetry_active = true;
+				ars_tracker_lightweight_telemetry_active_port = device->portName;
+				ars_tracker_lightweight_telemetry_active_serial = device->serialNumber;
+				ars_tracker_lightweight_telemetry_active_command = request.command;
+				if (timer_ars_tracker_lightweight_telemetry_timeout != nullptr)
+				{
+						timer_ars_tracker_lightweight_telemetry_timeout->start(2000);
+				}
+				log_debug() << "Lightweight telemetry command start: port=" << device->portName
+										<< "serial=" << device->serialNumber
+										<< "command="
+										<< ars_tracker_lightweight_telemetry_command_to_string(request.command)
+										<< "queueRemaining="
+										<< ars_tracker_lightweight_telemetry_queue.size();
+				bool started = device->shell->start_execute(&args, &device->shellRc);
+				if (started == false)
+				{
+						log_debug() << "Lightweight telemetry command skipped invalid device: port="
+												<< device->portName << "reason=start_failed";
+						finish_ars_tracker_lightweight_telemetry_command();
+						continue;
+				}
+				return;
+		}
+
+		log_debug() << "Lightweight telemetry queue idle";
+}
+
+void plugin_mcumgr::finish_ars_tracker_lightweight_telemetry_command()
+{
+		if (timer_ars_tracker_lightweight_telemetry_timeout != nullptr)
+		{
+				timer_ars_tracker_lightweight_telemetry_timeout->stop();
+		}
+		if (ars_tracker_lightweight_telemetry_active_port.isEmpty() == false)
+		{
+				ars_tracker_device_t *device =
+						find_ars_tracker_device_by_port(ars_tracker_lightweight_telemetry_active_port);
+				if (device != nullptr)
+				{
+						device->telemetryRefreshing = false;
+				}
+		}
+		ars_tracker_lightweight_telemetry_active = false;
+		ars_tracker_lightweight_telemetry_active_port.clear();
+		ars_tracker_lightweight_telemetry_active_serial.clear();
+		ars_tracker_lightweight_telemetry_active_command = ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+}
+
+void plugin_mcumgr::handle_ars_tracker_lightweight_telemetry_timeout()
+{
+		if (ars_tracker_lightweight_telemetry_active == false)
+		{
+				return;
+		}
+		log_debug() << "Lightweight telemetry command timeout: port="
+								<< ars_tracker_lightweight_telemetry_active_port << "command="
+								<< ars_tracker_lightweight_telemetry_command_to_string(
+											 ars_tracker_lightweight_telemetry_active_command);
+		finish_ars_tracker_lightweight_telemetry_command();
+	}
+
+void plugin_mcumgr::store_ars_tracker_lightweight_telemetry_response(
+		ars_tracker_device_t *device, ars_tracker_lightweight_telemetry_command_t command,
+		group_status status, const QString &response_text)
+{
+		if (device == nullptr)
+		{
+				return;
+		}
+		QString compact = compact_ars_tracker_telemetry_text(response_text);
+		if (command == ARS_TRACKER_LIGHT_TELEMETRY_STATUS)
+		{
+				device->telemetryStatusRaw = compact;
+				device->telemetryStatusLoaded = (status == STATUS_COMPLETE);
+		}
+		else if (command == ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO)
+		{
+				device->telemetryBatteryRaw = compact;
+				device->telemetryBatteryLoaded = (status == STATUS_COMPLETE);
+		}
+		else if (command == ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO)
+		{
+				device->telemetryMemoryRaw = compact;
+				device->telemetryMemoryLoaded = (status == STATUS_COMPLETE);
+		}
+		log_debug() << "Lightweight telemetry command parsed/stored: port=" << device->portName
+								<< "command="
+								<< ars_tracker_lightweight_telemetry_command_to_string(command);
+}
+
 void plugin_mcumgr::schedule_ars_trackers_table_refresh(const QString &reason,
 																												bool force_when_inactive)
 {
@@ -6998,6 +7321,8 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				QString raw_status;
 				QString status_text;
 				QString status_color;
+				QString battery_text;
+				QString memory_text;
 		};
 
 		auto field_display_text = [](const ars_tracker_info_field_t &field) -> QString {
@@ -7046,7 +7371,9 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				}
 
 				QString display_name = ars_tracker_device_display_text(device.serialNumber, device.portName);
-				QString raw_status = field_display_text(device.info.tracker_status);
+				QString raw_status = device.telemetryStatusLoaded ?
+																	 device.telemetryStatusRaw :
+																	 field_display_text(device.info.tracker_status);
 				ars_tracker_parsed_status_t parsed_status = parse_ars_tracker_status_text(raw_status);
 				tracker_cell_view_t item;
 				item.device = &device;
@@ -7055,6 +7382,16 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				item.raw_status = raw_status;
 				item.status_text = QString("* ") + parsed_status.name;
 				item.status_color = QString("#%1").arg(parsed_status.color);
+				if (device.telemetryBatteryLoaded)
+				{
+						item.battery_text =
+								QString("Battery: %1").arg(compact_ars_tracker_telemetry_text(device.telemetryBatteryRaw));
+				}
+				if (device.telemetryMemoryLoaded)
+				{
+						item.memory_text =
+								QString("Memory: %1").arg(compact_ars_tracker_telemetry_text(device.telemetryMemoryRaw));
+				}
 				QString side = ars_tracker_side_label_from_serial_or_device(device);
 				if (side == "Right")
 				{
@@ -7078,7 +7415,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 		table_ars_trackers->clearContents();
 		table_ars_trackers->setRowCount(row_count);
 		table_ars_trackers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-		table_ars_trackers->verticalHeader()->setDefaultSectionSize(78);
+		table_ars_trackers->verticalHeader()->setDefaultSectionSize(98);
 
 		auto make_tracker_cell_widget =
 				[this](const tracker_cell_view_t &item) -> QWidget * {
@@ -7099,6 +7436,14 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				QLabel *status_label = new QLabel(item.status_text, cell);
 				status_label->setStyleSheet(QString("color: %1;").arg(item.status_color));
 				layout->addWidget(status_label);
+				if (item.battery_text.isEmpty() == false)
+				{
+						layout->addWidget(new QLabel(item.battery_text, cell));
+				}
+				if (item.memory_text.isEmpty() == false)
+				{
+						layout->addWidget(new QLabel(item.memory_text, cell));
+				}
 				layout->addStretch(1);
 
 				return cell;
@@ -7338,6 +7683,7 @@ void plugin_mcumgr::disconnect_all_ars_tracker_devices()
 				device.currentInfoShellCommand.clear();
 				device.imageStateList.clear();
 				device.deviceLogBuffer.clear();
+				device.telemetryRefreshing = false;
 		}
 		ars_tracker_persistent_info_refresh_port.clear();
 		ars_tracker_persistent_session_operation_port.clear();
@@ -7348,6 +7694,14 @@ void plugin_mcumgr::disconnect_all_ars_tracker_devices()
 		ars_tracker_shell_command_active = false;
 		ars_tracker_firmware_upload_active = false;
 		ars_tracker_firmware_erase_active = false;
+		ars_tracker_lightweight_telemetry_queue.clear();
+		ars_tracker_lightweight_telemetry_active = false;
+		ars_tracker_lightweight_telemetry_active_port.clear();
+		ars_tracker_lightweight_telemetry_active_serial.clear();
+		if (timer_ars_tracker_lightweight_telemetry_timeout != nullptr)
+		{
+				timer_ars_tracker_lightweight_telemetry_timeout->stop();
+		}
 		clear_ars_tracker_device_logs_view();
 		log_debug() << "ArsTracker device logs cleared";
 		schedule_ars_trackers_table_refresh("disconnect-all", true);
@@ -8326,6 +8680,13 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 						device->shellRc = 0;
 						device->currentInfoShellCommand.clear();
 						device->reconnecting = reconnected_device;
+						device->telemetryRefreshing = false;
+						if (reconnected_device)
+						{
+								device->telemetryStatusLoaded = false;
+								device->telemetryBatteryLoaded = false;
+								device->telemetryMemoryLoaded = false;
+						}
 						if (ars_tracker_scan_probe_log_buffer.isEmpty() == false)
 						{
 								buffer_ars_tracker_device_log(device, ars_tracker_scan_probe_log_buffer);
@@ -8438,6 +8799,8 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 						log_debug() << "ArsTracker port scan accepted persistent device"
 												<< result.port_name << "serial:" << result.serial_number;
 						log_debug() << "ArsTracker port scan keeping port open" << result.port_name;
+						enqueue_ars_tracker_initial_lightweight_telemetry(
+								*device, reconnected_device ? "claim-reconnected" : "claim-new");
 				}
 				else
 				{
@@ -10477,7 +10840,8 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 		if (user_data != ACTION_ARS_TRACKER_INFO_REFRESH &&
 				user_data != ACTION_ARS_TRACKER_SESSION_LIST &&
 				user_data != ACTION_ARS_TRACKER_DELETE_SESSION &&
-				user_data != ACTION_ARS_TRACKER_SHELL_COMMAND)
+				user_data != ACTION_ARS_TRACKER_SHELL_COMMAND &&
+				user_data != ACTION_ARS_TRACKER_LIGHT_TELEMETRY)
 		{
 				return;
 		}
@@ -10522,6 +10886,31 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 		{
 				log_debug() << "ArsTracker persistent ui shell status ignored for stale device port="
 										<< device->portName;
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKER_LIGHT_TELEMETRY)
+		{
+				if (ars_tracker_lightweight_telemetry_active == false ||
+						ars_tracker_lightweight_telemetry_active_port.compare(
+								device->portName, Qt::CaseInsensitive) != 0)
+				{
+						log_debug() << "Lightweight telemetry stale callback ignored: port="
+												<< device->portName << "status="
+												<< ars_tracker_scan_status_to_string(status);
+						return;
+				}
+
+				log_debug() << "Lightweight telemetry command response: port=" << device->portName
+										<< "command="
+										<< ars_tracker_lightweight_telemetry_command_to_string(
+													 ars_tracker_lightweight_telemetry_active_command)
+										<< "status=" << ars_tracker_scan_status_to_string(status)
+										<< "response=" << error_string;
+				store_ars_tracker_lightweight_telemetry_response(
+						device, ars_tracker_lightweight_telemetry_active_command, status, error_string);
+				schedule_ars_trackers_table_refresh("lightweight-telemetry-response");
+				finish_ars_tracker_lightweight_telemetry_command();
 				return;
 		}
 

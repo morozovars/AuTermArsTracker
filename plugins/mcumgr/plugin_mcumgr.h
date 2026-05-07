@@ -29,6 +29,7 @@
 #include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QQueue>
 #include <QCborStreamReader>
 #include <QCborStreamWriter>
 #include <QCborArray>
@@ -160,6 +161,7 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_FIRMWARE_RESET,
     ACTION_ARS_TRACKER_FIRMWARE_ERASE,
     ACTION_ARS_TRACKER_SHELL_COMMAND,
+    ACTION_ARS_TRACKER_LIGHT_TELEMETRY,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -205,6 +207,26 @@ struct ars_tracker_device_t {
     smp_group_fs_mgmt *fsMgmt = nullptr;
     smp_group_img_mgmt *imgMgmt = nullptr;
     smp_group_os_mgmt *osMgmt = nullptr;
+    QString telemetryStatusRaw;
+    QString telemetryBatteryRaw;
+    QString telemetryMemoryRaw;
+    bool telemetryStatusLoaded = false;
+    bool telemetryBatteryLoaded = false;
+    bool telemetryMemoryLoaded = false;
+    bool telemetryRefreshing = false;
+};
+
+enum ars_tracker_lightweight_telemetry_command_t : uint8_t {
+    ARS_TRACKER_LIGHT_TELEMETRY_STATUS = 0,
+    ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO,
+    ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO,
+};
+
+struct ars_tracker_lightweight_telemetry_request_t {
+    QString portName;
+    QString serialNumber;
+    ars_tracker_lightweight_telemetry_command_t command = ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
+    int deferCount = 0;
 };
 
 class ars_tracker_port_combo_box : public QComboBox
@@ -523,6 +545,23 @@ private:
     void set_ars_tracker_controls_loading(bool loading);
     void update_ars_tracker_shell_controls(bool controls_locked);
     bool start_ars_tracker_shell_command(const QString &command, QString *error_message = nullptr);
+    void enqueue_ars_tracker_initial_lightweight_telemetry(
+            const ars_tracker_device_t &device, const QString &reason);
+    void enqueue_ars_tracker_lightweight_telemetry_request(
+            const QString &port_name, const QString &serial_number,
+            ars_tracker_lightweight_telemetry_command_t command, const QString &reason);
+    QString ars_tracker_lightweight_telemetry_command_to_string(
+            ars_tracker_lightweight_telemetry_command_t command) const;
+    bool ars_tracker_lightweight_telemetry_device_busy(const ars_tracker_device_t &device,
+                                                       QString *busy_reason = nullptr) const;
+    void start_next_ars_tracker_lightweight_telemetry_command();
+    void handle_ars_tracker_lightweight_telemetry_timeout();
+    void finish_ars_tracker_lightweight_telemetry_command();
+    void store_ars_tracker_lightweight_telemetry_response(
+            ars_tracker_device_t *device,
+            ars_tracker_lightweight_telemetry_command_t command, group_status status,
+            const QString &response_text);
+    QString compact_ars_tracker_telemetry_text(const QString &raw_text) const;
     void append_ars_tracker_shell_output(const QString &text);
     void append_ars_tracker_device_log(const QByteArray &data);
     void append_ars_tracker_device_log_text(const QString &text);
@@ -1051,6 +1090,14 @@ private:
     bool ars_trackers_table_refresh_force_when_inactive = false;
     QString ars_trackers_table_refresh_reason;
     QTimer *timer_ars_trackers_table_refresh = nullptr;
+    bool ars_tracker_lightweight_telemetry_enabled = true;
+    QQueue<ars_tracker_lightweight_telemetry_request_t> ars_tracker_lightweight_telemetry_queue;
+    bool ars_tracker_lightweight_telemetry_active = false;
+    QString ars_tracker_lightweight_telemetry_active_port;
+    QString ars_tracker_lightweight_telemetry_active_serial;
+    ars_tracker_lightweight_telemetry_command_t ars_tracker_lightweight_telemetry_active_command =
+            ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
+    QTimer *timer_ars_tracker_lightweight_telemetry_timeout = nullptr;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

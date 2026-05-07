@@ -64,6 +64,7 @@ static const int ARS_TRACKERS_STARTUP_RESCAN_DELAY_MS = 5000;
 static const int ARS_TRACKERS_PORT_STABLE_MS = 1500;
 static const int ARS_TRACKERS_INITIAL_TELEMETRY_DELAY_MS = 1000;
 static const int ARS_TRACKERS_RESOURCE_ERROR_RESCAN_DELAY_MS = 2000;
+static const int ARS_TRACKERS_SESSION_LIST_TIMEOUT_MS = 15000;
 
 struct ars_trackers_perf_stats_t
 {
@@ -6544,10 +6545,43 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		}
 		gridLayout_ars_trackers->addWidget(table_ars_trackers, 1, 0, 1, 1);
 
+		QLabel *lbl_sessions_title = new QLabel(tab_ars_trackers);
+		lbl_sessions_title->setObjectName("lbl_ars_trackers_sessions_title");
+		lbl_sessions_title->setText("Sessions across trackers");
+		QFont sessions_title_font = lbl_sessions_title->font();
+		sessions_title_font.setBold(true);
+		lbl_sessions_title->setFont(sessions_title_font);
+		gridLayout_ars_trackers->addWidget(lbl_sessions_title, 2, 0, 1, 1);
+
+		QHBoxLayout *sessions_controls_layout = new QHBoxLayout();
+		btn_ars_trackers_sessions_refresh = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_sessions_refresh->setObjectName("btn_ars_trackers_sessions_refresh");
+		btn_ars_trackers_sessions_refresh->setText("Refresh sessions");
+		sessions_controls_layout->addWidget(btn_ars_trackers_sessions_refresh);
+		lbl_ars_trackers_sessions_status = new QLabel(tab_ars_trackers);
+		lbl_ars_trackers_sessions_status->setObjectName("lbl_ars_trackers_sessions_status");
+		lbl_ars_trackers_sessions_status->setText("Not loaded");
+		sessions_controls_layout->addWidget(lbl_ars_trackers_sessions_status);
+		sessions_controls_layout->addStretch(1);
+		gridLayout_ars_trackers->addLayout(sessions_controls_layout, 3, 0, 1, 1);
+
+		table_ars_trackers_sessions = new QTableWidget(tab_ars_trackers);
+		table_ars_trackers_sessions->setObjectName("table_ars_trackers_sessions");
+		table_ars_trackers_sessions->setColumnCount(4);
+		table_ars_trackers_sessions->setRowCount(0);
+		table_ars_trackers_sessions->setEditTriggers(QAbstractItemView::NoEditTriggers);
+		table_ars_trackers_sessions->setSelectionMode(QAbstractItemView::NoSelection);
+		table_ars_trackers_sessions->setAlternatingRowColors(true);
+		table_ars_trackers_sessions->verticalHeader()->setVisible(false);
+		table_ars_trackers_sessions->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+		table_ars_trackers_sessions->setHorizontalHeaderLabels(
+				QStringList() << "Session" << "Trackers" << "Count" << "Status");
+		gridLayout_ars_trackers->addWidget(table_ars_trackers_sessions, 4, 0, 1, 1);
+
 		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_status->setObjectName("lbl_ars_trackers_status");
 		lbl_ars_trackers_status->setText("Waiting for trackers...");
-		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_status, 2, 0, 1, 1);
+		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_status, 5, 0, 1, 1);
 
 		timer_ars_trackers_table_refresh = new QTimer(this);
 		timer_ars_trackers_table_refresh->setSingleShot(true);
@@ -6665,6 +6699,8 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 										<< "widget=" << page;
 		}
 		log_debug() << "Trackers tab initialized";
+		connect(btn_ars_trackers_sessions_refresh, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked);
 }
 
 void plugin_mcumgr::on_selector_tab_currentChanged(int index)
@@ -7491,6 +7527,14 @@ bool plugin_mcumgr::ars_tracker_lightweight_telemetry_device_busy(
 		const ars_tracker_device_t &device, QString *busy_reason) const
 {
 		QString port = device.portName.trimmed();
+		if (device.telemetryRefreshing)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "device_telemetry_or_sessions_refreshing";
+				}
+				return true;
+		}
 		if (device.info_refreshing)
 		{
 				if (busy_reason != nullptr)
@@ -7522,6 +7566,16 @@ bool plugin_mcumgr::ars_tracker_lightweight_telemetry_device_busy(
 				if (busy_reason != nullptr)
 				{
 						*busy_reason = "session_operation_active";
+				}
+				return true;
+		}
+		if (ars_trackers_sessions_query_running &&
+				ars_trackers_sessions_query_items.contains(port) &&
+				ars_trackers_sessions_query_items[port].finished == false)
+		{
+				if (busy_reason != nullptr)
+				{
+						*busy_reason = "trackers_sessions_query_active";
 				}
 				return true;
 		}
@@ -10913,6 +10967,309 @@ void plugin_mcumgr::on_btn_ars_trackers_disconnect_all_clicked()
 		}
 }
 
+void plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked()
+{
+		start_ars_trackers_sessions_refresh();
+}
+
+void plugin_mcumgr::start_ars_trackers_sessions_refresh()
+{
+		if (ars_trackers_sessions_query_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Already loading");
+				}
+				return;
+		}
+
+		ars_trackers_sessions_query_generation++;
+		ars_trackers_sessions_query_running = true;
+		ars_trackers_sessions_query_items.clear();
+		ars_trackers_sessions_presence_map.clear();
+
+		QList<ars_trackers_sessions_query_item_t> targets;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected == false || device.shell == nullptr || device.processor == nullptr ||
+						device.transport == nullptr || device.serialPort == nullptr ||
+						device.serialPort->isOpen() == false)
+				{
+						continue;
+				}
+				QString busy_reason;
+				if (ars_tracker_lightweight_telemetry_device_busy(device, &busy_reason))
+				{
+						continue;
+				}
+				ars_trackers_sessions_query_item_t item;
+				item.port = device.portName;
+				item.serial = device.serialNumber;
+				item.displayName = device.displayName;
+				targets.append(item);
+		}
+
+		if (lbl_ars_trackers_sessions_status != nullptr)
+		{
+				lbl_ars_trackers_sessions_status->setText(
+						QString("Loading sessions: 0 / %1 trackers...").arg(targets.size()));
+		}
+		log_debug() << "sessions_refresh_start trackers=" << targets.size()
+								<< "generation=" << ars_trackers_sessions_query_generation;
+
+		if (targets.isEmpty())
+		{
+				ars_trackers_sessions_query_running = false;
+				update_ars_trackers_sessions_aggregate_and_ui();
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Loaded from 0 trackers");
+				}
+				return;
+		}
+
+		for (const ars_trackers_sessions_query_item_t &item : targets)
+		{
+				ars_trackers_sessions_query_items.insert(item.port, item);
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(item.port);
+				if (device == nullptr || device->shell == nullptr || device->processor == nullptr ||
+						device->transport == nullptr)
+				{
+						mark_ars_trackers_sessions_query_done(item.port, false, "Device unavailable",
+																							QStringList());
+						continue;
+				}
+
+				device->telemetryRefreshing = true;
+				device->processor->set_transport(device->transport);
+				set_group_transport_settings_for_transport(device->shell, device->transport,
+																							 ACTION_ARS_TRACKERS_MULTI_SESSION_LIST,
+																							 ARS_TRACKERS_SESSION_LIST_TIMEOUT_MS);
+				int *rc_ptr = &device->shellRc;
+				*rc_ptr = 0;
+				QStringList args = QStringList() << "meas" << "ls";
+				bool started = device->shell->start_execute(&args, rc_ptr);
+				log_debug() << "sessions_request_start port=" << item.port
+										<< "display=" << item.displayName
+										<< "started=" << started;
+				if (!started)
+				{
+						device->telemetryRefreshing = false;
+						mark_ars_trackers_sessions_query_done(item.port, false,
+																							"Failed to start shell command",
+																							QStringList());
+						continue;
+				}
+
+				const QString timeout_port = item.port;
+				const int timeout_generation = ars_trackers_sessions_query_generation;
+				QTimer::singleShot(ARS_TRACKERS_SESSION_LIST_TIMEOUT_MS, this,
+													 [this, timeout_port, timeout_generation]() {
+															 handle_ars_trackers_sessions_timeout(
+																	 timeout_port, timeout_generation);
+													 });
+		}
+}
+
+void plugin_mcumgr::handle_ars_trackers_sessions_timeout(const QString &port, int generation)
+{
+		if (generation != ars_trackers_sessions_query_generation || !ars_trackers_sessions_query_running)
+		{
+				return;
+		}
+		if (!ars_trackers_sessions_query_items.contains(port))
+		{
+				return;
+		}
+		if (ars_trackers_sessions_query_items[port].finished)
+		{
+				return;
+		}
+		log_debug() << "sessions_timeout port=" << port;
+		mark_ars_trackers_sessions_query_done(port, false, "Timeout", QStringList());
+}
+
+void plugin_mcumgr::mark_ars_trackers_sessions_query_done(const QString &port, bool success,
+																													const QString &error,
+																													const QStringList &sessions)
+{
+		if (!ars_trackers_sessions_query_items.contains(port))
+		{
+				return;
+		}
+		ars_trackers_sessions_query_item_t &item = ars_trackers_sessions_query_items[port];
+		if (item.finished)
+		{
+				return;
+		}
+		item.finished = true;
+		item.success = success;
+		item.error = error;
+		item.sessions = sessions;
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+		if (device != nullptr)
+		{
+				device->telemetryRefreshing = false;
+		}
+		update_ars_trackers_sessions_aggregate_and_ui();
+		maybe_finish_ars_trackers_sessions_refresh();
+}
+
+void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
+{
+		ars_trackers_sessions_presence_map.clear();
+		int finished_count = 0;
+		int success_count = 0;
+		int failed_count = 0;
+		for (const ars_trackers_sessions_query_item_t &item : ars_trackers_sessions_query_items)
+		{
+				if (item.finished == false)
+				{
+						continue;
+				}
+				finished_count++;
+				if (item.success)
+				{
+						success_count++;
+						for (const QString &session_name : item.sessions)
+						{
+								QString session = session_name.trimmed();
+								if (session.isEmpty())
+								{
+										continue;
+								}
+								if (!ars_trackers_sessions_presence_map.contains(session))
+								{
+										ars_tracker_session_presence_t presence;
+										presence.sessionName = session;
+										ars_trackers_sessions_presence_map.insert(session, presence);
+								}
+								ars_tracker_session_presence_t &presence =
+										ars_trackers_sessions_presence_map[session];
+								if (!presence.trackerSerials.contains(item.serial, Qt::CaseInsensitive))
+								{
+										presence.trackerSerials.append(item.serial);
+								}
+								if (!presence.trackerDisplays.contains(item.displayName, Qt::CaseInsensitive))
+								{
+										presence.trackerDisplays.append(item.displayName);
+								}
+								if (!presence.ports.contains(item.port, Qt::CaseInsensitive))
+								{
+										presence.ports.append(item.port);
+								}
+						}
+				}
+				else
+				{
+						failed_count++;
+				}
+		}
+
+		if (table_ars_trackers_sessions != nullptr)
+		{
+				QStringList keys = ars_trackers_sessions_presence_map.keys();
+				std::sort(keys.begin(), keys.end(),
+									[](const QString &a, const QString &b) {
+											return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+									});
+				table_ars_trackers_sessions->clearContents();
+				table_ars_trackers_sessions->setRowCount(keys.size());
+				int row = 0;
+				for (const QString &session : keys)
+				{
+						const ars_tracker_session_presence_t &presence =
+								ars_trackers_sessions_presence_map[session];
+						QString status = "Single tracker";
+						bool has_complete_pair = false;
+						QSet<QString> pair_right;
+						QSet<QString> pair_left;
+						for (const QString &serial : presence.trackerSerials)
+						{
+								ars_tracker_serial_parts_t parts =
+										parse_ars_tracker_serial_parts(serial);
+								if (parts.valid)
+								{
+										if (parts.isRight)
+										{
+												pair_right.insert(parts.pairId);
+										}
+										else if (parts.isLeft)
+										{
+												pair_left.insert(parts.pairId);
+										}
+								}
+						}
+						for (const QString &pair_id : pair_right)
+						{
+								if (pair_left.contains(pair_id))
+								{
+										has_complete_pair = true;
+										break;
+								}
+						}
+						if (presence.trackerDisplays.size() > 1)
+						{
+								status = has_complete_pair ? "Complete pair" : "Partial";
+						}
+
+						table_ars_trackers_sessions->setItem(row, 0, new QTableWidgetItem(session));
+						table_ars_trackers_sessions->setItem(
+								row, 1, new QTableWidgetItem(presence.trackerDisplays.join(", ")));
+						table_ars_trackers_sessions->setItem(
+								row, 2, new QTableWidgetItem(QString::number(presence.trackerDisplays.size())));
+						table_ars_trackers_sessions->setItem(row, 3, new QTableWidgetItem(status));
+						row++;
+				}
+		}
+
+		if (lbl_ars_trackers_sessions_status != nullptr)
+		{
+				if (ars_trackers_sessions_query_running)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Loading sessions: %1 / %2 trackers...")
+										.arg(finished_count)
+										.arg(ars_trackers_sessions_query_items.size()));
+				}
+				else
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Loaded from %1 / %2 trackers, %3 error(s)")
+										.arg(success_count)
+										.arg(ars_trackers_sessions_query_items.size())
+										.arg(failed_count));
+				}
+		}
+}
+
+void plugin_mcumgr::maybe_finish_ars_trackers_sessions_refresh()
+{
+		int finished = 0;
+		int success = 0;
+		int failed = 0;
+		for (const ars_trackers_sessions_query_item_t &item : ars_trackers_sessions_query_items)
+		{
+				if (item.finished)
+				{
+						finished++;
+						if (item.success)
+								success++;
+						else
+								failed++;
+				}
+		}
+		if (finished < ars_trackers_sessions_query_items.size())
+		{
+				return;
+		}
+		ars_trackers_sessions_query_running = false;
+		update_ars_trackers_sessions_aggregate_and_ui();
+		log_debug() << "sessions_refresh_done success=" << success
+								<< "failed=" << failed
+								<< "sessions=" << ars_trackers_sessions_presence_map.size();
+}
+
 void plugin_mcumgr::on_btn_ars_tracker_refresh_clicked()
 {
 		QString backend_error;
@@ -12223,7 +12580,8 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				user_data != ACTION_ARS_TRACKER_SESSION_LIST &&
 				user_data != ACTION_ARS_TRACKER_DELETE_SESSION &&
 				user_data != ACTION_ARS_TRACKER_SHELL_COMMAND &&
-				user_data != ACTION_ARS_TRACKER_LIGHT_TELEMETRY)
+				user_data != ACTION_ARS_TRACKER_LIGHT_TELEMETRY &&
+				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_LIST)
 		{
 				return;
 		}
@@ -12419,6 +12777,52 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 		if (user_data == ACTION_ARS_TRACKER_SESSION_LIST)
 		{
 				ars_tracker->handle_session_list_response(status, error_string, ars_tracker_shell_rc);
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKERS_MULTI_SESSION_LIST)
+		{
+				QStringList sessions;
+				QString parse_error;
+				QList<ars_tracker_session_t> parsed_sessions;
+				bool ok = false;
+				if (status == STATUS_COMPLETE && device->shellRc == 0)
+				{
+						ok = ars_tracker_parser::parse_meas_ls_output(
+								error_string, &parsed_sessions, &parse_error);
+						if (ok)
+						{
+								for (const ars_tracker_session_t &session : parsed_sessions)
+								{
+										QString session_id = session.id.trimmed();
+										if (session_id.isEmpty())
+										{
+												session_id = session.display_name.trimmed();
+										}
+
+										if (session_id.isEmpty() == false)
+										{
+												sessions.append(session_id);
+										}
+								}
+						}
+				}
+				QString failure_text = parse_error;
+				if (failure_text.isEmpty())
+				{
+						failure_text = error_string;
+				}
+				if (failure_text.isEmpty() && status != STATUS_COMPLETE)
+				{
+						failure_text = "Command failed";
+				}
+				mark_ars_trackers_sessions_query_done(device->portName,
+																						ok,
+																						ok ? QString() : failure_text,
+																						sessions);
+				log_debug() << "sessions_response port=" << device->portName
+										<< "success=" << ok
+										<< "sessions=" << sessions.size();
 				return;
 		}
 

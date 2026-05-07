@@ -162,6 +162,7 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_FIRMWARE_ERASE,
     ACTION_ARS_TRACKER_SHELL_COMMAND,
     ACTION_ARS_TRACKER_LIGHT_TELEMETRY,
+    ACTION_ARS_TRACKERS_MULTI_SESSION_LIST,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -227,6 +228,23 @@ struct ars_tracker_lightweight_telemetry_request_t {
     QString serialNumber;
     ars_tracker_lightweight_telemetry_command_t command = ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
     int deferCount = 0;
+};
+
+struct ars_tracker_session_presence_t {
+    QString sessionName;
+    QStringList trackerSerials;
+    QStringList trackerDisplays;
+    QStringList ports;
+};
+
+struct ars_trackers_sessions_query_item_t {
+    QString port;
+    QString serial;
+    QString displayName;
+    bool finished = false;
+    bool success = false;
+    QString error;
+    QStringList sessions;
 };
 
 class ars_tracker_port_combo_box : public QComboBox
@@ -392,6 +410,7 @@ private slots:
     void on_btn_ars_tracker_cancel_clicked();
     void on_btn_ars_trackers_scan_connect_clicked();
     void on_btn_ars_trackers_disconnect_all_clicked();
+    void on_btn_ars_trackers_sessions_refresh_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_info_changed(const ars_tracker_info_t &info);
     void ars_tracker_info_loading_changed(bool loading);
@@ -568,6 +587,13 @@ private:
     QString compact_ars_tracker_telemetry_text(const QString &raw_text) const;
     QString format_ars_tracker_battery_compact(const QString &raw_text) const;
     QString format_ars_tracker_memory_compact(const QString &raw_text) const;
+    void start_ars_trackers_sessions_refresh();
+    void update_ars_trackers_sessions_aggregate_and_ui();
+    void mark_ars_trackers_sessions_query_done(const QString &port, bool success,
+                                               const QString &error,
+                                               const QStringList &sessions);
+    void maybe_finish_ars_trackers_sessions_refresh();
+    void handle_ars_trackers_sessions_timeout(const QString &port, int generation);
     void append_ars_tracker_shell_output(const QString &text);
     void append_ars_tracker_device_log(const QByteArray &data);
     void append_ars_tracker_device_log_text(const QString &text);
@@ -950,6 +976,9 @@ private:
     QPushButton *btn_ars_trackers_scan_connect = nullptr;
     QPushButton *btn_ars_trackers_disconnect_all = nullptr;
     QTableWidget *table_ars_trackers = nullptr;
+    QPushButton *btn_ars_trackers_sessions_refresh = nullptr;
+    QLabel *lbl_ars_trackers_sessions_status = nullptr;
+    QTableWidget *table_ars_trackers_sessions = nullptr;
     QLabel *lbl_ars_trackers_status = nullptr;
     QSpacerItem *verticalSpacer_ars_tracker_status;
     QWidget *tab_2;
@@ -1110,6 +1139,10 @@ private:
     ars_tracker_lightweight_telemetry_command_t ars_tracker_lightweight_telemetry_active_command =
             ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
     QTimer *timer_ars_tracker_lightweight_telemetry_timeout = nullptr;
+    int ars_trackers_sessions_query_generation = 0;
+    bool ars_trackers_sessions_query_running = false;
+    QMap<QString, ars_trackers_sessions_query_item_t> ars_trackers_sessions_query_items;
+    QMap<QString, ars_tracker_session_presence_t> ars_trackers_sessions_presence_map;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

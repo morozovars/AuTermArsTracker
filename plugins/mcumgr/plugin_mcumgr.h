@@ -164,6 +164,8 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_LIGHT_TELEMETRY,
     ACTION_ARS_TRACKERS_MULTI_SESSION_LIST,
     ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE,
+    ACTION_ARS_TRACKERS_MULTI_SESSION_START,
+    ACTION_ARS_TRACKERS_MULTI_SESSION_STOP,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -255,6 +257,42 @@ struct ars_trackers_sessions_delete_item_t {
     QString sessionName;
     bool finished = false;
     bool success = false;
+    QString error;
+};
+
+struct ars_trackers_start_session_target_t {
+    QString port;
+    QString serial;
+    QString displayName;
+    QString pairId;
+};
+
+struct ars_trackers_start_session_item_t {
+    QString port;
+    QString serial;
+    QString displayName;
+    QString sessionName;
+    QString modeCode;
+    bool finished = false;
+    bool success = false;
+    QString error;
+};
+
+enum ars_trackers_stop_session_phase_t : uint8_t {
+    ARS_TRACKERS_STOP_PHASE_STATUS = 0,
+    ARS_TRACKERS_STOP_PHASE_STOP,
+};
+
+struct ars_trackers_stop_session_item_t {
+    QString port;
+    QString serial;
+    QString displayName;
+    QString pairId;
+    ars_trackers_stop_session_phase_t phase = ARS_TRACKERS_STOP_PHASE_STATUS;
+    bool finished = false;
+    bool stopped = false;
+    bool skippedNotActive = false;
+    bool failed = false;
     QString error;
 };
 
@@ -422,6 +460,8 @@ private slots:
     void on_btn_ars_trackers_scan_connect_clicked();
     void on_btn_ars_trackers_disconnect_all_clicked();
     void on_btn_ars_trackers_sessions_refresh_clicked();
+    void on_btn_ars_trackers_start_session_clicked();
+    void on_btn_ars_trackers_stop_session_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_info_changed(const ars_tracker_info_t &info);
     void ars_tracker_info_loading_changed(bool loading);
@@ -603,6 +643,9 @@ private:
     void start_ars_trackers_delete_session(const QString &session_name,
                                            const QStringList &ports);
     void on_ars_trackers_session_delete_clicked(const QString &session_name);
+    void start_ars_trackers_start_session_operation(
+            const QString &session_name, const QString &mode_code,
+            const QList<ars_trackers_start_session_target_t> &targets);
     void update_ars_trackers_sessions_aggregate_and_ui();
     void mark_ars_trackers_sessions_query_done(const QString &port, bool success,
                                                const QString &error,
@@ -613,6 +656,17 @@ private:
                                                const QString &error);
     void maybe_finish_ars_trackers_session_delete();
     void handle_ars_trackers_session_delete_timeout(const QString &port, int generation);
+    void mark_ars_trackers_start_session_done(const QString &port, bool success,
+                                              const QString &error);
+    void handle_ars_trackers_start_session_timeout(const QString &port, int generation);
+    void maybe_finish_ars_trackers_start_session();
+    void start_ars_trackers_stop_session_operation(
+            const QList<ars_trackers_start_session_target_t> &targets);
+    void mark_ars_trackers_stop_session_done(const QString &port, bool stopped,
+                                             bool skipped_not_active, const QString &error);
+    void handle_ars_trackers_stop_session_timeout(const QString &port, int generation,
+                                                  int phase);
+    void maybe_finish_ars_trackers_stop_session();
     void append_ars_tracker_shell_output(const QString &text);
     void append_ars_tracker_device_log(const QByteArray &data);
     void append_ars_tracker_device_log_text(const QString &text);
@@ -996,6 +1050,8 @@ private:
     QPushButton *btn_ars_trackers_disconnect_all = nullptr;
     QTableWidget *table_ars_trackers = nullptr;
     QPushButton *btn_ars_trackers_sessions_refresh = nullptr;
+    QPushButton *btn_ars_trackers_start_session = nullptr;
+    QPushButton *btn_ars_trackers_stop_session = nullptr;
     QLabel *lbl_ars_trackers_sessions_status = nullptr;
     QTableWidget *table_ars_trackers_sessions = nullptr;
     QLabel *lbl_ars_trackers_status = nullptr;
@@ -1167,6 +1223,14 @@ private:
     bool ars_trackers_sessions_delete_running = false;
     QString ars_trackers_sessions_delete_session_name;
     QMap<QString, ars_trackers_sessions_delete_item_t> ars_trackers_sessions_delete_items;
+    int ars_trackers_start_session_generation = 0;
+    bool ars_trackers_start_session_running = false;
+    QString ars_trackers_start_session_name;
+    QString ars_trackers_start_session_mode;
+    QMap<QString, ars_trackers_start_session_item_t> ars_trackers_start_session_items;
+    int ars_trackers_stop_session_generation = 0;
+    bool ars_trackers_stop_session_running = false;
+    QMap<QString, ars_trackers_stop_session_item_t> ars_trackers_stop_session_items;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

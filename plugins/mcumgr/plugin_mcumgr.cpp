@@ -66,6 +66,9 @@ static const int ARS_TRACKERS_INITIAL_TELEMETRY_DELAY_MS = 1000;
 static const int ARS_TRACKERS_RESOURCE_ERROR_RESCAN_DELAY_MS = 2000;
 static const int ARS_TRACKERS_SESSION_LIST_TIMEOUT_MS = 15000;
 static const int ARS_TRACKERS_SESSION_DELETE_TIMEOUT_MS = 15000;
+static const int ARS_TRACKERS_START_SESSION_TIMEOUT_MS = 15000;
+static const int ARS_TRACKERS_STOP_SESSION_TIMEOUT_MS = 15000;
+static const int ARS_TRACKERS_STOP_STATUS_TIMEOUT_MS = 5000;
 static const bool ARS_TRACKERS_STARTUP_LIFETIME_TRACE = true;
 
 struct ars_trackers_perf_stats_t
@@ -6560,6 +6563,14 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		btn_ars_trackers_sessions_refresh->setObjectName("btn_ars_trackers_sessions_refresh");
 		btn_ars_trackers_sessions_refresh->setText("Refresh sessions");
 		sessions_controls_layout->addWidget(btn_ars_trackers_sessions_refresh);
+		btn_ars_trackers_start_session = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_start_session->setObjectName("btn_ars_trackers_start_session");
+		btn_ars_trackers_start_session->setText("Start session");
+		sessions_controls_layout->addWidget(btn_ars_trackers_start_session);
+		btn_ars_trackers_stop_session = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_stop_session->setObjectName("btn_ars_trackers_stop_session");
+		btn_ars_trackers_stop_session->setText("Stop session");
+		sessions_controls_layout->addWidget(btn_ars_trackers_stop_session);
 		lbl_ars_trackers_sessions_status = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_sessions_status->setObjectName("lbl_ars_trackers_sessions_status");
 		lbl_ars_trackers_sessions_status->setText("Not loaded");
@@ -6703,6 +6714,10 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		log_debug() << "Trackers tab initialized";
 		connect(btn_ars_trackers_sessions_refresh, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked);
+		connect(btn_ars_trackers_start_session, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_start_session_clicked);
+		connect(btn_ars_trackers_stop_session, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked);
 }
 
 void plugin_mcumgr::on_selector_tab_currentChanged(int index)
@@ -11040,6 +11055,299 @@ void plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked()
 		start_ars_trackers_sessions_refresh();
 }
 
+void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
+{
+		struct pair_pick_t {
+				QString pairId;
+				QStringList ports;
+				QString text;
+				bool complete = false;
+		};
+		QMap<QString, pair_pick_t> pairs;
+		int visible_pairs = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (!device.connected || device.serialPort == nullptr || !device.serialPort->isOpen())
+				{
+						continue;
+				}
+				ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+				QString pair_id = parts.valid ? parts.pairId : QString("unknown:%1").arg(device.portName);
+				if (!pairs.contains(pair_id))
+				{
+						pair_pick_t p;
+						p.pairId = pair_id;
+						pairs.insert(pair_id, p);
+				}
+				pairs[pair_id].ports.append(device.portName);
+		}
+		for (auto it = pairs.begin(); it != pairs.end(); ++it)
+		{
+				QString right = "not connected";
+				QString left = "not connected";
+				bool has_r = false;
+				bool has_l = false;
+				for (const ars_tracker_device_t &device : ars_tracker_devices)
+				{
+						if (!it.value().ports.contains(device.portName, Qt::CaseInsensitive))
+								continue;
+						ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+						if (parts.isRight)
+						{
+								right = device.displayName;
+								has_r = true;
+						}
+						else if (parts.isLeft)
+						{
+								left = device.displayName;
+								has_l = true;
+						}
+				}
+				it.value().complete = has_r && has_l;
+				it.value().text = QString("%1: R %2, L %3").arg(it.key(), right, left);
+				visible_pairs++;
+		}
+		log_debug() << "start_session_dialog_open pairs=" << visible_pairs;
+
+		QDialog dlg(parent_window);
+		dlg.setWindowTitle("Start session");
+		QVBoxLayout *layout = new QVBoxLayout(&dlg);
+		QHBoxLayout *mode_row = new QHBoxLayout();
+		mode_row->addWidget(new QLabel("Mode:", &dlg));
+		QComboBox *combo_mode = new QComboBox(&dlg);
+		combo_mode->addItem("Tracker", "t");
+		combo_mode->addItem("Tracker with Sources", "m");
+		combo_mode->addItem("Generator", "g");
+		combo_mode->addItem("Stream", "d");
+		combo_mode->setCurrentIndex(0);
+		mode_row->addWidget(combo_mode);
+		layout->addLayout(mode_row);
+
+		QHBoxLayout *name_row = new QHBoxLayout();
+		name_row->addWidget(new QLabel("Session name:", &dlg));
+		QLineEdit *edit_name = new QLineEdit(&dlg);
+		name_row->addWidget(edit_name);
+		QCheckBox *check_use_timestamp = new QCheckBox("Use timestamp", &dlg);
+		check_use_timestamp->setChecked(true);
+		name_row->addWidget(check_use_timestamp);
+		auto apply_timestamp_mode = [this, edit_name](bool enabled) {
+				if (enabled)
+				{
+						QString ts = QString::number(QDateTime::currentSecsSinceEpoch());
+						edit_name->setText(ts);
+						edit_name->setReadOnly(true);
+						log_debug() << "start_session_use_timestamp enabled=true value=" << ts;
+				}
+				else
+				{
+						edit_name->setReadOnly(false);
+						log_debug() << "start_session_use_timestamp enabled=false";
+				}
+		};
+		apply_timestamp_mode(true);
+		connect(check_use_timestamp, &QCheckBox::toggled, &dlg, apply_timestamp_mode);
+		layout->addLayout(name_row);
+
+		layout->addWidget(new QLabel("Pairs:", &dlg));
+		QList<QCheckBox *> pair_checks;
+		for (const pair_pick_t &p : pairs)
+		{
+				QCheckBox *cb = new QCheckBox(p.text, &dlg);
+				cb->setProperty("pairId", p.pairId);
+				cb->setChecked(p.complete);
+				layout->addWidget(cb);
+				pair_checks.append(cb);
+		}
+		QHBoxLayout *btns = new QHBoxLayout();
+		QPushButton *btn_start = new QPushButton("Start", &dlg);
+		QPushButton *btn_cancel = new QPushButton("Cancel", &dlg);
+		btns->addStretch(1);
+		btns->addWidget(btn_start);
+		btns->addWidget(btn_cancel);
+		layout->addLayout(btns);
+		connect(btn_start, &QPushButton::clicked, &dlg, &QDialog::accept);
+		connect(btn_cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+		if (dlg.exec() != QDialog::Accepted)
+		{
+				return;
+		}
+
+		QString session_name = edit_name->text().trimmed();
+		if (check_use_timestamp->isChecked() == false)
+		{
+				QRegularExpression re("^[A-Za-z0-9]+$");
+				if (session_name.isEmpty() || !re.match(session_name).hasMatch())
+				{
+						QMessageBox::warning(parent_window, "Start session",
+																 "Session name must match A-Za-z0-9.");
+						return;
+				}
+		}
+		QStringList selected_pair_ids;
+		for (QCheckBox *cb : pair_checks)
+		{
+				if (cb->isChecked())
+						selected_pair_ids.append(cb->property("pairId").toString());
+		}
+		if (selected_pair_ids.isEmpty())
+		{
+				QMessageBox::warning(parent_window, "Start session", "Select at least one pair.");
+				return;
+		}
+		QList<ars_trackers_start_session_target_t> targets;
+		for (const QString &pair_id : selected_pair_ids)
+		{
+				if (!pairs.contains(pair_id))
+						continue;
+				for (const QString &port : pairs[pair_id].ports)
+				{
+						ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+						if (device == nullptr || !device->connected || device->serialPort == nullptr ||
+								!device->serialPort->isOpen())
+						{
+								continue;
+						}
+						ars_trackers_start_session_target_t t;
+						t.port = device->portName;
+						t.serial = device->serialNumber;
+						t.displayName = device->displayName;
+						t.pairId = pair_id;
+						targets.append(t);
+				}
+		}
+		if (targets.isEmpty())
+		{
+				QMessageBox::warning(parent_window, "Start session",
+														 "No connected trackers in selected pairs.");
+				return;
+		}
+
+		start_ars_trackers_start_session_operation(
+				session_name, combo_mode->currentData().toString(), targets);
+}
+
+void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
+{
+		struct pair_pick_t {
+				QString pairId;
+				QStringList ports;
+				QString text;
+				bool complete = false;
+		};
+		QMap<QString, pair_pick_t> pairs;
+		int visible_pairs = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (!device.connected || device.serialPort == nullptr || !device.serialPort->isOpen())
+				{
+						continue;
+				}
+				ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+				QString pair_id = parts.valid ? parts.pairId : QString("unknown:%1").arg(device.portName);
+				if (!pairs.contains(pair_id))
+				{
+						pair_pick_t p;
+						p.pairId = pair_id;
+						pairs.insert(pair_id, p);
+				}
+				pairs[pair_id].ports.append(device.portName);
+		}
+		for (auto it = pairs.begin(); it != pairs.end(); ++it)
+		{
+				QString right = "not connected";
+				QString left = "not connected";
+				bool has_r = false;
+				bool has_l = false;
+				for (const ars_tracker_device_t &device : ars_tracker_devices)
+				{
+						if (!it.value().ports.contains(device.portName, Qt::CaseInsensitive))
+								continue;
+						ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+						if (parts.isRight)
+						{
+								right = device.displayName;
+								has_r = true;
+						}
+						else if (parts.isLeft)
+						{
+								left = device.displayName;
+								has_l = true;
+						}
+				}
+				it.value().complete = has_r && has_l;
+				it.value().text = QString("%1: R %2, L %3").arg(it.key(), right, left);
+				visible_pairs++;
+		}
+		log_debug() << "stop_session_dialog_open pairs=" << visible_pairs;
+
+		QDialog dlg(parent_window);
+		dlg.setWindowTitle("Stop session");
+		QVBoxLayout *layout = new QVBoxLayout(&dlg);
+		layout->addWidget(new QLabel("Select tracker pairs to stop session:", &dlg));
+		QList<QCheckBox *> pair_checks;
+		for (const pair_pick_t &p : pairs)
+		{
+				QCheckBox *cb = new QCheckBox(p.text, &dlg);
+				cb->setProperty("pairId", p.pairId);
+				cb->setChecked(p.complete);
+				layout->addWidget(cb);
+				pair_checks.append(cb);
+		}
+		QHBoxLayout *btns = new QHBoxLayout();
+		QPushButton *btn_stop = new QPushButton("Stop selected", &dlg);
+		QPushButton *btn_cancel = new QPushButton("Cancel", &dlg);
+		btns->addStretch(1);
+		btns->addWidget(btn_stop);
+		btns->addWidget(btn_cancel);
+		layout->addLayout(btns);
+		connect(btn_stop, &QPushButton::clicked, &dlg, &QDialog::accept);
+		connect(btn_cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+		if (dlg.exec() != QDialog::Accepted)
+		{
+				return;
+		}
+
+		QStringList selected_pair_ids;
+		for (QCheckBox *cb : pair_checks)
+		{
+				if (cb->isChecked())
+						selected_pair_ids.append(cb->property("pairId").toString());
+		}
+		if (selected_pair_ids.isEmpty())
+		{
+				QMessageBox::warning(parent_window, "Stop session", "Select at least one pair.");
+				return;
+		}
+		QList<ars_trackers_start_session_target_t> targets;
+		for (const QString &pair_id : selected_pair_ids)
+		{
+				if (!pairs.contains(pair_id))
+						continue;
+				for (const QString &port : pairs[pair_id].ports)
+				{
+						ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+						if (device == nullptr || !device->connected || device->serialPort == nullptr ||
+								!device->serialPort->isOpen())
+						{
+								continue;
+						}
+						ars_trackers_start_session_target_t t;
+						t.port = device->portName;
+						t.serial = device->serialNumber;
+						t.displayName = device->displayName;
+						t.pairId = pair_id;
+						targets.append(t);
+				}
+		}
+		if (targets.isEmpty())
+		{
+				QMessageBox::warning(parent_window, "Stop session",
+														 "No connected trackers in selected pairs.");
+				return;
+		}
+		start_ars_trackers_stop_session_operation(targets);
+}
+
 void plugin_mcumgr::start_ars_trackers_sessions_refresh()
 {
 		if (ars_trackers_sessions_delete_running)
@@ -11050,7 +11358,7 @@ void plugin_mcumgr::start_ars_trackers_sessions_refresh()
 				}
 				return;
 		}
-		if (ars_trackers_sessions_query_running)
+		if (ars_trackers_sessions_query_running || ars_trackers_start_session_running)
 		{
 				if (lbl_ars_trackers_sessions_status != nullptr)
 				{
@@ -11209,7 +11517,8 @@ void plugin_mcumgr::on_ars_trackers_session_delete_clicked(const QString &sessio
 void plugin_mcumgr::start_ars_trackers_delete_session(const QString &session_name,
 																											const QStringList &ports)
 {
-		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running)
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_start_session_running)
 		{
 				if (lbl_ars_trackers_sessions_status != nullptr)
 				{
@@ -11440,6 +11749,8 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 						QPushButton *delete_btn = new QPushButton("Delete...");
 						delete_btn->setEnabled(
 								ars_trackers_sessions_delete_running == false &&
+								ars_trackers_start_session_running == false &&
+								ars_trackers_stop_session_running == false &&
 								presence.ports.isEmpty() == false);
 						connect(delete_btn, &QPushButton::clicked, this,
 										[this, session]() { on_ars_trackers_session_delete_clicked(session); });
@@ -11472,6 +11783,47 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 								QString("Deleting: %1 / %2 trackers...")
 										.arg(delete_finished)
 										.arg(ars_trackers_sessions_delete_items.size()));
+				}
+				else if (ars_trackers_start_session_running)
+				{
+						int start_finished = 0;
+						for (const ars_trackers_start_session_item_t &item :
+								 ars_trackers_start_session_items)
+						{
+								if (item.finished)
+								{
+										start_finished++;
+								}
+						}
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Starting session %1: %2 / %3...")
+										.arg(ars_trackers_start_session_name)
+										.arg(start_finished)
+										.arg(ars_trackers_start_session_items.size()));
+				}
+				else if (ars_trackers_stop_session_running)
+				{
+						int stop_finished = 0;
+						int stop_stopped = 0;
+						int stop_skipped = 0;
+						for (const ars_trackers_stop_session_item_t &item :
+								 ars_trackers_stop_session_items)
+						{
+								if (item.finished)
+								{
+										stop_finished++;
+										if (item.stopped)
+												stop_stopped++;
+										else if (item.skippedNotActive)
+												stop_skipped++;
+								}
+						}
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Stopping session: %1 / %2, stopped %3, skipped %4")
+										.arg(stop_finished)
+										.arg(ars_trackers_stop_session_items.size())
+										.arg(stop_stopped)
+										.arg(stop_skipped));
 				}
 				else
 				{
@@ -11630,6 +11982,346 @@ void plugin_mcumgr::maybe_finish_ars_trackers_session_delete()
 		}
 		log_debug() << "session_delete_done success=" << success << "failed=" << failed;
 		update_ars_trackers_sessions_aggregate_and_ui();
+}
+
+void plugin_mcumgr::start_ars_trackers_start_session_operation(
+		const QString &session_name, const QString &mode_code,
+		const QList<ars_trackers_start_session_target_t> &targets)
+{
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_start_session_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+						lbl_ars_trackers_sessions_status->setText("Already loading");
+				return;
+		}
+		ars_trackers_start_session_generation++;
+		ars_trackers_start_session_running = true;
+		ars_trackers_start_session_name = session_name;
+		ars_trackers_start_session_mode = mode_code;
+		ars_trackers_start_session_items.clear();
+		if (btn_ars_trackers_start_session != nullptr)
+				btn_ars_trackers_start_session->setEnabled(false);
+		log_debug() << "start_session_begin generation=" << ars_trackers_start_session_generation
+								<< "name=" << session_name << "mode=" << mode_code
+								<< "targets=" << targets.size();
+
+		for (const ars_trackers_start_session_target_t &target : targets)
+		{
+				ars_trackers_start_session_item_t item;
+				item.port = target.port;
+				item.serial = target.serial;
+				item.displayName = target.displayName;
+				item.sessionName = session_name;
+				item.modeCode = mode_code;
+				ars_trackers_start_session_items.insert(target.port, item);
+
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(target.port);
+				if (device == nullptr || !device->connected || device->serialPort == nullptr ||
+						!device->serialPort->isOpen() || device->shell == nullptr ||
+						device->processor == nullptr || device->transport == nullptr)
+				{
+						mark_ars_trackers_start_session_done(target.port, false, "Device unavailable");
+						continue;
+				}
+				QString busy_reason;
+				if (ars_tracker_lightweight_telemetry_device_busy(*device, &busy_reason))
+				{
+						mark_ars_trackers_start_session_done(
+								target.port, false, QString("Device busy: %1").arg(busy_reason));
+						continue;
+				}
+				device->telemetryRefreshing = true;
+				device->processor->set_transport(device->transport);
+				set_group_transport_settings_for_transport(
+						device->shell, device->transport, ACTION_ARS_TRACKERS_MULTI_SESSION_START,
+						ARS_TRACKERS_START_SESSION_TIMEOUT_MS);
+				device->shellRc = 0;
+				QStringList args = QStringList() << "meas" << "start" << "-n" << session_name << "-m"
+																				 << mode_code;
+				bool started = device->shell->start_execute(&args, &device->shellRc);
+				log_debug() << "start_session_request_start port=" << target.port
+										<< "display=" << target.displayName
+										<< "started=" << started;
+				if (!started)
+				{
+						device->telemetryRefreshing = false;
+						mark_ars_trackers_start_session_done(
+								target.port, false, "Failed to start shell command");
+						continue;
+				}
+				const int gen = ars_trackers_start_session_generation;
+				QTimer::singleShot(ARS_TRACKERS_START_SESSION_TIMEOUT_MS, this,
+													 [this, target, gen]() {
+															 handle_ars_trackers_start_session_timeout(target.port, gen);
+													 });
+		}
+		update_ars_trackers_sessions_aggregate_and_ui();
+}
+
+void plugin_mcumgr::handle_ars_trackers_start_session_timeout(const QString &port, int generation)
+{
+		if (!ars_trackers_start_session_running ||
+				generation != ars_trackers_start_session_generation ||
+				!ars_trackers_start_session_items.contains(port) ||
+				ars_trackers_start_session_items[port].finished)
+		{
+				return;
+		}
+		log_debug() << "start_session_timeout port=" << port;
+		mark_ars_trackers_start_session_done(port, false, "Timeout");
+}
+
+void plugin_mcumgr::mark_ars_trackers_start_session_done(const QString &port, bool success,
+																												 const QString &error)
+{
+		if (!ars_trackers_start_session_items.contains(port))
+				return;
+		ars_trackers_start_session_item_t &item = ars_trackers_start_session_items[port];
+		if (item.finished)
+				return;
+		item.finished = true;
+		item.success = success;
+		item.error = error;
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+		if (device != nullptr)
+		{
+				device->telemetryRefreshing = false;
+		}
+		if (success && device != nullptr)
+		{
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device->portName, device->serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_STATUS,
+						"start-session");
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device->portName, device->serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO,
+						"start-session");
+				log_debug() << "start_session_refresh_telemetry port=" << device->portName
+										<< "commands=status,bat";
+		}
+		maybe_finish_ars_trackers_start_session();
+}
+
+void plugin_mcumgr::maybe_finish_ars_trackers_start_session()
+{
+		int finished = 0;
+		int success = 0;
+		int failed = 0;
+		QStringList failed_targets;
+		for (const ars_trackers_start_session_item_t &item : ars_trackers_start_session_items)
+		{
+				if (!item.finished)
+						continue;
+				finished++;
+				if (item.success)
+						success++;
+				else
+				{
+						failed++;
+						failed_targets.append(item.displayName.isEmpty() ? item.port : item.displayName);
+				}
+		}
+		if (lbl_ars_trackers_sessions_status != nullptr && ars_trackers_start_session_running)
+		{
+				lbl_ars_trackers_sessions_status->setText(
+						QString("Starting session %1: %2 / %3...")
+								.arg(ars_trackers_start_session_name)
+								.arg(finished)
+								.arg(ars_trackers_start_session_items.size()));
+		}
+		if (finished < ars_trackers_start_session_items.size())
+				return;
+		ars_trackers_start_session_running = false;
+		if (btn_ars_trackers_start_session != nullptr)
+				btn_ars_trackers_start_session->setEnabled(true);
+		if (lbl_ars_trackers_sessions_status != nullptr)
+		{
+				if (failed == 0)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Started session %1 on %2 / %3 trackers")
+										.arg(ars_trackers_start_session_name)
+										.arg(success)
+										.arg(ars_trackers_start_session_items.size()));
+				}
+				else
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Failed on %1 tracker(s): %2")
+										.arg(failed)
+										.arg(failed_targets.join(", ")));
+				}
+		}
+		log_debug() << "start_session_done success=" << success << "failed=" << failed;
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+}
+
+void plugin_mcumgr::start_ars_trackers_stop_session_operation(
+		const QList<ars_trackers_start_session_target_t> &targets)
+{
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_start_session_running || ars_trackers_stop_session_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+						lbl_ars_trackers_sessions_status->setText("Already loading");
+				return;
+		}
+		ars_trackers_stop_session_generation++;
+		ars_trackers_stop_session_running = true;
+		ars_trackers_stop_session_items.clear();
+		if (btn_ars_trackers_stop_session != nullptr)
+				btn_ars_trackers_stop_session->setEnabled(false);
+		log_debug() << "stop_session_begin generation=" << ars_trackers_stop_session_generation
+								<< "targets=" << targets.size();
+
+		for (const ars_trackers_start_session_target_t &target : targets)
+		{
+				ars_trackers_stop_session_item_t item;
+				item.port = target.port;
+				item.serial = target.serial;
+				item.displayName = target.displayName;
+				item.pairId = target.pairId;
+				item.phase = ARS_TRACKERS_STOP_PHASE_STATUS;
+				ars_trackers_stop_session_items.insert(target.port, item);
+
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(target.port);
+				if (device == nullptr || !device->connected || device->serialPort == nullptr ||
+						!device->serialPort->isOpen() || device->shell == nullptr ||
+						device->processor == nullptr || device->transport == nullptr)
+				{
+						mark_ars_trackers_stop_session_done(target.port, false, false, "Device unavailable");
+						continue;
+				}
+				QString busy_reason;
+				if (ars_tracker_lightweight_telemetry_device_busy(*device, &busy_reason))
+				{
+						mark_ars_trackers_stop_session_done(
+								target.port, false, false, QString("Device busy: %1").arg(busy_reason));
+						continue;
+				}
+				device->telemetryRefreshing = true;
+				device->processor->set_transport(device->transport);
+				set_group_transport_settings_for_transport(
+						device->shell, device->transport, ACTION_ARS_TRACKERS_MULTI_SESSION_STOP,
+						ARS_TRACKERS_STOP_STATUS_TIMEOUT_MS);
+				device->shellRc = 0;
+				QStringList args = QStringList() << "status";
+				bool started = device->shell->start_execute(&args, &device->shellRc);
+				log_debug() << "stop_session_status_request port=" << target.port
+										<< "display=" << target.displayName
+										<< "started=" << started;
+				if (!started)
+				{
+						device->telemetryRefreshing = false;
+						mark_ars_trackers_stop_session_done(
+								target.port, false, false, "Failed to start status command");
+						continue;
+				}
+				const int gen = ars_trackers_stop_session_generation;
+				QTimer::singleShot(ARS_TRACKERS_STOP_STATUS_TIMEOUT_MS, this,
+													 [this, target, gen]() {
+															 handle_ars_trackers_stop_session_timeout(
+																	 target.port, gen, int(ARS_TRACKERS_STOP_PHASE_STATUS));
+													 });
+		}
+		update_ars_trackers_sessions_aggregate_and_ui();
+}
+
+void plugin_mcumgr::handle_ars_trackers_stop_session_timeout(const QString &port, int generation,
+																															int phase)
+{
+		if (!ars_trackers_stop_session_running ||
+				generation != ars_trackers_stop_session_generation ||
+				!ars_trackers_stop_session_items.contains(port))
+		{
+				return;
+		}
+		ars_trackers_stop_session_item_t item = ars_trackers_stop_session_items.value(port);
+		if (item.finished || int(item.phase) != phase)
+		{
+				return;
+		}
+		log_debug() << "stop_session_timeout port=" << port;
+		mark_ars_trackers_stop_session_done(port, false, false, "Timeout");
+}
+
+void plugin_mcumgr::mark_ars_trackers_stop_session_done(const QString &port, bool stopped,
+																												 bool skipped_not_active,
+																												 const QString &error)
+{
+		if (!ars_trackers_stop_session_items.contains(port))
+				return;
+		ars_trackers_stop_session_item_t &item = ars_trackers_stop_session_items[port];
+		if (item.finished)
+				return;
+		item.finished = true;
+		item.stopped = stopped;
+		item.skippedNotActive = skipped_not_active;
+		item.failed = (!stopped && !skipped_not_active);
+		item.error = error;
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port);
+		if (device != nullptr)
+		{
+				device->telemetryRefreshing = false;
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device->portName, device->serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_STATUS,
+						"stop-session");
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device->portName, device->serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO,
+						"stop-session");
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device->portName, device->serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO,
+						"stop-session");
+				log_debug() << "stop_session_refresh_telemetry port=" << device->portName
+										<< "commands=status,bat i,mem i";
+		}
+		maybe_finish_ars_trackers_stop_session();
+}
+
+void plugin_mcumgr::maybe_finish_ars_trackers_stop_session()
+{
+		int finished = 0;
+		int stopped = 0;
+		int skipped = 0;
+		int failed = 0;
+		for (const ars_trackers_stop_session_item_t &item : ars_trackers_stop_session_items)
+		{
+				if (!item.finished)
+						continue;
+				finished++;
+				if (item.stopped)
+						stopped++;
+				else if (item.skippedNotActive)
+						skipped++;
+				else
+						failed++;
+		}
+		if (lbl_ars_trackers_sessions_status != nullptr && ars_trackers_stop_session_running)
+		{
+				lbl_ars_trackers_sessions_status->setText(
+						QString("Stopping session: stopped %1 / %2, skipped %3 not active")
+								.arg(stopped)
+								.arg(ars_trackers_stop_session_items.size())
+								.arg(skipped));
+		}
+		if (finished < ars_trackers_stop_session_items.size())
+				return;
+		ars_trackers_stop_session_running = false;
+		if (btn_ars_trackers_stop_session != nullptr)
+				btn_ars_trackers_stop_session->setEnabled(true);
+		if (lbl_ars_trackers_sessions_status != nullptr)
+		{
+				lbl_ars_trackers_sessions_status->setText(
+						QString("Stop session done: stopped %1, skipped %2, failed %3")
+								.arg(stopped)
+								.arg(skipped)
+								.arg(failed));
+		}
+		log_debug() << "stop_session_done stopped=" << stopped << "skipped=" << skipped
+								<< "failed=" << failed;
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
 }
 
 void plugin_mcumgr::on_btn_ars_tracker_refresh_clicked()
@@ -12944,7 +13636,9 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				user_data != ACTION_ARS_TRACKER_SHELL_COMMAND &&
 				user_data != ACTION_ARS_TRACKER_LIGHT_TELEMETRY &&
 				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_LIST &&
-				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE)
+				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE &&
+				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_START &&
+				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_STOP)
 		{
 				return;
 		}
@@ -13202,6 +13896,93 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				log_debug() << "session_delete_response port=" << device->portName
 										<< "success=" << ok;
 				mark_ars_trackers_session_delete_done(device->portName, ok, err);
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKERS_MULTI_SESSION_START)
+		{
+				QString compact = compact_ars_tracker_telemetry_text(error_string).toUpper();
+				bool ok = (status == STATUS_COMPLETE && device->shellRc == 0 &&
+									 compact.contains("OK"));
+				QString err = error_string;
+				if (!ok && err.isEmpty())
+				{
+						err = "Start session failed";
+				}
+				log_debug() << "start_session_response port=" << device->portName
+										<< "success=" << ok
+										<< "status=" << ars_tracker_scan_status_to_string(status);
+				mark_ars_trackers_start_session_done(device->portName, ok, err);
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKERS_MULTI_SESSION_STOP)
+		{
+				if (!ars_trackers_stop_session_running ||
+						!ars_trackers_stop_session_items.contains(device->portName))
+				{
+						return;
+				}
+				ars_trackers_stop_session_item_t item =
+						ars_trackers_stop_session_items.value(device->portName);
+				if (item.finished)
+				{
+						return;
+				}
+				if (item.phase == ARS_TRACKERS_STOP_PHASE_STATUS)
+				{
+						QString parsed_status;
+						QString parse_error;
+						bool active = false;
+						if (status == STATUS_COMPLETE && device->shellRc == 0 &&
+								ars_tracker_parser::parse_status_output(
+										error_string, &parsed_status, &parse_error))
+						{
+								ars_tracker_parsed_status_t st = parse_ars_tracker_status_text(parsed_status);
+								active = st.name.compare("Active", Qt::CaseInsensitive) == 0;
+						}
+						log_debug() << "stop_session_status_response port=" << device->portName
+												<< "active=" << active
+												<< "status=" << parsed_status;
+						if (!active)
+						{
+								mark_ars_trackers_stop_session_done(
+										device->portName, false, true, QString());
+								return;
+						}
+						ars_trackers_stop_session_items[device->portName].phase =
+								ARS_TRACKERS_STOP_PHASE_STOP;
+						set_group_transport_settings_for_transport(
+								device->shell, device->transport, ACTION_ARS_TRACKERS_MULTI_SESSION_STOP,
+								ARS_TRACKERS_STOP_SESSION_TIMEOUT_MS);
+						device->shellRc = 0;
+						QStringList args = QStringList() << "meas" << "stop";
+						log_debug() << "stop_session_request port=" << device->portName
+												<< "command=\"meas stop\"";
+						bool started = device->shell->start_execute(&args, &device->shellRc);
+						if (!started)
+						{
+								mark_ars_trackers_stop_session_done(
+										device->portName, false, false, "Failed to start meas stop");
+								return;
+						}
+						const int gen = ars_trackers_stop_session_generation;
+						const QString port = device->portName;
+						QTimer::singleShot(ARS_TRACKERS_STOP_SESSION_TIMEOUT_MS, this,
+															 [this, port, gen]() {
+																	 handle_ars_trackers_stop_session_timeout(
+																			 port, gen, int(ARS_TRACKERS_STOP_PHASE_STOP));
+															 });
+						return;
+				}
+				QString compact = compact_ars_tracker_telemetry_text(error_string).toUpper();
+				bool ok = (status == STATUS_COMPLETE && device->shellRc == 0 &&
+									 (compact.isEmpty() || compact.contains("OK") ||
+										(!compact.contains("ERROR") && !compact.contains("FAIL"))));
+				log_debug() << "stop_session_response port=" << device->portName
+										<< "success=" << ok;
+				mark_ars_trackers_stop_session_done(
+						device->portName, ok, false, ok ? QString() : error_string);
 				return;
 		}
 

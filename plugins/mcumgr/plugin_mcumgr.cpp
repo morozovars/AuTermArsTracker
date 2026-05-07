@@ -56,6 +56,14 @@ static const bool ARS_TRACKERS_CRASH_TRACE_LOG = false;
 static const bool ARS_TRACKER_DISPLAY_PARSE_VERBOSE = false;
 static const bool ARS_TRACKERS_LARGE_ROW_TEST_MODE = false;
 static const bool ARS_TRACKERS_DEFER_REFRESH_DURING_SCROLL = false;
+static const bool ARS_TRACKERS_PORT_LIFETIME_TRACE = true;
+static const bool ARS_TRACKERS_AUTO_REMOVE_DISCONNECTED_PORTS = false;
+static const bool ARS_TRACKERS_DISCOVERY_TRACE = true;
+static const int ARS_TRACKERS_STARTUP_SCAN_DELAY_MS = 2000;
+static const int ARS_TRACKERS_STARTUP_RESCAN_DELAY_MS = 5000;
+static const int ARS_TRACKERS_PORT_STABLE_MS = 1500;
+static const int ARS_TRACKERS_INITIAL_TELEMETRY_DELAY_MS = 1000;
+static const int ARS_TRACKERS_RESOURCE_ERROR_RESCAN_DELAY_MS = 2000;
 
 struct ars_trackers_perf_stats_t
 {
@@ -3166,10 +3174,6 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		});
 		connect(btn_ars_tracker_cancel, SIGNAL(clicked()), this,
 						SLOT(on_btn_ars_tracker_cancel_clicked()));
-		connect(btn_ars_trackers_scan_connect, SIGNAL(clicked()), this,
-						SLOT(on_btn_ars_trackers_scan_connect_clicked()));
-		connect(btn_ars_trackers_disconnect_all, SIGNAL(clicked()), this,
-						SLOT(on_btn_ars_trackers_disconnect_all_clicked()));
 		connect(ars_tracker, &ars_tracker_backend::status_message, this,
 						&plugin_mcumgr::ars_tracker_status_message);
 		connect(ars_tracker, &ars_tracker_backend::tracker_info_changed, this,
@@ -3286,7 +3290,56 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		populate_ars_tracker_serial_ports(QList<ars_tracker_port_scan_result_t>(), QString(),
 																		"No ArsTracker devices found");
 		ars_tracker_runtime_port_monitor_timer->start();
-		request_ars_tracker_port_scan("startup", true, true);
+		QTimer::singleShot(ARS_TRACKERS_STARTUP_SCAN_DELAY_MS, this, [this]() {
+				QStringList ports;
+				for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
+				{
+						ports.append(info.portName());
+				}
+				if (ARS_TRACKERS_DISCOVERY_TRACE)
+				{
+						log_debug() << "ArsTracker startup delayed scan system ports:" << ports;
+				}
+				request_ars_tracker_port_scan("startup-delayed", true, true);
+		});
+		QTimer::singleShot(ARS_TRACKERS_STARTUP_RESCAN_DELAY_MS, this, [this]() {
+				QStringList ports;
+				for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
+				{
+						ports.append(info.portName());
+				}
+				bool known_changed = false;
+				if (ports.size() != ars_tracker_runtime_known_ports.size())
+				{
+						known_changed = true;
+				}
+				else
+				{
+						for (const QString &port : ports)
+						{
+								if (ars_tracker_runtime_known_ports.contains(port, Qt::CaseInsensitive) == false)
+								{
+										known_changed = true;
+										break;
+								}
+						}
+				}
+				bool should_rescan = ars_tracker_devices.isEmpty() ||
+														known_changed ||
+														(ars_tracker_scan_results.isEmpty() && ports.isEmpty() == false);
+				if (ARS_TRACKERS_DISCOVERY_TRACE)
+				{
+						log_debug() << "ArsTracker startup delayed rescan check ports=" << ports
+												<< "devices=" << ars_tracker_devices.size()
+												<< "scanResults=" << ars_tracker_scan_results.size()
+												<< "knownChanged=" << known_changed
+												<< "shouldRescan=" << should_rescan;
+				}
+				if (should_rescan)
+				{
+						request_ars_tracker_port_scan("startup-delayed-rescan", true, true);
+				}
+		});
 		schedule_ars_trackers_table_refresh("startup", false);
 		set_ars_tracker_controls_loading(false);
 		ars_tracker_info_changed(ars_tracker->tracker_info());
@@ -6465,18 +6518,10 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		gridLayout_ars_trackers->setContentsMargins(6, 6, 6, 6);
 		gridLayout_ars_trackers->setSpacing(4);
 
-		QHBoxLayout *buttons_layout = new QHBoxLayout();
-		buttons_layout->setObjectName("horizontalLayout_ars_trackers_buttons");
-		btn_ars_trackers_scan_connect = new QPushButton(tab_ars_trackers);
-		btn_ars_trackers_scan_connect->setObjectName("btn_ars_trackers_scan_connect");
-		btn_ars_trackers_scan_connect->setText("Scan / Connect all");
-		buttons_layout->addWidget(btn_ars_trackers_scan_connect);
-		btn_ars_trackers_disconnect_all = new QPushButton(tab_ars_trackers);
-		btn_ars_trackers_disconnect_all->setObjectName("btn_ars_trackers_disconnect_all");
-		btn_ars_trackers_disconnect_all->setText("Disconnect all");
-		buttons_layout->addWidget(btn_ars_trackers_disconnect_all);
-		buttons_layout->addStretch();
-		gridLayout_ars_trackers->addLayout(buttons_layout, 0, 0, 1, 1);
+		QLabel *lbl_ars_trackers_header = new QLabel(tab_ars_trackers);
+		lbl_ars_trackers_header->setObjectName("lbl_ars_trackers_header");
+		lbl_ars_trackers_header->setText("Trackers are detected automatically.");
+		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_header, 0, 0, 1, 1);
 
 		table_ars_trackers = new QTableWidget(tab_ars_trackers);
 		table_ars_trackers->setObjectName("table_ars_trackers");
@@ -6500,7 +6545,7 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 
 		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_status->setObjectName("lbl_ars_trackers_status");
-		lbl_ars_trackers_status->setText("Trackers tab ready.");
+		lbl_ars_trackers_status->setText("Waiting for trackers...");
 		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_status, 2, 0, 1, 1);
 
 		timer_ars_trackers_table_refresh = new QTimer(this);
@@ -6695,6 +6740,31 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 		{
 				system_ports.append(info.portName());
 		}
+		const qint64 now_ms = ars_trackers_perf_now_ms();
+		for (const QString &port_name : system_ports)
+		{
+				if (ars_tracker_port_first_seen_ms.contains(port_name) == false)
+				{
+						ars_tracker_port_first_seen_ms.insert(port_name, now_ms);
+						if (ARS_TRACKERS_DISCOVERY_TRACE)
+						{
+								log_debug() << "ArsTracker port first seen port=" << port_name
+														<< "tsMs=" << now_ms;
+						}
+				}
+		}
+		for (auto it = ars_tracker_port_first_seen_ms.begin();
+				 it != ars_tracker_port_first_seen_ms.end();)
+		{
+				if (system_ports.contains(it.key(), Qt::CaseInsensitive) == false)
+				{
+						it = ars_tracker_port_first_seen_ms.erase(it);
+				}
+				else
+				{
+						++it;
+				}
+		}
 
 		bool ports_changed = false;
 		QStringList changed_ports;
@@ -6715,6 +6785,45 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 						ports_changed = true;
 						changed_ports.append(known_port);
 				}
+		}
+
+		QStringList disappeared_device_ports;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (system_ports.contains(device.portName, Qt::CaseInsensitive) == false)
+				{
+						disappeared_device_ports.append(device.portName);
+				}
+		}
+		for (const QString &disappeared_port : disappeared_device_ports)
+		{
+				if (ARS_TRACKERS_AUTO_REMOVE_DISCONNECTED_PORTS == false)
+				{
+						if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+						{
+								log_debug() << "ARS_PORT_LIFETIME auto_remove_disabled"
+														<< "port=" << disappeared_port;
+						}
+						continue;
+				}
+				if (ars_tracker_port_scan_active || ars_tracker_scan_probe_active)
+				{
+						if (ars_tracker_pending_remove_ports.contains(
+										disappeared_port, Qt::CaseInsensitive) == false)
+						{
+								ars_tracker_pending_remove_ports.append(disappeared_port);
+						}
+						if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+						{
+								log_debug() << "ARS_PORT_LIFETIME defer_remove_during_scan"
+														<< "port=" << disappeared_port;
+						}
+						continue;
+				}
+				log_debug() << "ArsTracker runtime port monitor removing disconnected device port="
+										<< disappeared_port;
+				remove_ars_tracker_device_by_port(disappeared_port, "port monitor disappeared");
+				ports_changed = true;
 		}
 
 		for (auto it = ars_tracker_ignored_until_by_port.begin();
@@ -6810,6 +6919,22 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 				{
 						if (system_ports.contains(port_name, Qt::CaseInsensitive))
 						{
+								qint64 first_seen_ms = ars_tracker_port_first_seen_ms.value(port_name, now_ms);
+								qint64 age_ms = now_ms - first_seen_ms;
+								if (age_ms < ARS_TRACKERS_PORT_STABLE_MS)
+								{
+										if (ARS_TRACKERS_DISCOVERY_TRACE)
+										{
+												log_debug() << "ArsTracker port not stable yet, wait port="
+																		<< port_name << "ageMs=" << age_ms;
+										}
+										continue;
+								}
+								if (ARS_TRACKERS_DISCOVERY_TRACE)
+								{
+										log_debug() << "ArsTracker stable new port, scheduling scan port="
+																<< port_name << "ageMs=" << age_ms;
+								}
 								ars_tracker_device_t *device = find_ars_tracker_device_by_port(port_name);
 								if (device != nullptr && device->reconnecting == true)
 								{
@@ -6823,6 +6948,7 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 		}
 
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
+		process_pending_ars_tracker_port_removals("port-monitor-cycle");
 		if (ARS_TRACKERS_PERF_LOG)
 		{
 				qint64 ms = perf_timer.elapsed();
@@ -8270,6 +8396,207 @@ void plugin_mcumgr::release_ars_tracker_device_resources(ars_tracker_device_t *d
 		}
 }
 
+void plugin_mcumgr::remove_ars_tracker_device_by_port(const QString &port_name,
+																										 const QString &reason)
+{
+		QString trimmed_port = port_name.trimmed();
+		if (trimmed_port.isEmpty())
+		{
+				return;
+		}
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME remove_begin"
+										<< "port=" << trimmed_port
+										<< "reason=" << reason;
+		}
+
+		int remove_index = -1;
+		QString removed_serial;
+		QString removed_display;
+		bool removed_was_active = false;
+		for (int i = 0; i < ars_tracker_devices.size(); ++i)
+		{
+				if (ars_tracker_devices[i].portName.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+				{
+						remove_index = i;
+						removed_serial = ars_tracker_devices[i].serialNumber;
+						removed_display = ars_tracker_devices[i].displayName;
+						removed_was_active = ars_tracker_devices[i].active;
+						release_ars_tracker_device_resources(&ars_tracker_devices[i]);
+						break;
+				}
+		}
+		if (remove_index < 0)
+		{
+				return;
+		}
+
+		for (int i = ars_tracker_scan_results.size() - 1; i >= 0; --i)
+		{
+				if (ars_tracker_scan_results[i].port_name.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+				{
+						ars_tracker_scan_results.removeAt(i);
+				}
+		}
+
+		QQueue<ars_tracker_lightweight_telemetry_request_t> filtered_queue;
+		while (ars_tracker_lightweight_telemetry_queue.isEmpty() == false)
+		{
+				ars_tracker_lightweight_telemetry_request_t request =
+						ars_tracker_lightweight_telemetry_queue.dequeue();
+				bool same_port = request.portName.compare(trimmed_port, Qt::CaseInsensitive) == 0;
+				bool same_serial = removed_serial.trimmed().isEmpty() == false &&
+													 request.serialNumber.compare(
+															 removed_serial, Qt::CaseInsensitive) == 0;
+				if (same_port == false && same_serial == false)
+				{
+						filtered_queue.enqueue(request);
+				}
+		}
+		ars_tracker_lightweight_telemetry_queue = filtered_queue;
+
+		bool telemetry_active_removed = false;
+		if (ars_tracker_lightweight_telemetry_active &&
+				(ars_tracker_lightweight_telemetry_active_port.compare(
+						 trimmed_port, Qt::CaseInsensitive) == 0 ||
+				 (removed_serial.trimmed().isEmpty() == false &&
+					ars_tracker_lightweight_telemetry_active_serial.compare(
+							removed_serial, Qt::CaseInsensitive) == 0)))
+		{
+				telemetry_active_removed = true;
+				if (timer_ars_tracker_lightweight_telemetry_timeout != nullptr)
+				{
+						timer_ars_tracker_lightweight_telemetry_timeout->stop();
+				}
+				ars_tracker_lightweight_telemetry_active = false;
+				ars_tracker_lightweight_telemetry_active_port.clear();
+				ars_tracker_lightweight_telemetry_active_serial.clear();
+				ars_tracker_lightweight_telemetry_active_command = ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
+		}
+
+		if (ars_tracker_persistent_info_refresh_port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+		{
+				ars_tracker_persistent_info_refresh_port.clear();
+		}
+		if (ars_tracker_persistent_session_operation_port.compare(
+						trimmed_port, Qt::CaseInsensitive) == 0)
+		{
+				ars_tracker_persistent_session_operation_port.clear();
+		}
+		if (ars_tracker_persistent_export_port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+		{
+				ars_tracker_persistent_export_port.clear();
+		}
+		if (ars_tracker_persistent_shell_command_port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+		{
+				ars_tracker_persistent_shell_command_port.clear();
+		}
+		if (ars_tracker_persistent_firmware_port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+		{
+				ars_tracker_persistent_firmware_port.clear();
+		}
+		if (ars_tracker_pending_active_refresh_port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+		{
+				ars_tracker_pending_active_refresh_port.clear();
+		}
+
+		ars_tracker_devices.removeAt(remove_index);
+		log_debug() << "ArsTracker device removed port=" << trimmed_port
+								<< "serial=" << removed_serial
+								<< "display=" << removed_display
+								<< "reason=" << reason;
+
+		QString selected_port = ars_tracker_selected_port_name();
+		if (selected_port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+		{
+				selected_port.clear();
+		}
+		populate_ars_tracker_serial_ports(
+				ars_tracker_scan_results, selected_port,
+				ars_tracker_scan_results.isEmpty() ? "No ArsTracker devices found" : QString());
+
+		if (removed_was_active)
+		{
+				bool selected_new_active = false;
+				for (const ars_tracker_device_t &device : ars_tracker_devices)
+				{
+						if (device.connected)
+						{
+								set_active_ars_tracker_device(device.portName, true);
+								log_debug() << "ArsTracker active device changed after removal oldPort="
+														<< trimmed_port << "newPort=" << device.portName;
+								selected_new_active = true;
+								break;
+						}
+				}
+				if (selected_new_active == false)
+				{
+						for (int i = 0; i < ars_tracker_devices.size(); ++i)
+						{
+								ars_tracker_devices[i].active = false;
+						}
+						clear_ars_tracker_device_logs_view();
+						ars_tracker_info_changed(ars_tracker_info_t());
+						if (lbl_ars_tracker_status != nullptr)
+						{
+								lbl_ars_tracker_status->setText("No tracker selected.");
+						}
+						log_debug() << "ArsTracker active device cleared because removed port="
+														<< trimmed_port;
+				}
+		}
+
+		schedule_ars_trackers_table_refresh("port-disconnected", true);
+		if (telemetry_active_removed)
+		{
+				QTimer::singleShot(0, this,
+													 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+		}
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME remove_end"
+										<< "port=" << trimmed_port
+										<< "reason=" << reason;
+		}
+}
+
+void plugin_mcumgr::process_pending_ars_tracker_port_removals(const QString &reason)
+{
+		if (ars_tracker_pending_remove_ports.isEmpty())
+		{
+				return;
+		}
+		if (ars_tracker_port_scan_active || ars_tracker_scan_probe_active)
+		{
+				if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+				{
+						log_debug() << "ARS_PORT_LIFETIME pending_remove_deferred"
+												<< "reason=" << reason
+												<< "pendingCount=" << ars_tracker_pending_remove_ports.size();
+				}
+				return;
+		}
+
+		QStringList ports = ars_tracker_pending_remove_ports;
+		ars_tracker_pending_remove_ports.clear();
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME pending_remove_process_begin"
+										<< "reason=" << reason
+										<< "count=" << ports.size();
+		}
+		for (const QString &port : ports)
+		{
+				remove_ars_tracker_device_by_port(port, reason);
+		}
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME pending_remove_process_end"
+										<< "reason=" << reason;
+		}
+}
+
 void plugin_mcumgr::disconnect_all_ars_tracker_devices()
 {
 		log_debug() << "ArsTracker explicit disconnect all requested";
@@ -8775,22 +9102,35 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 								<< ars_tracker_connected_device_count() << "source="
 								<< ars_tracker_scan_request_source;
 
-		for (int i = ars_tracker_devices.size() - 1; i >= 0; --i)
+		QStringList disconnected_ports;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
 		{
-				ars_tracker_device_t &device = ars_tracker_devices[i];
 				if (system_ports.contains(device.portName, Qt::CaseInsensitive) == false)
 				{
-						log_debug() << "ArsTracker device port disappeared" << device.portName
-												<< ", marking stale";
-						log_debug() << "ArsTracker device transport closed/disconnected, preserving log buffer port="
-												<< device.portName << "bufferBytes="
-												<< device.deviceLogBuffer.size();
-						release_ars_tracker_device_resources(&device);
-						device.connected = false;
-						device.active = false;
-						device.reconnecting = true;
-						device.info_refreshing = false;
-						device.currentInfoShellCommand.clear();
+						disconnected_ports.append(device.portName);
+				}
+		}
+		for (const QString &port_name : disconnected_ports)
+		{
+				if (ARS_TRACKERS_AUTO_REMOVE_DISCONNECTED_PORTS == false)
+				{
+						if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+						{
+								log_debug() << "ARS_PORT_LIFETIME auto_remove_disabled"
+														<< "port=" << port_name
+														<< "source=scan-start";
+						}
+						continue;
+				}
+				if (ars_tracker_pending_remove_ports.contains(port_name, Qt::CaseInsensitive) == false)
+				{
+						ars_tracker_pending_remove_ports.append(port_name);
+				}
+				if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+				{
+						log_debug() << "ARS_PORT_LIFETIME defer_remove_during_scan"
+												<< "port=" << port_name
+												<< "source=scan-start";
 				}
 		}
 
@@ -8826,6 +9166,17 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 				}
 				else
 				{
+						if (device != nullptr && ARS_TRACKERS_DISCOVERY_TRACE)
+						{
+								log_debug() << "ArsTracker stale persistent device skipped during scan preserve port="
+														<< port_name
+														<< "connected=" << device->connected
+														<< "hasSerial=" << (device->serialPort != nullptr)
+														<< "serialOpen="
+														<< (device->serialPort != nullptr ? device->serialPort->isOpen() : false)
+														<< "hasTransport=" << (device->transport != nullptr)
+														<< "hasProcessor=" << (device->processor != nullptr);
+						}
 						qint64 remaining_backoff_ms = 0;
 						QString backoff_reason;
 						if (ars_tracker_scan_ignore_port_backoff == false &&
@@ -8910,6 +9261,11 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 
 void plugin_mcumgr::finish_ars_tracker_port_scan(const QString &status_message)
 {
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME scan_finish_begin"
+										<< "status=" << status_message;
+		}
 		if (ars_tracker_scan_shell_mgmt != nullptr)
 		{
 				ars_tracker_scan_shell_mgmt->cancel();
@@ -8980,11 +9336,23 @@ void plugin_mcumgr::finish_ars_tracker_port_scan(const QString &status_message)
 
 		lbl_ars_tracker_status->setText(status_message);
 		schedule_ars_trackers_table_refresh("scan-finished", true);
+		process_pending_ars_tracker_port_removals("scan-finished");
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME scan_finish_end"
+										<< "status=" << status_message;
+		}
 }
 
 void plugin_mcumgr::begin_next_ars_tracker_port_probe()
 {
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME probe_begin_enter"
+										<< "active=" << ars_tracker_port_scan_active
+										<< "currentPort=" << ars_tracker_scan_current_port;
+		}
 		if (ars_tracker_port_scan_active == false)
 		{
 				return;
@@ -9024,6 +9392,11 @@ void plugin_mcumgr::begin_next_ars_tracker_port_probe()
 
 		ars_tracker_scan_current_port =
 				ars_tracker_scan_pending_ports.at(ars_tracker_scan_port_index++);
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME probe_begin"
+										<< "port=" << ars_tracker_scan_current_port;
+		}
 		ars_tracker_scan_probe_active = false;
 		ars_tracker_scan_probe_finished = false;
 		ars_tracker_scan_param_sn_sent = false;
@@ -9229,6 +9602,13 @@ void plugin_mcumgr::configure_ars_tracker_scan_serial_port(const QString &port_n
 void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString &serial_number,
 																										const QString &reason)
 {
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME probe_complete_begin"
+										<< "port=" << ars_tracker_scan_current_port
+										<< "matched=" << matched
+										<< "reason=" << reason;
+		}
 		if (ars_tracker_scan_probe_active == false)
 		{
 				return;
@@ -9415,18 +9795,113 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 												if (error == QSerialPort::ResourceError ||
 														error == QSerialPort::DeviceNotFoundError)
 												{
-														log_debug() << "ArsTracker device transport closed/disconnected, preserving log buffer port="
-																				<< persistent_device->portName << "bufferBytes="
-																				<< persistent_device->deviceLogBuffer.size();
+														const QString failed_port = persistent_device->portName;
+														const QString failed_serial = persistent_device->serialNumber;
+														const bool was_active = persistent_device->active;
+														if (ARS_TRACKERS_DISCOVERY_TRACE)
+														{
+																log_warning() << "ArsTracker ResourceError mark disconnected port="
+																							<< failed_port << "serial=" << failed_serial;
+														}
 														release_ars_tracker_device_resources(persistent_device);
 														persistent_device->connected = false;
 														persistent_device->active = false;
 														persistent_device->reconnecting = true;
-														ars_tracker_runtime_known_ports.removeAll(
-																persistent_device->portName);
-														QTimer::singleShot(0, this, [this]() {
-		refresh_ars_tracker_serial_ports_internal("serial closed", false);
-														});
+														persistent_device->info_refreshing = false;
+														persistent_device->currentInfoShellCommand.clear();
+														persistent_device->telemetryRefreshing = false;
+														QQueue<ars_tracker_lightweight_telemetry_request_t> filtered_queue;
+														while (ars_tracker_lightweight_telemetry_queue.isEmpty() == false)
+														{
+																ars_tracker_lightweight_telemetry_request_t request =
+																		ars_tracker_lightweight_telemetry_queue.dequeue();
+																bool drop =
+																		request.portName.compare(failed_port, Qt::CaseInsensitive) == 0 ||
+																		(failed_serial.isEmpty() == false &&
+																		 request.serialNumber.compare(
+																				 failed_serial, Qt::CaseInsensitive) == 0);
+																if (drop == false)
+																{
+																		filtered_queue.enqueue(request);
+																}
+														}
+														ars_tracker_lightweight_telemetry_queue = filtered_queue;
+														if (ars_tracker_lightweight_telemetry_active &&
+																(ars_tracker_lightweight_telemetry_active_port.compare(
+																		 failed_port, Qt::CaseInsensitive) == 0 ||
+																 (!failed_serial.isEmpty() &&
+																	ars_tracker_lightweight_telemetry_active_serial.compare(
+																			failed_serial, Qt::CaseInsensitive) == 0)))
+														{
+																if (timer_ars_tracker_lightweight_telemetry_timeout != nullptr)
+																{
+																		timer_ars_tracker_lightweight_telemetry_timeout->stop();
+																}
+																ars_tracker_lightweight_telemetry_active = false;
+																ars_tracker_lightweight_telemetry_active_port.clear();
+																ars_tracker_lightweight_telemetry_active_serial.clear();
+																ars_tracker_lightweight_telemetry_active_command =
+																		ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
+																QTimer::singleShot(
+																		0, this,
+																		&plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+														}
+														if (was_active)
+														{
+																for (int i = 0; i < ars_tracker_devices.size(); ++i)
+																{
+																		ars_tracker_devices[i].active = false;
+																}
+																QString fallback_port;
+																for (const ars_tracker_device_t &candidate : ars_tracker_devices)
+																{
+																		if (candidate.connected && candidate.portName.compare(
+																												failed_port,
+																												Qt::CaseInsensitive) != 0)
+																		{
+																				fallback_port = candidate.portName;
+																				break;
+																		}
+																}
+																if (fallback_port.isEmpty() == false)
+																{
+																		set_active_ars_tracker_device(fallback_port, true);
+																}
+																else
+																{
+																		clear_ars_tracker_device_logs_view();
+																		ars_tracker_info_changed(ars_tracker_info_t());
+																}
+														}
+														populate_ars_tracker_serial_ports(
+																ars_tracker_scan_results, ars_tracker_selected_port_name(),
+																ars_tracker_scan_results.isEmpty() ? "No ArsTracker devices found" :
+																																	 QString());
+														schedule_ars_trackers_table_refresh("resource-error", true);
+														QTimer::singleShot(
+																ARS_TRACKERS_RESOURCE_ERROR_RESCAN_DELAY_MS, this,
+																[this, failed_port]() {
+																		bool still_present = false;
+																		for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
+																		{
+																				if (info.portName().compare(
+																								failed_port, Qt::CaseInsensitive) == 0)
+																				{
+																						still_present = true;
+																						break;
+																				}
+																		}
+																		if (still_present)
+																		{
+																				if (ARS_TRACKERS_DISCOVERY_TRACE)
+																				{
+																						log_debug() << "ArsTracker ResourceError rescan scheduled port="
+																											<< failed_port;
+																				}
+																				request_ars_tracker_port_scan(
+																						"resource-error", true, true, QStringList() << failed_port);
+																		}
+																});
 												}
 										});
 						connect(device->transport, &smp_uart_auterm::non_smp_uart_data_received, this,
@@ -9445,8 +9920,45 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 						log_debug() << "ArsTracker port scan accepted persistent device"
 												<< result.port_name << "serial:" << result.serial_number;
 						log_debug() << "ArsTracker port scan keeping port open" << result.port_name;
-						enqueue_ars_tracker_initial_lightweight_telemetry(
-								*device, reconnected_device ? "claim-reconnected" : "claim-new");
+						const QString telemetry_port = result.port_name;
+						const QString telemetry_serial = result.serial_number.trimmed();
+						if (ARS_TRACKERS_DISCOVERY_TRACE)
+						{
+								log_debug() << "Lightweight telemetry initial delayed port=" << telemetry_port;
+						}
+						QTimer::singleShot(ARS_TRACKERS_INITIAL_TELEMETRY_DELAY_MS, this,
+														 [this, telemetry_port, telemetry_serial, reconnected_device]() {
+																 ars_tracker_device_t *delayed_device =
+																		 find_ars_tracker_device_by_port(telemetry_port);
+																 if (delayed_device == nullptr ||
+																		 delayed_device->serialNumber.compare(
+																				 telemetry_serial,
+																				 Qt::CaseInsensitive) != 0 ||
+																		 delayed_device->connected == false ||
+																		 delayed_device->serialPort == nullptr ||
+																		 delayed_device->serialPort->isOpen() == false ||
+																		 delayed_device->transport == nullptr ||
+																		 delayed_device->processor == nullptr)
+																 {
+																		 if (ARS_TRACKERS_DISCOVERY_TRACE)
+																		 {
+																				 log_debug()
+																						 << "Lightweight telemetry initial skipped, device no longer connected port="
+																						 << telemetry_port;
+																		 }
+																		 return;
+																 }
+																 if (ARS_TRACKERS_DISCOVERY_TRACE)
+																 {
+																		 log_debug()
+																				 << "Lightweight telemetry initial starting after delay port="
+																				 << telemetry_port;
+																 }
+																 enqueue_ars_tracker_initial_lightweight_telemetry(
+																		 *delayed_device,
+																		 reconnected_device ? "claim-reconnected-delayed" :
+																													"claim-new-delayed");
+														 });
 				}
 				else
 				{
@@ -9493,6 +10005,11 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 		ars_tracker_scan_probe_backoff_current_port = false;
 
 		QTimer::singleShot(0, this, &plugin_mcumgr::begin_next_ars_tracker_port_probe);
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME probe_complete_end"
+										<< "port=" << completed_port;
+		}
 }
 
 bool plugin_mcumgr::current_ars_tracker_serial_number(QString *serial_number) const
@@ -9591,6 +10108,12 @@ void plugin_mcumgr::handle_ars_tracker_scan_serial_error()
 void plugin_mcumgr::handle_ars_tracker_scan_shell_status(uint8_t user_data, group_status status,
 																												 QString error_string)
 {
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME scan_status"
+										<< "port=" << ars_tracker_scan_current_port
+										<< "status=" << ars_tracker_scan_status_to_string(status);
+		}
 		Q_UNUSED(user_data);
 
 		if (ars_tracker_scan_probe_active == false)
@@ -11483,6 +12006,12 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 																															 group_status status,
 																															 QString error_string)
 {
+		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
+		{
+				log_debug() << "ARS_PORT_LIFETIME persistent_status_begin"
+										<< "action=" << int(user_data)
+										<< "status=" << ars_tracker_scan_status_to_string(status);
+		}
 		if (user_data != ACTION_ARS_TRACKER_INFO_REFRESH &&
 				user_data != ACTION_ARS_TRACKER_SESSION_LIST &&
 				user_data != ACTION_ARS_TRACKER_DELETE_SESSION &&

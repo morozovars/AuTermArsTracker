@@ -480,6 +480,8 @@ private:
     void initialize_ars_tracker_scan_probe_context();
     void destroy_ars_tracker_scan_probe_context();
     void release_ars_tracker_device_resources(ars_tracker_device_t *device);
+    void remove_ars_tracker_device_by_port(const QString &port_name, const QString &reason);
+    void process_pending_ars_tracker_port_removals(const QString &reason);
     void disconnect_all_ars_tracker_devices();
     void clear_ars_tracker_devices();
     void upsert_ars_tracker_device(const QString &port_name, const QString &serial_number,
@@ -1066,6 +1068,8 @@ private:
     QHash<QString, QString> ars_tracker_probe_backoff_reason_by_port;
     QHash<QString, int> ars_tracker_probe_backoff_failures_by_port;
     QStringList ars_tracker_runtime_known_ports;
+    QStringList ars_tracker_pending_remove_ports;
+    QHash<QString, qint64> ars_tracker_port_first_seen_ms;
     QTimer *ars_tracker_runtime_port_monitor_timer = nullptr;
     QElapsedTimer ars_tracker_last_scan_timer;
     bool ars_tracker_port_scan_debounce_pending = false;

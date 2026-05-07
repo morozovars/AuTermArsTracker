@@ -30,8 +30,10 @@
 #include <QJsonArray>
 #include <QDateTime>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QSerialPort>
 #include <QSerialPortInfo>
+#include <QScrollBar>
 #include <QFileInfo>
 #include "plugin_mcumgr.h"
 #include "ars_tracker_parser.h"
@@ -47,6 +49,106 @@ static const qint64 ars_tracker_scan_debounce_ms = 800;
 static const qint64 ars_tracker_hard_probe_timeout_ms = 3000;
 static const qint64 ars_tracker_non_ars_backoff_ms = 30000;
 static const qint64 ars_tracker_max_pre_identification_log_bytes = 8192;
+static const bool ARS_TRACKERS_PERF_LOG = false;
+static const bool ARS_TRACKERS_PERF_VERBOSE = false;
+static const bool ARS_TRACKERS_SCROLL_LOG = false;
+static const bool ARS_TRACKERS_CRASH_TRACE_LOG = false;
+static const bool ARS_TRACKER_DISPLAY_PARSE_VERBOSE = false;
+static const bool ARS_TRACKERS_LARGE_ROW_TEST_MODE = false;
+static const bool ARS_TRACKERS_DEFER_REFRESH_DURING_SCROLL = false;
+
+struct ars_trackers_perf_stats_t
+{
+		quint64 schedule_refresh_calls = 0;
+		quint64 schedule_refresh_coalesced = 0;
+		quint64 refresh_table_executed = 0;
+		quint64 refresh_table_total_ms_sum = 0;
+		qint64 refresh_table_max_ms = 0;
+		quint64 telemetry_responses = 0;
+		quint64 telemetry_timeouts = 0;
+		quint64 telemetry_requeues_busy = 0;
+		quint64 port_monitor_ticks = 0;
+		qint64 port_monitor_max_ms = 0;
+		quint64 slow_serial_reads = 0;
+		qint64 slow_serial_read_max_ms = 0;
+		qint64 last_telemetry_start_ms = 0;
+		qint64 last_summary_ms = 0;
+
+		quint64 schedule_refresh_calls_window = 0;
+		quint64 schedule_refresh_coalesced_window = 0;
+		quint64 refresh_table_executed_window = 0;
+		quint64 refresh_table_total_ms_sum_window = 0;
+		qint64 refresh_table_max_ms_window = 0;
+		quint64 telemetry_responses_window = 0;
+		quint64 telemetry_timeouts_window = 0;
+		quint64 telemetry_requeues_busy_window = 0;
+		quint64 port_monitor_ticks_window = 0;
+		qint64 port_monitor_max_ms_window = 0;
+		quint64 slow_serial_reads_window = 0;
+		qint64 slow_serial_read_max_ms_window = 0;
+};
+
+static ars_trackers_perf_stats_t g_ars_trackers_perf_stats;
+static QElapsedTimer g_ars_trackers_perf_timer;
+
+static qint64 ars_trackers_perf_now_ms()
+{
+		if (g_ars_trackers_perf_timer.isValid() == false)
+		{
+				g_ars_trackers_perf_timer.start();
+				g_ars_trackers_perf_stats.last_summary_ms = 0;
+		}
+		return g_ars_trackers_perf_timer.elapsed();
+}
+
+static void ars_trackers_perf_maybe_log_summary(bool tab_active)
+{
+		if (ARS_TRACKERS_PERF_LOG == false)
+		{
+				return;
+		}
+
+		qint64 now_ms = ars_trackers_perf_now_ms();
+		if ((now_ms - g_ars_trackers_perf_stats.last_summary_ms) < 5000)
+		{
+				return;
+		}
+		g_ars_trackers_perf_stats.last_summary_ms = now_ms;
+
+		double avg_refresh_ms = g_ars_trackers_perf_stats.refresh_table_executed_window > 0 ?
+				double(g_ars_trackers_perf_stats.refresh_table_total_ms_sum_window) /
+						double(g_ars_trackers_perf_stats.refresh_table_executed_window) :
+				0.0;
+		qDebug()
+				<< "[ARS_TRACKERS_PERF_SUMMARY]"
+				<< "5s"
+				<< "tabActive=" << tab_active
+				<< "schedule=" << g_ars_trackers_perf_stats.schedule_refresh_calls_window
+				<< "coalesced=" << g_ars_trackers_perf_stats.schedule_refresh_coalesced_window
+				<< "refresh=" << g_ars_trackers_perf_stats.refresh_table_executed_window
+				<< "avg_refresh_ms=" << QString::number(avg_refresh_ms, 'f', 1)
+				<< "max_refresh_ms=" << g_ars_trackers_perf_stats.refresh_table_max_ms_window
+				<< "telemetry_resp=" << g_ars_trackers_perf_stats.telemetry_responses_window
+				<< "timeouts=" << g_ars_trackers_perf_stats.telemetry_timeouts_window
+				<< "requeue_busy=" << g_ars_trackers_perf_stats.telemetry_requeues_busy_window
+				<< "port_ticks=" << g_ars_trackers_perf_stats.port_monitor_ticks_window
+				<< "max_port_ms=" << g_ars_trackers_perf_stats.port_monitor_max_ms_window
+				<< "slow_serial=" << g_ars_trackers_perf_stats.slow_serial_reads_window
+				<< "max_serial_ms=" << g_ars_trackers_perf_stats.slow_serial_read_max_ms_window;
+
+		g_ars_trackers_perf_stats.schedule_refresh_calls_window = 0;
+		g_ars_trackers_perf_stats.schedule_refresh_coalesced_window = 0;
+		g_ars_trackers_perf_stats.refresh_table_executed_window = 0;
+		g_ars_trackers_perf_stats.refresh_table_total_ms_sum_window = 0;
+		g_ars_trackers_perf_stats.refresh_table_max_ms_window = 0;
+		g_ars_trackers_perf_stats.telemetry_responses_window = 0;
+		g_ars_trackers_perf_stats.telemetry_timeouts_window = 0;
+		g_ars_trackers_perf_stats.telemetry_requeues_busy_window = 0;
+		g_ars_trackers_perf_stats.port_monitor_ticks_window = 0;
+		g_ars_trackers_perf_stats.port_monitor_max_ms_window = 0;
+		g_ars_trackers_perf_stats.slow_serial_reads_window = 0;
+		g_ars_trackers_perf_stats.slow_serial_read_max_ms_window = 0;
+}
 
 static QString ars_tracker_scan_status_to_string(group_status status)
 {
@@ -6390,6 +6492,10 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		table_ars_trackers->verticalHeader()->setVisible(false);
 		table_ars_trackers->horizontalHeader()->setStretchLastSection(false);
 		table_ars_trackers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+		if (ARS_TRACKERS_LARGE_ROW_TEST_MODE)
+		{
+				table_ars_trackers->verticalHeader()->setDefaultSectionSize(200);
+		}
 		gridLayout_ars_trackers->addWidget(table_ars_trackers, 1, 0, 1, 1);
 
 		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
@@ -6412,8 +6518,21 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 												<< reason;
 						return;
 				}
-				log_debug() << "Trackers table refresh executing reason=" << reason;
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						log_debug() << "Trackers table refresh executing reason=" << reason;
+				}
+				if (ARS_TRACKERS_CRASH_TRACE_LOG)
+				{
+						log_debug() << "ARS_TRACKERS_CRASH_TRACE before refresh_ars_trackers_table_from_devices"
+												<< "reason=" << reason;
+				}
 				refresh_ars_trackers_table_from_devices();
+				if (ARS_TRACKERS_CRASH_TRACE_LOG)
+				{
+						log_debug() << "ARS_TRACKERS_CRASH_TRACE after refresh_ars_trackers_table_from_devices"
+												<< "reason=" << reason;
+				}
 		});
 
 		if (timer_ars_tracker_lightweight_telemetry_timeout == nullptr)
@@ -6422,6 +6541,52 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				timer_ars_tracker_lightweight_telemetry_timeout->setSingleShot(true);
 				connect(timer_ars_tracker_lightweight_telemetry_timeout, &QTimer::timeout, this,
 								&plugin_mcumgr::handle_ars_tracker_lightweight_telemetry_timeout);
+		}
+
+		QScrollBar *scroll_bar = table_ars_trackers->verticalScrollBar();
+		if (scroll_bar != nullptr && ars_trackers_scroll_connections_installed == false)
+		{
+				connect(scroll_bar, &QScrollBar::sliderPressed, this, [this]() {
+						ars_trackers_scroll_active = true;
+						ars_trackers_last_scroll_event_ms = ars_trackers_perf_now_ms();
+						if (ARS_TRACKERS_SCROLL_LOG)
+						{
+								log_debug() << "ARS_TRACKERS_SCROLL pressed";
+						}
+				});
+				connect(scroll_bar, &QScrollBar::sliderReleased, this, [this]() {
+						ars_trackers_scroll_active = false;
+						ars_trackers_last_scroll_event_ms = ars_trackers_perf_now_ms();
+						if (ARS_TRACKERS_SCROLL_LOG)
+						{
+								log_debug() << "ARS_TRACKERS_SCROLL released";
+						}
+				});
+				connect(scroll_bar, &QScrollBar::valueChanged, this, [this](int value) {
+						qint64 now_ms = ars_trackers_perf_now_ms();
+						ars_trackers_last_scroll_event_ms = now_ms;
+						if (ARS_TRACKERS_SCROLL_LOG &&
+								(now_ms - ars_trackers_last_scroll_log_ms) >= 300)
+						{
+								ars_trackers_last_scroll_log_ms = now_ms;
+								QScrollBar *sb = table_ars_trackers != nullptr ?
+										table_ars_trackers->verticalScrollBar() :
+										nullptr;
+								log_debug() << "ARS_TRACKERS_SCROLL"
+														<< "value=" << value
+														<< "max=" << (sb != nullptr ? sb->maximum() : -1)
+														<< "rows="
+														<< (table_ars_trackers != nullptr ?
+																		table_ars_trackers->rowCount() :
+																		-1)
+														<< "devices=" << ars_tracker_devices.size()
+														<< "refreshTimerActive="
+														<< (timer_ars_trackers_table_refresh != nullptr ?
+																		timer_ars_trackers_table_refresh->isActive() :
+																		false);
+						}
+				});
+				ars_trackers_scroll_connections_installed = true;
 		}
 
 		int tracker_inspector_index = tabWidget_orig->indexOf(tab_ars_tracker);
@@ -6479,6 +6644,12 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports()
 void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &source,
 																															bool allow_probe)
 {
+		QElapsedTimer perf_timer;
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				perf_timer.start();
+		}
+		bool triggered_scan = false;
 		if (combo_ars_tracker_port == nullptr)
 		{
 				return;
@@ -6492,6 +6663,29 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 												<< ars_tracker_scan_current_port;
 				}
 				sync_ars_tracker_serial_controls(ars_tracker_any_loading());
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						qint64 ms = perf_timer.elapsed();
+						if (source == "port monitor")
+						{
+								++g_ars_trackers_perf_stats.port_monitor_ticks;
+								++g_ars_trackers_perf_stats.port_monitor_ticks_window;
+								g_ars_trackers_perf_stats.port_monitor_max_ms =
+										qMax(g_ars_trackers_perf_stats.port_monitor_max_ms, ms);
+								g_ars_trackers_perf_stats.port_monitor_max_ms_window =
+										qMax(g_ars_trackers_perf_stats.port_monitor_max_ms_window, ms);
+						}
+						if (source == "port monitor" || ms > 5)
+						{
+								log_debug() << "[ARS_TRACKERS_PERF]"
+														<< "port_monitor"
+														<< "source=" << source
+														<< "ms=" << ms
+														<< "ports=" << QSerialPortInfo::availablePorts().count()
+														<< "changed=0"
+														<< "triggered_scan=0";
+						}
+				}
 				return;
 		}
 
@@ -6577,6 +6771,30 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 						log_debug() << "ArsTracker port list unchanged for source=" << source;
 				}
 				sync_ars_tracker_serial_controls(ars_tracker_any_loading());
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						qint64 ms = perf_timer.elapsed();
+						if (source == "port monitor")
+						{
+								++g_ars_trackers_perf_stats.port_monitor_ticks;
+								++g_ars_trackers_perf_stats.port_monitor_ticks_window;
+								g_ars_trackers_perf_stats.port_monitor_max_ms =
+										qMax(g_ars_trackers_perf_stats.port_monitor_max_ms, ms);
+								g_ars_trackers_perf_stats.port_monitor_max_ms_window =
+										qMax(g_ars_trackers_perf_stats.port_monitor_max_ms_window, ms);
+						}
+						if (source == "port monitor" || ms > 5)
+						{
+								log_debug() << "[ARS_TRACKERS_PERF]"
+														<< "port_monitor"
+														<< "source=" << source
+														<< "ms=" << ms
+														<< "ports=" << available_ports.count()
+														<< "changed=0"
+														<< "triggered_scan=0";
+						}
+						ars_trackers_perf_maybe_log_summary(ars_trackers_tab_is_active());
+				}
 				return;
 		}
 
@@ -6586,6 +6804,7 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 
 		if (allow_probe == true)
 		{
+				triggered_scan = true;
 				QStringList preferred_ports;
 				for (const QString &port_name : changed_ports)
 				{
@@ -6604,6 +6823,30 @@ void plugin_mcumgr::refresh_ars_tracker_serial_ports_internal(const QString &sou
 		}
 
 		sync_ars_tracker_serial_controls(ars_tracker_any_loading());
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				qint64 ms = perf_timer.elapsed();
+				if (source == "port monitor")
+				{
+						++g_ars_trackers_perf_stats.port_monitor_ticks;
+						++g_ars_trackers_perf_stats.port_monitor_ticks_window;
+						g_ars_trackers_perf_stats.port_monitor_max_ms =
+								qMax(g_ars_trackers_perf_stats.port_monitor_max_ms, ms);
+						g_ars_trackers_perf_stats.port_monitor_max_ms_window =
+								qMax(g_ars_trackers_perf_stats.port_monitor_max_ms_window, ms);
+				}
+				if (source == "port monitor" || ms > 5)
+				{
+						log_debug() << "[ARS_TRACKERS_PERF]"
+												<< "port_monitor"
+												<< "source=" << source
+												<< "ms=" << ms
+												<< "ports=" << available_ports.count()
+												<< "changed=1"
+												<< "triggered_scan=" << triggered_scan;
+				}
+				ars_trackers_perf_maybe_log_summary(ars_trackers_tab_is_active());
+		}
 }
 
 void plugin_mcumgr::request_ars_tracker_port_scan(const QString &source, bool ignore_cooldown,
@@ -6876,10 +7119,13 @@ QString plugin_mcumgr::ars_tracker_device_display_text(const QString &serial_num
 				if (tracker_unique.isEmpty() == false && tracker_side.isEmpty() == false)
 				{
 						QString display_text = tracker_unique % tracker_side;
-						log_debug() << "ArsTracker UI tracker display parsed. full serial="
-												<< trimmed_serial << "unique=" << tracker_unique
-												<< "side=" << tracker_side << "display=" << display_text
-												<< "port=" << port_name;
+						if (ARS_TRACKER_DISPLAY_PARSE_VERBOSE)
+						{
+								log_debug() << "ArsTracker UI tracker display parsed. full serial="
+														<< trimmed_serial << "unique=" << tracker_unique
+														<< "side=" << tracker_side << "display=" << display_text
+														<< "port=" << port_name;
+						}
 						return display_text;
 				}
 
@@ -7116,6 +7362,7 @@ void plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command()
 				return;
 		}
 
+		int queue_size_before = ars_tracker_lightweight_telemetry_queue.size();
 		while (ars_tracker_lightweight_telemetry_queue.isEmpty() == false)
 		{
 				ars_tracker_lightweight_telemetry_request_t request =
@@ -7146,11 +7393,29 @@ void plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command()
 						{
 								request.deferCount++;
 								ars_tracker_lightweight_telemetry_queue.enqueue(request);
+								if (ARS_TRACKERS_PERF_LOG)
+								{
+										++g_ars_trackers_perf_stats.telemetry_requeues_busy;
+										++g_ars_trackers_perf_stats.telemetry_requeues_busy_window;
+								}
 								QTimer::singleShot(200, this,
 																	 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
 						}
 						log_debug() << "Lightweight telemetry command skipped invalid device: port="
 												<< device->portName << "reason=" << busy_reason;
+						if (ARS_TRACKERS_PERF_LOG)
+						{
+								log_debug() << "[ARS_TRACKERS_PERF]"
+														<< "telemetry_start"
+														<< "queue=" << queue_size_before
+														<< "serial=" << device->serialNumber
+														<< "port=" << device->portName
+														<< "cmd="
+														<< ars_tracker_lightweight_telemetry_command_to_string(request.command)
+														<< "busy=1"
+														<< "busyReason=" << busy_reason
+														<< "mode=" << int(mode);
+						}
 						continue;
 				}
 
@@ -7191,6 +7456,24 @@ void plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command()
 										<< "queueRemaining="
 										<< ars_tracker_lightweight_telemetry_queue.size();
 				bool started = device->shell->start_execute(&args, &device->shellRc);
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						qint64 now_ms = ars_trackers_perf_now_ms();
+						qint64 delta_ms = g_ars_trackers_perf_stats.last_telemetry_start_ms > 0 ?
+								(now_ms - g_ars_trackers_perf_stats.last_telemetry_start_ms) :
+								-1;
+						g_ars_trackers_perf_stats.last_telemetry_start_ms = now_ms;
+						log_debug() << "[ARS_TRACKERS_PERF]"
+												<< "telemetry_start"
+												<< "queue=" << queue_size_before
+												<< "serial=" << device->serialNumber
+												<< "port=" << device->portName
+												<< "cmd="
+												<< ars_tracker_lightweight_telemetry_command_to_string(request.command)
+												<< "busy=0"
+												<< "delta_ms=" << delta_ms
+												<< "mode=" << int(mode);
+				}
 				if (started == false)
 				{
 						log_debug() << "Lightweight telemetry command skipped invalid device: port="
@@ -7233,11 +7516,26 @@ void plugin_mcumgr::handle_ars_tracker_lightweight_telemetry_timeout()
 		{
 				return;
 		}
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				++g_ars_trackers_perf_stats.telemetry_timeouts;
+				++g_ars_trackers_perf_stats.telemetry_timeouts_window;
+				log_debug() << "[ARS_TRACKERS_PERF]"
+										<< "telemetry_timeout"
+										<< "serial=" << ars_tracker_lightweight_telemetry_active_serial
+										<< "port=" << ars_tracker_lightweight_telemetry_active_port
+										<< "cmd=" << ars_tracker_lightweight_telemetry_command_to_string(
+														ars_tracker_lightweight_telemetry_active_command)
+										<< "queue=" << ars_tracker_lightweight_telemetry_queue.size()
+										<< "total_timeouts=" << g_ars_trackers_perf_stats.telemetry_timeouts
+										<< "scheduled_refresh=0";
+		}
 		log_debug() << "Lightweight telemetry command timeout: port="
 								<< ars_tracker_lightweight_telemetry_active_port << "command="
 								<< ars_tracker_lightweight_telemetry_command_to_string(
 											 ars_tracker_lightweight_telemetry_active_command);
 		finish_ars_tracker_lightweight_telemetry_command();
+		ars_trackers_perf_maybe_log_summary(ars_trackers_tab_is_active());
 	}
 
 void plugin_mcumgr::store_ars_tracker_lightweight_telemetry_response(
@@ -7269,28 +7567,136 @@ void plugin_mcumgr::store_ars_tracker_lightweight_telemetry_response(
 								<< ars_tracker_lightweight_telemetry_command_to_string(command);
 }
 
+bool plugin_mcumgr::ars_trackers_table_refresh_is_low_priority(const QString &reason) const
+{
+		QString normalized = reason.trimmed().toLower();
+		return normalized == "lightweight-telemetry-response" ||
+					 normalized.startsWith("telemetry");
+}
+
+bool plugin_mcumgr::ars_trackers_scroll_recently_active(qint64 threshold_ms) const
+{
+		if (ars_trackers_scroll_active)
+		{
+				return true;
+		}
+		if (ars_trackers_last_scroll_event_ms <= 0)
+		{
+				return false;
+		}
+		qint64 now_ms = ars_trackers_perf_now_ms();
+		return (now_ms - ars_trackers_last_scroll_event_ms) <= threshold_ms;
+}
+
 void plugin_mcumgr::schedule_ars_trackers_table_refresh(const QString &reason,
 																												bool force_when_inactive)
 {
-		QString trimmed_reason = reason.trimmed().isEmpty() ? QString("unknown") : reason.trimmed();
-		if (ars_trackers_tab_is_active() == false && force_when_inactive == false)
+		const QString trimmed_reason =
+				reason.trimmed().isEmpty() ? QString("unknown") : reason.trimmed();
+		const bool tab_active = ars_trackers_tab_is_active();
+		const qint64 now_ms = ars_trackers_perf_now_ms();
+		const qint64 ms_since_scroll = ars_trackers_last_scroll_event_ms > 0 ?
+				(now_ms - ars_trackers_last_scroll_event_ms) :
+				-1;
+		const bool scrolling_or_recent = ars_trackers_scroll_recently_active(500);
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				++g_ars_trackers_perf_stats.schedule_refresh_calls;
+				++g_ars_trackers_perf_stats.schedule_refresh_calls_window;
+				log_debug() << "[ARS_TRACKERS_PERF]"
+										<< "schedule_refresh"
+										<< "ts=" << QDateTime::currentDateTime().toString("hh:mm:ss.zzz")
+										<< "elapsedMs=" << now_ms
+										<< "reason=" << trimmed_reason
+										<< "timerActive="
+										<< (timer_ars_trackers_table_refresh != nullptr ?
+														timer_ars_trackers_table_refresh->isActive() :
+														false)
+										<< "tabActive=" << tab_active
+										<< "scrollActive=" << scrolling_or_recent
+										<< "msSinceLastScroll=" << ms_since_scroll
+										<< "devices=" << ars_tracker_devices.size();
+				if (ARS_TRACKERS_PERF_VERBOSE)
+				{
+						log_debug() << "[ARS_TRACKERS_PERF]" << "schedule_refresh_enter";
+				}
+		}
+		if (tab_active == false && force_when_inactive == false)
 		{
 				ars_trackers_table_dirty = true;
 				log_debug() << "Trackers table refresh skipped/deferred because tab inactive reason="
 										<< trimmed_reason;
+				ars_trackers_perf_maybe_log_summary(tab_active);
+				return;
+		}
+
+		if (ARS_TRACKERS_DEFER_REFRESH_DURING_SCROLL &&
+				tab_active &&
+				ars_trackers_table_refresh_is_low_priority(trimmed_reason) &&
+				scrolling_or_recent &&
+				timer_ars_trackers_table_refresh != nullptr)
+		{
+				if (ARS_TRACKERS_SCROLL_LOG)
+				{
+						log_debug() << "ARS_TRACKERS_SCROLL defer_refresh enter"
+												<< "reason=" << trimmed_reason;
+				}
+				ars_trackers_table_refresh_pending = true;
+				ars_trackers_table_refresh_reason =
+						ars_trackers_table_refresh_reason.isEmpty() ?
+								trimmed_reason :
+								ars_trackers_table_refresh_reason % ";" % trimmed_reason;
+				ars_trackers_table_refresh_force_when_inactive =
+						ars_trackers_table_refresh_force_when_inactive || force_when_inactive;
+				if (ARS_TRACKERS_SCROLL_LOG)
+				{
+						log_debug() << "ARS_TRACKERS_SCROLL defer_refresh"
+												<< "reason=" << trimmed_reason
+												<< "delay=500"
+												<< "scrollActive=" << scrolling_or_recent
+												<< "msSinceLastScroll=" << ms_since_scroll;
+				}
+				timer_ars_trackers_table_refresh->start(500);
+				ars_trackers_perf_maybe_log_summary(tab_active);
+				if (ARS_TRACKERS_SCROLL_LOG)
+				{
+						log_debug() << "ARS_TRACKERS_SCROLL defer_refresh exit"
+												<< "reason=" << trimmed_reason;
+				}
 				return;
 		}
 
 		if (timer_ars_trackers_table_refresh == nullptr)
 		{
-				log_debug() << "Trackers table refresh executing reason=" << trimmed_reason;
+				if (ARS_TRACKERS_CRASH_TRACE_LOG)
+				{
+						log_debug() << "ARS_TRACKERS_CRASH_TRACE before refresh_ars_trackers_table_from_devices"
+												<< "reason=" << trimmed_reason;
+				}
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						log_debug() << "Trackers table refresh executing reason=" << trimmed_reason;
+				}
 				refresh_ars_trackers_table_from_devices();
+				if (ARS_TRACKERS_CRASH_TRACE_LOG)
+				{
+						log_debug() << "ARS_TRACKERS_CRASH_TRACE after refresh_ars_trackers_table_from_devices"
+												<< "reason=" << trimmed_reason;
+				}
 				return;
 		}
 
 		if (ars_trackers_table_refresh_pending)
 		{
-				log_debug() << "Trackers table refresh coalesced reason=" << trimmed_reason;
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						++g_ars_trackers_perf_stats.schedule_refresh_coalesced;
+						++g_ars_trackers_perf_stats.schedule_refresh_coalesced_window;
+				}
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						log_debug() << "Trackers table refresh coalesced reason=" << trimmed_reason;
+				}
 				ars_trackers_table_refresh_reason =
 						ars_trackers_table_refresh_reason.isEmpty() ?
 								trimmed_reason :
@@ -7303,12 +7709,37 @@ void plugin_mcumgr::schedule_ars_trackers_table_refresh(const QString &reason,
 		ars_trackers_table_refresh_pending = true;
 		ars_trackers_table_refresh_reason = trimmed_reason;
 		ars_trackers_table_refresh_force_when_inactive = force_when_inactive;
-		log_debug() << "Trackers table refresh scheduled reason=" << trimmed_reason;
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				log_debug() << "Trackers table refresh scheduled reason=" << trimmed_reason;
+		}
 		timer_ars_trackers_table_refresh->start(150);
+		if (ARS_TRACKERS_PERF_LOG && ARS_TRACKERS_PERF_VERBOSE)
+		{
+				log_debug() << "[ARS_TRACKERS_PERF]" << "schedule_refresh_exit";
+		}
+		ars_trackers_perf_maybe_log_summary(tab_active);
 }
 
 void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 {
+		QElapsedTimer perf_total_timer;
+		QElapsedTimer perf_phase_timer;
+		qint64 perf_build_ms = 0;
+		qint64 perf_sort_ms = 0;
+		qint64 perf_clear_ms = 0;
+		qint64 perf_widgets_ms = 0;
+		int cells_created = 0;
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				perf_total_timer.start();
+				perf_phase_timer.start();
+				if (ARS_TRACKERS_PERF_VERBOSE)
+				{
+						log_debug() << "[ARS_TRACKERS_PERF]" << "refresh_table_enter";
+				}
+		}
+
 		if (table_ars_trackers == nullptr)
 		{
 				return;
@@ -7350,9 +7781,17 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				current_ports.insert(info.portName().trimmed().toUpper());
 		}
 		int visible_devices = 0;
+		int slow_build_devices = 0;
+		qint64 build_display_fallback_ms = 0;
+		qint64 build_status_format_ms = 0;
 
 		for (const ars_tracker_device_t &device : ars_tracker_devices)
 		{
+				QElapsedTimer device_build_timer;
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						device_build_timer.start();
+				}
 				QString port_name = device.portName.trimmed();
 				bool has_serial_port = device.serialPort != nullptr;
 				bool serial_open = has_serial_port && device.serialPort->isOpen();
@@ -7361,16 +7800,58 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 											 system_port_present;
 				if (visible == false)
 				{
-						log_debug() << "Trackers table skip stale device: port=" << port_name
-												<< "serial=" << device.serialNumber
-												<< "connected=" << device.connected
-												<< "hasSerialPort=" << has_serial_port
-												<< "open=" << serial_open
-												<< "systemPortPresent=" << system_port_present;
+						if (ARS_TRACKERS_PERF_VERBOSE)
+						{
+								log_debug() << "Trackers table skip stale device: port=" << port_name
+														<< "serial=" << device.serialNumber
+														<< "connected=" << device.connected
+														<< "hasSerialPort=" << has_serial_port
+														<< "open=" << serial_open
+														<< "systemPortPresent=" << system_port_present;
+						}
 						continue;
 				}
 
-				QString display_name = ars_tracker_device_display_text(device.serialNumber, device.portName);
+				QString display_name = device.displayName.trimmed();
+				if (display_name.isEmpty())
+				{
+						QElapsedTimer fallback_timer;
+						if (ARS_TRACKERS_PERF_LOG)
+						{
+								fallback_timer.start();
+						}
+						const QString trimmed_serial = device.serialNumber.trimmed();
+						if (trimmed_serial.isEmpty())
+						{
+								display_name = device.portName.trimmed();
+						}
+						else
+						{
+								QStringList parts = trimmed_serial.split('.');
+								if (parts.length() >= 4)
+								{
+										QString suffix = parts.last().trimmed();
+										QString type = parts.at(2).trimmed();
+										QString side_suffix = (type == "1") ? "R" : ((type == "2") ? "L" : QString());
+										display_name = (suffix.isEmpty() || side_suffix.isEmpty()) ?
+												trimmed_serial :
+												(suffix + side_suffix);
+								}
+								else
+								{
+										display_name = trimmed_serial;
+								}
+						}
+						if (ARS_TRACKERS_PERF_LOG)
+						{
+								build_display_fallback_ms += fallback_timer.elapsed();
+						}
+				}
+				QElapsedTimer status_timer;
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						status_timer.start();
+				}
 				QString raw_status = device.telemetryStatusLoaded ?
 																	 device.telemetryStatusRaw :
 																	 field_display_text(device.info.tracker_status);
@@ -7392,6 +7873,10 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 						item.memory_text =
 								QString("Memory: %1").arg(compact_ars_tracker_telemetry_text(device.telemetryMemoryRaw));
 				}
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						build_status_format_ms += status_timer.elapsed();
+				}
 				QString side = ars_tracker_side_label_from_serial_or_device(device);
 				if (side == "Right")
 				{
@@ -7403,6 +7888,30 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				}
 
 				++visible_devices;
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						qint64 device_build_ms = device_build_timer.elapsed();
+						if (device_build_ms > 2)
+						{
+								++slow_build_devices;
+								log_debug() << "ARS_TRACKERS_PERF refresh_build_slow_device"
+														<< "serial=" << device.serialNumber
+														<< "port=" << device.portName
+														<< "ms=" << device_build_ms;
+						}
+				}
+		}
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				perf_build_ms = perf_phase_timer.elapsed();
+				log_debug() << "ARS_TRACKERS_PERF refresh_build"
+										<< "total_ms=" << perf_build_ms
+										<< "devices=" << ars_tracker_devices.size()
+										<< "visible=" << visible_devices
+										<< "slowDevices=" << slow_build_devices
+										<< "displayFallbackMs=" << build_display_fallback_ms
+										<< "statusFormatMs=" << build_status_format_ms;
+				perf_phase_timer.restart();
 		}
 
 		auto by_display = [](const tracker_cell_view_t &lhs, const tracker_cell_view_t &rhs) {
@@ -7410,19 +7919,39 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 		};
 		std::sort(left_items.begin(), left_items.end(), by_display);
 		std::sort(right_items.begin(), right_items.end(), by_display);
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				perf_sort_ms = perf_phase_timer.elapsed();
+				perf_phase_timer.restart();
+		}
 
 		const int row_count = qMax(left_items.count(), right_items.count());
 		table_ars_trackers->clearContents();
 		table_ars_trackers->setRowCount(row_count);
 		table_ars_trackers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-		table_ars_trackers->verticalHeader()->setDefaultSectionSize(98);
+		table_ars_trackers->verticalHeader()->setDefaultSectionSize(
+				ARS_TRACKERS_LARGE_ROW_TEST_MODE ? 200 : 98);
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				perf_clear_ms = perf_phase_timer.elapsed();
+				perf_phase_timer.restart();
+		}
 
 		auto make_tracker_cell_widget =
 				[this](const tracker_cell_view_t &item) -> QWidget * {
+				QElapsedTimer cell_timer;
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						cell_timer.start();
+				}
 				QWidget *cell = new QWidget(table_ars_trackers);
 				QVBoxLayout *layout = new QVBoxLayout(cell);
 				layout->setContentsMargins(6, 4, 6, 4);
-				layout->setSpacing(2);
+				layout->setSpacing(ARS_TRACKERS_LARGE_ROW_TEST_MODE ? 6 : 2);
+				if (ARS_TRACKERS_LARGE_ROW_TEST_MODE)
+				{
+						cell->setMinimumHeight(180);
+				}
 
 				QLabel *name_label = new QLabel(item.display_name, cell);
 				QFont bold_font = name_label->font();
@@ -7445,6 +7974,23 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 						layout->addWidget(new QLabel(item.memory_text, cell));
 				}
 				layout->addStretch(1);
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						qint64 cell_ms = cell_timer.elapsed();
+						if (cell_ms > 2)
+						{
+								log_debug() << "[ARS_TRACKERS_PERF]"
+														<< "slow_cell_widget"
+														<< "display=" << item.display_name
+														<< "sideHint="
+														<< (item.display_name.endsWith("L") ? "L" :
+																		(item.display_name.endsWith("R") ? "R" : "?"))
+														<< "ms=" << cell_ms
+														<< "labels="
+														<< (3 + (item.battery_text.isEmpty() ? 0 : 1) +
+																(item.memory_text.isEmpty() ? 0 : 1));
+						}
+				}
 
 				return cell;
 		};
@@ -7452,28 +7998,44 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 		int row_index = 0;
 		for (; row_index < row_count; ++row_index)
 		{
+				if (ARS_TRACKERS_LARGE_ROW_TEST_MODE)
+				{
+						table_ars_trackers->setRowHeight(row_index, 200);
+				}
 				if (row_index < left_items.count())
 				{
 						const tracker_cell_view_t &item = left_items[row_index];
 						table_ars_trackers->setCellWidget(row_index, 0, make_tracker_cell_widget(item));
-						log_debug() << "Trackers item: side=Left"
-												<< "row=" << row_index
-												<< "display=" << item.display_name
-												<< "port=" << item.port_name
-												<< "statusRaw=" << item.raw_status
-												<< "statusText=" << item.status_text;
+						++cells_created;
+						if (ARS_TRACKERS_PERF_VERBOSE)
+						{
+								log_debug() << "Trackers item: side=Left"
+														<< "row=" << row_index
+														<< "display=" << item.display_name
+														<< "port=" << item.port_name
+														<< "statusRaw=" << item.raw_status
+														<< "statusText=" << item.status_text;
+						}
 				}
 				if (row_index < right_items.count())
 				{
 						const tracker_cell_view_t &item = right_items[row_index];
 						table_ars_trackers->setCellWidget(row_index, 1, make_tracker_cell_widget(item));
-						log_debug() << "Trackers item: side=Right"
-												<< "row=" << row_index
-												<< "display=" << item.display_name
-												<< "port=" << item.port_name
-												<< "statusRaw=" << item.raw_status
-												<< "statusText=" << item.status_text;
+						++cells_created;
+						if (ARS_TRACKERS_PERF_VERBOSE)
+						{
+								log_debug() << "Trackers item: side=Right"
+														<< "row=" << row_index
+														<< "display=" << item.display_name
+														<< "port=" << item.port_name
+														<< "statusRaw=" << item.raw_status
+														<< "statusText=" << item.status_text;
+						}
 				}
+		}
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				perf_widgets_ms = perf_phase_timer.elapsed();
 		}
 
 		if (lbl_ars_trackers_status != nullptr)
@@ -7483,14 +8045,59 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 								QString("Connected trackers: %1").arg(visible_devices) :
 								QString("No connected trackers"));
 		}
-		log_debug() << "Trackers table layout refresh: left=" << left_items.count()
-								<< "right=" << right_items.count()
-								<< "rows=" << row_count
-								<< "visibleDevices=" << visible_devices;
-		log_debug() << "Trackers table refresh: sourceDevices=" << ars_tracker_devices.count()
-								<< "visibleDevices=" << visible_devices
-								<< "pairs=0"
-								<< "connected=" << visible_devices;
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				log_debug() << "Trackers table layout refresh: left=" << left_items.count()
+										<< "right=" << right_items.count()
+										<< "rows=" << row_count
+										<< "visibleDevices=" << visible_devices;
+				log_debug() << "Trackers table refresh: sourceDevices=" << ars_tracker_devices.count()
+										<< "visibleDevices=" << visible_devices
+										<< "pairs=0"
+										<< "connected=" << visible_devices;
+		}
+		if (ARS_TRACKERS_PERF_LOG)
+		{
+				qint64 total_ms = perf_total_timer.elapsed();
+				++g_ars_trackers_perf_stats.refresh_table_executed;
+				++g_ars_trackers_perf_stats.refresh_table_executed_window;
+				g_ars_trackers_perf_stats.refresh_table_total_ms_sum += quint64(total_ms);
+				g_ars_trackers_perf_stats.refresh_table_total_ms_sum_window += quint64(total_ms);
+				g_ars_trackers_perf_stats.refresh_table_max_ms =
+						qMax(g_ars_trackers_perf_stats.refresh_table_max_ms, total_ms);
+				g_ars_trackers_perf_stats.refresh_table_max_ms_window =
+						qMax(g_ars_trackers_perf_stats.refresh_table_max_ms_window, total_ms);
+				int scroll_value = table_ars_trackers->verticalScrollBar() != nullptr ?
+						table_ars_trackers->verticalScrollBar()->value() :
+						-1;
+				qint64 now_ms = ars_trackers_perf_now_ms();
+				qint64 ms_since_scroll = ars_trackers_last_scroll_event_ms > 0 ?
+						(now_ms - ars_trackers_last_scroll_event_ms) :
+						-1;
+				log_debug() << "[ARS_TRACKERS_PERF]"
+										<< "refresh_table"
+										<< "total_ms=" << total_ms
+										<< "devices=" << ars_tracker_devices.size()
+										<< "left=" << left_items.count()
+										<< "right=" << right_items.count()
+										<< "rows=" << row_count
+										<< "cells_created=" << cells_created
+										<< "scroll=" << scroll_value
+										<< "scrollActive=" << ars_trackers_scroll_recently_active(500)
+										<< "msSinceLastScroll=" << ms_since_scroll
+										<< "visible=" << table_ars_trackers->isVisible()
+										<< "updatesEnabled=" << table_ars_trackers->updatesEnabled()
+										<< "phases_ms"
+										<< "build=" << perf_build_ms
+										<< "sort=" << perf_sort_ms
+										<< "clear=" << perf_clear_ms
+										<< "widgets=" << perf_widgets_ms;
+				if (ARS_TRACKERS_PERF_VERBOSE)
+				{
+						log_debug() << "[ARS_TRACKERS_PERF]" << "refresh_table_exit";
+				}
+				ars_trackers_perf_maybe_log_summary(ars_trackers_tab_is_active());
+		}
 		ars_trackers_table_dirty = false;
 }
 
@@ -8749,7 +9356,46 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 								QByteArray data = persistent_device->serialPort->readAll();
 								if (data.isEmpty() == false)
 								{
+										QElapsedTimer perf_serial_timer;
+										if (ARS_TRACKERS_PERF_LOG)
+										{
+												perf_serial_timer.start();
+												if (ARS_TRACKERS_PERF_VERBOSE)
+												{
+														log_debug() << "[ARS_TRACKERS_PERF]" << "serial_read_profile_enter"
+																				<< "serial=" << persistent_device->serialNumber
+																				<< "port=" << persistent_device->portName
+																				<< "bytes=" << data.size();
+												}
+										}
 										persistent_device->transport->serial_read(&data);
+										if (ARS_TRACKERS_PERF_LOG)
+										{
+												qint64 serial_ms = perf_serial_timer.elapsed();
+												if (serial_ms > 2 || data.size() > 512)
+												{
+														++g_ars_trackers_perf_stats.slow_serial_reads;
+														++g_ars_trackers_perf_stats.slow_serial_reads_window;
+														g_ars_trackers_perf_stats.slow_serial_read_max_ms =
+																qMax(g_ars_trackers_perf_stats.slow_serial_read_max_ms, serial_ms);
+														g_ars_trackers_perf_stats.slow_serial_read_max_ms_window =
+																qMax(g_ars_trackers_perf_stats.slow_serial_read_max_ms_window, serial_ms);
+														log_debug() << "[ARS_TRACKERS_PERF]"
+																				<< "serial_read"
+																				<< "serial=" << persistent_device->serialNumber
+																				<< "port=" << persistent_device->portName
+																				<< "bytes=" << data.size()
+																				<< "ms=" << serial_ms
+																				<< "action=" << int(mode);
+												}
+												if (ARS_TRACKERS_PERF_VERBOSE)
+												{
+														log_debug() << "[ARS_TRACKERS_PERF]" << "serial_read_profile_exit"
+																				<< "serial=" << persistent_device->serialNumber
+																				<< "port=" << persistent_device->portName
+																				<< "ms=" << serial_ms;
+												}
+										}
 								}
 						});
 						connect(device->serialPort, &QSerialPort::errorOccurred, this,
@@ -10891,6 +11537,10 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 
 		if (user_data == ACTION_ARS_TRACKER_LIGHT_TELEMETRY)
 		{
+				if (ARS_TRACKERS_PERF_LOG && ARS_TRACKERS_PERF_VERBOSE)
+				{
+						log_debug() << "[ARS_TRACKERS_PERF]" << "telemetry_response_enter";
+				}
 				if (ars_tracker_lightweight_telemetry_active == false ||
 						ars_tracker_lightweight_telemetry_active_port.compare(
 								device->portName, Qt::CaseInsensitive) != 0)
@@ -10907,10 +11557,53 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 													 ars_tracker_lightweight_telemetry_active_command)
 										<< "status=" << ars_tracker_scan_status_to_string(status)
 										<< "response=" << error_string;
+				bool changed = false;
+				QElapsedTimer telemetry_timer;
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						telemetry_timer.start();
+				}
+				QString old_status = device->telemetryStatusRaw;
+				QString old_battery = device->telemetryBatteryRaw;
+				QString old_memory = device->telemetryMemoryRaw;
+				bool old_status_loaded = device->telemetryStatusLoaded;
+				bool old_battery_loaded = device->telemetryBatteryLoaded;
+				bool old_memory_loaded = device->telemetryMemoryLoaded;
 				store_ars_tracker_lightweight_telemetry_response(
 						device, ars_tracker_lightweight_telemetry_active_command, status, error_string);
-				schedule_ars_trackers_table_refresh("lightweight-telemetry-response");
+				changed = (old_status != device->telemetryStatusRaw) ||
+									(old_battery != device->telemetryBatteryRaw) ||
+									(old_memory != device->telemetryMemoryRaw) ||
+									(old_status_loaded != device->telemetryStatusLoaded) ||
+									(old_battery_loaded != device->telemetryBatteryLoaded) ||
+									(old_memory_loaded != device->telemetryMemoryLoaded);
+				if (ARS_TRACKERS_PERF_LOG)
+				{
+						++g_ars_trackers_perf_stats.telemetry_responses;
+						++g_ars_trackers_perf_stats.telemetry_responses_window;
+						qint64 parse_ms = telemetry_timer.elapsed();
+						log_debug() << "[ARS_TRACKERS_PERF]"
+												<< "telemetry_response"
+												<< "serial=" << device->serialNumber
+												<< "port=" << device->portName
+												<< "cmd="
+												<< ars_tracker_lightweight_telemetry_command_to_string(
+																ars_tracker_lightweight_telemetry_active_command)
+												<< "bytes=" << error_string.toUtf8().size()
+												<< "parse_ms=" << parse_ms
+												<< "changed=" << changed
+												<< "scheduled_refresh=" << changed;
+				}
+				if (changed)
+				{
+						schedule_ars_trackers_table_refresh("lightweight-telemetry-response");
+				}
 				finish_ars_tracker_lightweight_telemetry_command();
+				if (ARS_TRACKERS_PERF_LOG && ARS_TRACKERS_PERF_VERBOSE)
+				{
+						log_debug() << "[ARS_TRACKERS_PERF]" << "telemetry_response_exit";
+				}
+				ars_trackers_perf_maybe_log_summary(ars_trackers_tab_is_active());
 				return;
 		}
 

@@ -449,6 +449,8 @@ private:
     void refresh_ars_trackers_table_from_devices();
     void schedule_ars_trackers_table_refresh(const QString &reason,
                                              bool force_when_inactive = false);
+    bool ars_trackers_table_refresh_is_low_priority(const QString &reason) const;
+    bool ars_trackers_scroll_recently_active(qint64 threshold_ms = 400) const;
     QString ars_tracker_pair_id_from_serial(const QString &serial) const;
     QString ars_tracker_side_label_from_serial_or_device(const ars_tracker_device_t &device) const;
     QString ars_tracker_connection_state_text(const ars_tracker_device_t &device) const;
@@ -1090,6 +1092,10 @@ private:
     bool ars_trackers_table_refresh_force_when_inactive = false;
     QString ars_trackers_table_refresh_reason;
     QTimer *timer_ars_trackers_table_refresh = nullptr;
+    bool ars_trackers_scroll_active = false;
+    bool ars_trackers_scroll_connections_installed = false;
+    qint64 ars_trackers_last_scroll_event_ms = -1;
+    qint64 ars_trackers_last_scroll_log_ms = -1;
     bool ars_tracker_lightweight_telemetry_enabled = true;
     QQueue<ars_tracker_lightweight_telemetry_request_t> ars_tracker_lightweight_telemetry_queue;
     bool ars_tracker_lightweight_telemetry_active = false;

@@ -8385,8 +8385,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 		table_ars_trackers->clearContents();
 		table_ars_trackers->setRowCount(row_count);
 		table_ars_trackers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-		table_ars_trackers->verticalHeader()->setDefaultSectionSize(
-				ARS_TRACKERS_LARGE_ROW_TEST_MODE ? 200 : 98);
+		table_ars_trackers->verticalHeader()->setDefaultSectionSize(62);
 		if (ARS_TRACKERS_PERF_LOG)
 		{
 				perf_clear_ms = perf_phase_timer.elapsed();
@@ -8402,12 +8401,8 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				}
 				QWidget *cell = new QWidget(table_ars_trackers);
 				QVBoxLayout *layout = new QVBoxLayout(cell);
-				layout->setContentsMargins(6, 4, 6, 4);
-				layout->setSpacing(3);
-				if (ARS_TRACKERS_LARGE_ROW_TEST_MODE)
-				{
-						cell->setMinimumHeight(180);
-				}
+				layout->setContentsMargins(4, 3, 4, 3);
+				layout->setSpacing(2);
 
 				QLabel *name_label = new QLabel(item.display_name, cell);
 				QFont bold_font = name_label->font();
@@ -8416,7 +8411,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				layout->addWidget(name_label);
 				QGridLayout *grid = new QGridLayout();
 				grid->setContentsMargins(0, 0, 0, 0);
-				grid->setHorizontalSpacing(16);
+				grid->setHorizontalSpacing(8);
 				grid->setVerticalSpacing(2);
 
 				QString battery_value = item.battery_text;
@@ -8480,7 +8475,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				[this](const QString &text) -> QWidget * {
 				QWidget *cell = new QWidget(table_ars_trackers);
 				QVBoxLayout *layout = new QVBoxLayout(cell);
-				layout->setContentsMargins(6, 4, 6, 4);
+				layout->setContentsMargins(4, 3, 4, 3);
 				layout->setSpacing(2);
 				QStringList parts = text.split(':');
 				QString side = parts.size() > 0 ? parts.first().trimmed() : "Side";
@@ -8496,10 +8491,6 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 		int row_index = 0;
 		for (; row_index < row_count; ++row_index)
 		{
-				if (ARS_TRACKERS_LARGE_ROW_TEST_MODE)
-				{
-						table_ars_trackers->setRowHeight(row_index, 200);
-				}
 				const tracker_pair_view_t &pair = pair_items[row_index];
 				table_ars_trackers->setItem(row_index, 0, new QTableWidgetItem(pair.pair_id));
 				if (pair.has_right)
@@ -8535,6 +8526,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 						++incomplete_pairs;
 				}
 		}
+		table_ars_trackers->resizeRowsToContents();
 		if (ARS_TRACKERS_PERF_LOG)
 		{
 				perf_widgets_ms = perf_phase_timer.elapsed();

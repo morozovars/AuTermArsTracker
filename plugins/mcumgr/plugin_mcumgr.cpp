@@ -38,6 +38,7 @@
 #include <QStandardPaths>
 #include "plugin_mcumgr.h"
 #include "ars_tracker_parser.h"
+#include "ars_trackers_ui_state.h"
 
 static const uint16_t timeout_erase_ms = 14000;
 static const uint32_t timeout_ars_tracker_metadata_ms = 60000;
@@ -6596,15 +6597,40 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		btn_ars_trackers_sessions_refresh = new QPushButton(tab_ars_trackers);
 		btn_ars_trackers_sessions_refresh->setObjectName("btn_ars_trackers_sessions_refresh");
 		btn_ars_trackers_sessions_refresh->setText("Refresh sessions");
+		btn_ars_trackers_sessions_refresh->setEnabled(true);
 		sessions_controls_layout->addWidget(btn_ars_trackers_sessions_refresh);
 		btn_ars_trackers_start_session = new QPushButton(tab_ars_trackers);
 		btn_ars_trackers_start_session->setObjectName("btn_ars_trackers_start_session");
 		btn_ars_trackers_start_session->setText("Start session");
+		btn_ars_trackers_start_session->setEnabled(true);
 		sessions_controls_layout->addWidget(btn_ars_trackers_start_session);
 		btn_ars_trackers_stop_session = new QPushButton(tab_ars_trackers);
 		btn_ars_trackers_stop_session->setObjectName("btn_ars_trackers_stop_session");
 		btn_ars_trackers_stop_session->setText("Stop session");
+		btn_ars_trackers_stop_session->setEnabled(true);
 		sessions_controls_layout->addWidget(btn_ars_trackers_stop_session);
+		btn_ars_trackers_download_all_sessions = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_download_all_sessions->setObjectName(
+				"btn_ars_trackers_download_all_sessions");
+		btn_ars_trackers_download_all_sessions->setText("Download all sessions");
+		btn_ars_trackers_download_all_sessions->setEnabled(true);
+		sessions_controls_layout->addWidget(btn_ars_trackers_download_all_sessions);
+		btn_ars_trackers_delete_all_sessions = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_delete_all_sessions->setObjectName(
+				"btn_ars_trackers_delete_all_sessions");
+		btn_ars_trackers_delete_all_sessions->setText("Delete all sessions");
+		btn_ars_trackers_delete_all_sessions->setEnabled(true);
+		sessions_controls_layout->addWidget(btn_ars_trackers_delete_all_sessions);
+		if (btn_ars_trackers_sessions_refresh != nullptr)
+				btn_ars_trackers_sessions_refresh->setEnabled(true);
+		if (btn_ars_trackers_start_session != nullptr)
+				btn_ars_trackers_start_session->setEnabled(true);
+		if (btn_ars_trackers_stop_session != nullptr)
+				btn_ars_trackers_stop_session->setEnabled(true);
+		if (btn_ars_trackers_download_all_sessions != nullptr)
+				btn_ars_trackers_download_all_sessions->setEnabled(true);
+		if (btn_ars_trackers_delete_all_sessions != nullptr)
+				btn_ars_trackers_delete_all_sessions->setEnabled(true);
 		lbl_ars_trackers_sessions_status = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_sessions_status->setObjectName("lbl_ars_trackers_sessions_status");
 		lbl_ars_trackers_sessions_status->setText("Not loaded");
@@ -6752,6 +6778,10 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 						&plugin_mcumgr::on_btn_ars_trackers_start_session_clicked);
 		connect(btn_ars_trackers_stop_session, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked);
+		connect(btn_ars_trackers_download_all_sessions, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked);
+		connect(btn_ars_trackers_delete_all_sessions, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_delete_all_sessions_clicked);
 }
 
 QString plugin_mcumgr::ars_trackers_download_destination_path() const
@@ -11157,11 +11187,57 @@ void plugin_mcumgr::on_btn_ars_trackers_disconnect_all_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked()
 {
+		int connected_trackers = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected && device.serialPort != nullptr && device.serialPort->isOpen())
+				{
+						connected_trackers++;
+				}
+		}
+		if (connected_trackers == 0)
+		{
+				log_debug() << "sessions_refresh_skipped reason=no connected trackers";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("No connected trackers");
+				}
+				return;
+		}
 		start_ars_trackers_sessions_refresh();
 }
 
 void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 {
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_start_session_running || ars_trackers_stop_session_running ||
+				ars_trackers_session_download_running ||
+				ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE)
+		{
+				log_debug() << "start_session_skipped reason=incompatible operation running";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Already loading");
+				}
+				return;
+		}
+		int connected_trackers = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected && device.serialPort != nullptr && device.serialPort->isOpen())
+				{
+						connected_trackers++;
+				}
+		}
+		if (connected_trackers == 0)
+		{
+				log_debug() << "start_session_skipped reason=no connected trackers";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("No connected trackers");
+				}
+				return;
+		}
 		struct pair_pick_t {
 				QString pairId;
 				QStringList ports;
@@ -11341,6 +11417,35 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 {
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_start_session_running || ars_trackers_stop_session_running ||
+				ars_trackers_session_download_running ||
+				ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE)
+		{
+				log_debug() << "stop_session_skipped reason=incompatible operation running";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Already loading");
+				}
+				return;
+		}
+		int connected_trackers = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected && device.serialPort != nullptr && device.serialPort->isOpen())
+				{
+						connected_trackers++;
+				}
+		}
+		if (connected_trackers == 0)
+		{
+				log_debug() << "stop_session_skipped reason=no connected trackers";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("No connected trackers");
+				}
+				return;
+		}
 		struct pair_pick_t {
 				QString pairId;
 				QStringList ports;
@@ -11459,6 +11564,168 @@ void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 				return;
 		}
 		start_ars_trackers_stop_session_operation(targets);
+}
+
+void plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked()
+{
+		if (ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Bulk sessions operation already running");
+				}
+				return;
+		}
+		if (ars_trackers_sessions_presence_map.isEmpty())
+		{
+				log_debug() << "bulk_session_download_skipped reason=no sessions";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("No sessions to download");
+				}
+				return;
+		}
+		int connected_trackers = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected && device.serialPort != nullptr && device.serialPort->isOpen())
+				{
+						connected_trackers++;
+				}
+		}
+		if (connected_trackers == 0)
+		{
+				log_debug() << "bulk_session_download_skipped reason=no connected trackers";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("No connected trackers");
+				}
+				return;
+		}
+
+		QString destination_path = ars_trackers_download_destination_path();
+		QString selected = QFileDialog::getExistingDirectory(
+				parent_window, "Select export folder", destination_path);
+		if (selected.isEmpty())
+		{
+				log_debug() << "bulk_session_download_cancelled reason=destination dialog cancelled";
+				return;
+		}
+		if (!QDir().mkpath(selected))
+		{
+				QMessageBox::warning(parent_window, "Download all sessions",
+														 "Destination path is not writable.");
+				return;
+		}
+		if (edit_ars_trackers_download_destination != nullptr)
+		{
+				edit_ars_trackers_download_destination->setText(selected);
+		}
+
+		QStringList keys = ars_trackers_sessions_presence_map.keys();
+		std::sort(keys.begin(), keys.end(), [](const QString &a, const QString &b) {
+				return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+		});
+		ars_trackers_bulk_sessions_queue.clear();
+		for (const QString &session : keys)
+		{
+				const ars_tracker_session_presence_t &presence =
+						ars_trackers_sessions_presence_map.value(session);
+				ars_trackers_bulk_session_item_t item;
+				item.sessionName = session;
+				item.ports = presence.ports;
+				item.trackerDisplays = presence.trackerDisplays;
+				ars_trackers_bulk_sessions_queue.append(item);
+		}
+
+		ars_trackers_bulk_sessions_operation = ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL;
+		ars_trackers_bulk_sessions_index = -1;
+		ars_trackers_bulk_sessions_success = 0;
+		ars_trackers_bulk_sessions_failed = 0;
+		ars_trackers_bulk_sessions_last_error.clear();
+		ars_trackers_bulk_sessions_download_destination = selected;
+		log_debug() << "bulk_session_download_started sessions="
+								<< ars_trackers_bulk_sessions_queue.size()
+								<< "baseDestination=" << selected;
+		update_ars_trackers_sessions_aggregate_and_ui();
+		start_next_ars_trackers_bulk_sessions_operation();
+}
+
+void plugin_mcumgr::on_btn_ars_trackers_delete_all_sessions_clicked()
+{
+		if (ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("Bulk sessions operation already running");
+				}
+				return;
+		}
+		if (ars_trackers_sessions_presence_map.isEmpty())
+		{
+				log_debug() << "bulk_session_delete_skipped reason=no sessions";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("No sessions to delete");
+				}
+				return;
+		}
+		int connected_trackers = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected && device.serialPort != nullptr && device.serialPort->isOpen())
+				{
+						connected_trackers++;
+				}
+		}
+		if (connected_trackers == 0)
+		{
+				log_debug() << "bulk_session_delete_skipped reason=no connected trackers";
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText("No connected trackers");
+				}
+				return;
+		}
+
+		const int total_sessions = ars_trackers_sessions_presence_map.size();
+		QMessageBox::StandardButton confirm = QMessageBox::question(
+				parent_window, "Delete all sessions",
+				QString("Delete all sessions from all listed trackers? This cannot be undone.\nSessions: %1")
+						.arg(total_sessions),
+				QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+		if (confirm != QMessageBox::Yes)
+		{
+				log_debug() << "bulk_session_delete_cancelled reason=user rejected confirmation";
+				return;
+		}
+
+		QStringList keys = ars_trackers_sessions_presence_map.keys();
+		std::sort(keys.begin(), keys.end(), [](const QString &a, const QString &b) {
+				return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+		});
+		ars_trackers_bulk_sessions_queue.clear();
+		for (const QString &session : keys)
+		{
+				const ars_tracker_session_presence_t &presence =
+						ars_trackers_sessions_presence_map.value(session);
+				ars_trackers_bulk_session_item_t item;
+				item.sessionName = session;
+				item.ports = presence.ports;
+				item.trackerDisplays = presence.trackerDisplays;
+				ars_trackers_bulk_sessions_queue.append(item);
+		}
+
+		ars_trackers_bulk_sessions_operation = ARS_TRACKERS_BULK_SESSIONS_DELETE_ALL;
+		ars_trackers_bulk_sessions_index = -1;
+		ars_trackers_bulk_sessions_success = 0;
+		ars_trackers_bulk_sessions_failed = 0;
+		ars_trackers_bulk_sessions_last_error.clear();
+		ars_trackers_bulk_sessions_download_destination.clear();
+		log_debug() << "bulk_session_delete_started sessions="
+								<< ars_trackers_bulk_sessions_queue.size();
+		update_ars_trackers_sessions_aggregate_and_ui();
+		start_next_ars_trackers_bulk_sessions_operation();
 }
 
 void plugin_mcumgr::start_ars_trackers_sessions_refresh()
@@ -11758,6 +12025,27 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 										<< ars_trackers_session_download_generation
 										<< "successJobs=" << success
 										<< "failedJobs=" << failed;
+				if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL)
+				{
+						const bool session_ok = (failed == 0);
+						const QString session_name = ars_trackers_session_download_name;
+						if (session_ok)
+						{
+								ars_trackers_bulk_sessions_success++;
+								log_debug() << "bulk_session_download_item_success session=" << session_name
+														<< "trackers=" << success;
+						}
+						else
+						{
+								ars_trackers_bulk_sessions_failed++;
+								ars_trackers_bulk_sessions_last_error = last_error;
+								log_warning() << "bulk_session_download_item_failed session=" << session_name
+															<< "failedTrackers=" << failed
+															<< "reason=" << last_error;
+						}
+						QTimer::singleShot(0, this,
+															 &plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation);
+				}
 				update_ars_trackers_sessions_aggregate_and_ui();
 				return;
 		}
@@ -11863,6 +12151,119 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 								.arg(ars_trackers_session_download_index)
 								.arg(ars_trackers_session_download_jobs.size()));
 		}
+}
+
+void plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation()
+{
+		if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_NONE)
+		{
+				return;
+		}
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_session_download_running || ars_trackers_start_session_running ||
+				ars_trackers_stop_session_running)
+		{
+				return;
+		}
+
+		ars_trackers_bulk_sessions_index++;
+		if (ars_trackers_bulk_sessions_index >= ars_trackers_bulk_sessions_queue.size())
+		{
+				QString summary;
+				if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL)
+				{
+						summary = QString("Download all sessions finished: success %1, failed %2")
+													.arg(ars_trackers_bulk_sessions_success)
+													.arg(ars_trackers_bulk_sessions_failed);
+				}
+				else
+				{
+						summary = QString("Delete all sessions finished: success %1, failed %2")
+													.arg(ars_trackers_bulk_sessions_success)
+													.arg(ars_trackers_bulk_sessions_failed);
+				}
+				finish_ars_trackers_bulk_sessions_operation(summary);
+				return;
+		}
+
+		const ars_trackers_bulk_session_item_t &item =
+				ars_trackers_bulk_sessions_queue.at(ars_trackers_bulk_sessions_index);
+		log_debug() << "bulk_session_step index="
+								<< (ars_trackers_bulk_sessions_index + 1)
+								<< "/" << ars_trackers_bulk_sessions_queue.size()
+								<< "session=" << item.sessionName
+								<< "ports=" << item.ports.join(",");
+
+		if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL)
+		{
+				if (edit_ars_trackers_download_destination != nullptr &&
+						ars_trackers_bulk_sessions_download_destination.isEmpty() == false)
+				{
+						edit_ars_trackers_download_destination->setText(
+								ars_trackers_bulk_sessions_download_destination);
+				}
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Downloading session %1 / %2: %3")
+										.arg(ars_trackers_bulk_sessions_index + 1)
+										.arg(ars_trackers_bulk_sessions_queue.size())
+										.arg(item.sessionName));
+				}
+				start_ars_trackers_session_download(item.sessionName);
+				if (!ars_trackers_session_download_running)
+				{
+						ars_trackers_bulk_sessions_failed++;
+						ars_trackers_bulk_sessions_last_error = "could not start session download";
+						log_warning() << "bulk_session_download_item_failed session=" << item.sessionName
+															<< "reason=could not start";
+						QTimer::singleShot(0, this,
+															 &plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation);
+				}
+		}
+		else
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								QString("Deleting session %1 / %2: %3")
+										.arg(ars_trackers_bulk_sessions_index + 1)
+										.arg(ars_trackers_bulk_sessions_queue.size())
+										.arg(item.sessionName));
+				}
+				start_ars_trackers_delete_session(item.sessionName, item.ports);
+				if (!ars_trackers_sessions_delete_running)
+				{
+						ars_trackers_bulk_sessions_failed++;
+						ars_trackers_bulk_sessions_last_error = "could not start session delete";
+						log_warning() << "bulk_session_delete_item_failed session=" << item.sessionName
+															<< "reason=could not start";
+						QTimer::singleShot(0, this,
+															 &plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation);
+				}
+		}
+}
+
+void plugin_mcumgr::finish_ars_trackers_bulk_sessions_operation(const QString &summary)
+{
+		log_debug() << "bulk_session_done operation="
+								<< int(ars_trackers_bulk_sessions_operation)
+								<< "success=" << ars_trackers_bulk_sessions_success
+								<< "failed=" << ars_trackers_bulk_sessions_failed
+								<< "lastError=" << ars_trackers_bulk_sessions_last_error;
+		ars_trackers_bulk_sessions_operation = ARS_TRACKERS_BULK_SESSIONS_NONE;
+		ars_trackers_bulk_sessions_queue.clear();
+		ars_trackers_bulk_sessions_index = -1;
+		ars_trackers_bulk_sessions_download_destination.clear();
+		ars_trackers_bulk_sessions_success = 0;
+		ars_trackers_bulk_sessions_failed = 0;
+		ars_trackers_bulk_sessions_last_error.clear();
+		if (lbl_ars_trackers_sessions_status != nullptr)
+		{
+				lbl_ars_trackers_sessions_status->setText(summary);
+		}
+		update_ars_trackers_sessions_aggregate_and_ui();
+		start_ars_trackers_sessions_refresh();
 }
 
 void plugin_mcumgr::start_ars_trackers_delete_session(const QString &session_name,
@@ -12045,6 +12446,31 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 				}
 		}
 
+		int connected_trackers_count = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected == true && device.serialPort != nullptr &&
+						device.serialPort->isOpen() == true)
+				{
+						connected_trackers_count++;
+				}
+		}
+		ArsTrackersSessionsUiStateInput ui_input;
+		ui_input.connectedTrackersCount = connected_trackers_count;
+		ui_input.sessionsCount = ars_trackers_sessions_presence_map.size();
+		ui_input.scanRunning = ars_tracker_port_scan_active;
+		ui_input.connectDisconnectRunning = false;
+		ui_input.sessionRefreshRunning = ars_trackers_sessions_query_running;
+		ui_input.sessionStartRunning = ars_trackers_start_session_running;
+		ui_input.sessionStopRunning = ars_trackers_stop_session_running;
+		ui_input.sessionDownloadRunning = ars_trackers_session_download_running;
+		ui_input.sessionDeleteRunning = ars_trackers_sessions_delete_running;
+		ui_input.bulkSessionsOperationRunning =
+				ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE;
+		ui_input.backendBusy = false;
+		const ArsTrackersSessionsUiStateOutput ui_output =
+				computeArsTrackersSessionsUiState(ui_input);
+
 		if (table_ars_trackers_sessions != nullptr)
 		{
 				QStringList keys = ars_trackers_sessions_presence_map.keys();
@@ -12112,19 +12538,13 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 						actions_layout->setSpacing(4);
 						QPushButton *download_btn = new QPushButton("Download");
 						download_btn->setEnabled(
-								!ars_trackers_session_download_running &&
-								ars_trackers_sessions_delete_running == false &&
-								ars_trackers_start_session_running == false &&
-								ars_trackers_stop_session_running == false &&
+								ui_output.perSessionActionsEnabled &&
 								presence.ports.isEmpty() == false);
 						connect(download_btn, &QPushButton::clicked, this,
 										[this, session]() { on_ars_trackers_session_download_clicked(session); });
 						QPushButton *delete_btn = new QPushButton("Delete...");
 						delete_btn->setEnabled(
-								!ars_trackers_session_download_running &&
-								ars_trackers_sessions_delete_running == false &&
-								ars_trackers_start_session_running == false &&
-								ars_trackers_stop_session_running == false &&
+								ui_output.perSessionActionsEnabled &&
 								presence.ports.isEmpty() == false);
 						connect(delete_btn, &QPushButton::clicked, this,
 										[this, session]() { on_ars_trackers_session_delete_clicked(session); });
@@ -12232,6 +12652,38 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 						}
 				}
 		}
+		if (btn_ars_trackers_sessions_refresh != nullptr)
+				btn_ars_trackers_sessions_refresh->setEnabled(ui_output.refreshSessionsEnabled);
+		if (btn_ars_trackers_start_session != nullptr)
+				btn_ars_trackers_start_session->setEnabled(ui_output.startSessionEnabled);
+		if (btn_ars_trackers_stop_session != nullptr)
+				btn_ars_trackers_stop_session->setEnabled(ui_output.stopSessionEnabled);
+		if (btn_ars_trackers_download_all_sessions != nullptr)
+				btn_ars_trackers_download_all_sessions->setEnabled(ui_output.downloadAllSessionsEnabled);
+		if (btn_ars_trackers_delete_all_sessions != nullptr)
+				btn_ars_trackers_delete_all_sessions->setEnabled(ui_output.deleteAllSessionsEnabled);
+		log_debug() << "trackers_sessions_controls_state"
+								<< "connectedTrackers=" << connected_trackers_count
+								<< "hasConnectedTrackers=" << (connected_trackers_count > 0)
+								<< "sessionsCount=" << ars_trackers_sessions_presence_map.size()
+								<< "hasSessions=" << (ars_trackers_sessions_presence_map.isEmpty() == false)
+								<< "bulkOperation=" << int(ars_trackers_bulk_sessions_operation)
+								<< "scanRunning=" << ui_input.scanRunning
+								<< "connectDisconnectRunning=" << ui_input.connectDisconnectRunning
+								<< "sessionRefreshRunning=" << ui_input.sessionRefreshRunning
+								<< "sessionStartRunning=" << ui_input.sessionStartRunning
+								<< "sessionStopRunning=" << ui_input.sessionStopRunning
+								<< "sessionDownloadRunning=" << ui_input.sessionDownloadRunning
+								<< "sessionDeleteRunning=" << ui_input.sessionDeleteRunning
+								<< "bulkSessionsOperationRunning=" << ui_input.bulkSessionsOperationRunning
+								<< "backendBusy=" << ui_input.backendBusy
+								<< "mainControlsAlwaysEnabled=true"
+								<< "refreshEnabled=" << ui_output.refreshSessionsEnabled
+								<< "startEnabled=" << ui_output.startSessionEnabled
+								<< "stopEnabled=" << ui_output.stopSessionEnabled
+								<< "downloadAllEnabled=" << ui_output.downloadAllSessionsEnabled
+								<< "deleteAllEnabled=" << ui_output.deleteAllSessionsEnabled
+								<< "perSessionActionsEnabled=" << ui_output.perSessionActionsEnabled;
 }
 
 void plugin_mcumgr::maybe_finish_ars_trackers_sessions_refresh()
@@ -12358,6 +12810,26 @@ void plugin_mcumgr::maybe_finish_ars_trackers_session_delete()
 				}
 		}
 		log_debug() << "session_delete_done success=" << success << "failed=" << failed;
+		if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DELETE_ALL)
+		{
+				const QString session_name = ars_trackers_sessions_delete_session_name;
+				if (failed == 0)
+				{
+						ars_trackers_bulk_sessions_success++;
+						log_debug() << "bulk_session_delete_item_success session=" << session_name
+														<< "trackers=" << success;
+				}
+				else
+				{
+						ars_trackers_bulk_sessions_failed++;
+						ars_trackers_bulk_sessions_last_error =
+								QString("failed trackers=%1").arg(failed);
+						log_warning() << "bulk_session_delete_item_failed session=" << session_name
+															<< "failedTrackers=" << failed;
+				}
+				QTimer::singleShot(0, this,
+													 &plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation);
+		}
 		for (const ars_trackers_sessions_delete_item_t &item : ars_trackers_sessions_delete_items)
 		{
 				ars_tracker_device_t *device = find_ars_tracker_device_by_port(item.port);
@@ -12397,8 +12869,6 @@ void plugin_mcumgr::start_ars_trackers_start_session_operation(
 		ars_trackers_start_session_name = session_name;
 		ars_trackers_start_session_mode = mode_code;
 		ars_trackers_start_session_items.clear();
-		if (btn_ars_trackers_start_session != nullptr)
-				btn_ars_trackers_start_session->setEnabled(false);
 		log_debug() << "start_session_begin generation=" << ars_trackers_start_session_generation
 								<< "name=" << session_name << "mode=" << mode_code
 								<< "targets=" << targets.size();
@@ -12529,8 +12999,6 @@ void plugin_mcumgr::maybe_finish_ars_trackers_start_session()
 		if (finished < ars_trackers_start_session_items.size())
 				return;
 		ars_trackers_start_session_running = false;
-		if (btn_ars_trackers_start_session != nullptr)
-				btn_ars_trackers_start_session->setEnabled(true);
 		if (lbl_ars_trackers_sessions_status != nullptr)
 		{
 				if (failed == 0)
@@ -12568,8 +13036,6 @@ void plugin_mcumgr::start_ars_trackers_stop_session_operation(
 		ars_trackers_stop_session_generation++;
 		ars_trackers_stop_session_running = true;
 		ars_trackers_stop_session_items.clear();
-		if (btn_ars_trackers_stop_session != nullptr)
-				btn_ars_trackers_stop_session->setEnabled(false);
 		log_debug() << "stop_session_begin generation=" << ars_trackers_stop_session_generation
 								<< "targets=" << targets.size();
 
@@ -12706,8 +13172,6 @@ void plugin_mcumgr::maybe_finish_ars_trackers_stop_session()
 		if (finished < ars_trackers_stop_session_items.size())
 				return;
 		ars_trackers_stop_session_running = false;
-		if (btn_ars_trackers_stop_session != nullptr)
-				btn_ars_trackers_stop_session->setEnabled(true);
 		if (lbl_ars_trackers_sessions_status != nullptr)
 		{
 				lbl_ars_trackers_sessions_status->setText(

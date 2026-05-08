@@ -16,6 +16,7 @@ TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 
 SOURCES += \
     ../../AuTerm/AutScrollEdit.cpp \
+    ars_trackers_ui_state.cpp \
     ../../AuTerm/AutEscape.cpp \
     ars_tracker_backend.cpp \
     ars_tracker_parser.cpp \
@@ -40,6 +41,7 @@ SOURCES += \
 HEADERS += \
     ../../AuTerm/AutPlugin.h \
     ../../AuTerm/AutScrollEdit.h \
+    ars_trackers_ui_state.h \
     ../../AuTerm/AutEscape.h \
     ars_tracker_backend.h \
     ars_tracker_parser.h \

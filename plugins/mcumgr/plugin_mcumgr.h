@@ -308,6 +308,18 @@ struct ars_trackers_session_download_job_t {
     QString error;
 };
 
+enum ars_trackers_bulk_sessions_operation_t : uint8_t {
+    ARS_TRACKERS_BULK_SESSIONS_NONE = 0,
+    ARS_TRACKERS_BULK_SESSIONS_DELETE_ALL,
+    ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL,
+};
+
+struct ars_trackers_bulk_session_item_t {
+    QString sessionName;
+    QStringList ports;
+    QStringList trackerDisplays;
+};
+
 class ars_tracker_port_combo_box : public QComboBox
 {
     Q_OBJECT
@@ -474,6 +486,8 @@ private slots:
     void on_btn_ars_trackers_sessions_refresh_clicked();
     void on_btn_ars_trackers_start_session_clicked();
     void on_btn_ars_trackers_stop_session_clicked();
+    void on_btn_ars_trackers_delete_all_sessions_clicked();
+    void on_btn_ars_trackers_download_all_sessions_clicked();
     void ars_tracker_status_message(const QString &message);
     void ars_tracker_info_changed(const ars_tracker_info_t &info);
     void ars_tracker_info_loading_changed(bool loading);
@@ -659,6 +673,8 @@ private:
     void on_ars_trackers_session_download_clicked(const QString &session_name);
     void start_ars_trackers_session_download(const QString &session_name);
     void start_next_ars_trackers_session_download_job();
+    void start_next_ars_trackers_bulk_sessions_operation();
+    void finish_ars_trackers_bulk_sessions_operation(const QString &summary);
     void start_ars_trackers_start_session_operation(
             const QString &session_name, const QString &mode_code,
             const QList<ars_trackers_start_session_target_t> &targets);
@@ -1068,6 +1084,8 @@ private:
     QPushButton *btn_ars_trackers_sessions_refresh = nullptr;
     QPushButton *btn_ars_trackers_start_session = nullptr;
     QPushButton *btn_ars_trackers_stop_session = nullptr;
+    QPushButton *btn_ars_trackers_delete_all_sessions = nullptr;
+    QPushButton *btn_ars_trackers_download_all_sessions = nullptr;
     QLineEdit *edit_ars_trackers_download_destination = nullptr;
     QPushButton *btn_ars_trackers_download_browse = nullptr;
     QLabel *lbl_ars_trackers_sessions_status = nullptr;
@@ -1254,6 +1272,14 @@ private:
     QString ars_trackers_session_download_name;
     QList<ars_trackers_session_download_job_t> ars_trackers_session_download_jobs;
     int ars_trackers_session_download_index = -1;
+    ars_trackers_bulk_sessions_operation_t ars_trackers_bulk_sessions_operation =
+            ARS_TRACKERS_BULK_SESSIONS_NONE;
+    QList<ars_trackers_bulk_session_item_t> ars_trackers_bulk_sessions_queue;
+    int ars_trackers_bulk_sessions_index = -1;
+    int ars_trackers_bulk_sessions_success = 0;
+    int ars_trackers_bulk_sessions_failed = 0;
+    QString ars_trackers_bulk_sessions_last_error;
+    QString ars_trackers_bulk_sessions_download_destination;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

@@ -29,6 +29,7 @@
 #include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QSet>
 #include <QQueue>
 #include <QCborStreamReader>
 #include <QCborStreamWriter>
@@ -166,6 +167,7 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE,
     ACTION_ARS_TRACKERS_MULTI_SESSION_START,
     ACTION_ARS_TRACKERS_MULTI_SESSION_STOP,
+    ACTION_ARS_TRACKERS_RESET_ALL,
 };
 
 enum ars_tracker_export_fs_phase_t : uint8_t {
@@ -305,6 +307,16 @@ struct ars_trackers_session_download_job_t {
     QString destinationDir;
     bool finished = false;
     bool success = false;
+    QString error;
+};
+
+struct ars_trackers_reset_item_t {
+    QString port;
+    QString serial;
+    QString displayName;
+    bool finished = false;
+    bool success = false;
+    bool expectedDisconnect = false;
     QString error;
 };
 
@@ -486,6 +498,7 @@ private slots:
     void on_btn_ars_trackers_sessions_refresh_clicked();
     void on_btn_ars_trackers_start_session_clicked();
     void on_btn_ars_trackers_stop_session_clicked();
+    void on_btn_ars_trackers_reset_all_clicked();
     void on_btn_ars_trackers_delete_all_sessions_clicked();
     void on_btn_ars_trackers_download_all_sessions_clicked();
     void ars_tracker_status_message(const QString &message);
@@ -496,6 +509,10 @@ private slots:
     void ars_tracker_delete_loading_changed(bool loading);
     void ars_tracker_export_loading_changed(bool loading);
     void ars_tracker_export_progress_changed(const QString &progress_text);
+    void ars_tracker_export_progress_detail_changed(const QString &remote_file,
+                                                    qint64 bytes_completed,
+                                                    qint64 total_bytes,
+                                                    bool checking_existing);
     void ars_tracker_export_file_list_changed(const QStringList &rows);
     void ars_tracker_export_finished(bool success, bool cancelled, const QString &message);
     void ars_tracker_request_info_shell_command(const QStringList &arguments);
@@ -699,6 +716,8 @@ private:
     void handle_ars_trackers_stop_session_timeout(const QString &port, int generation,
                                                   int phase);
     void maybe_finish_ars_trackers_stop_session();
+    void start_next_ars_trackers_reset_all();
+    void finish_ars_trackers_reset_all();
     void append_ars_tracker_shell_output(const QString &text);
     void append_ars_tracker_device_log(const QByteArray &data);
     void append_ars_tracker_device_log_text(const QString &text);
@@ -1084,12 +1103,15 @@ private:
     QPushButton *btn_ars_trackers_sessions_refresh = nullptr;
     QPushButton *btn_ars_trackers_start_session = nullptr;
     QPushButton *btn_ars_trackers_stop_session = nullptr;
+    QPushButton *btn_ars_trackers_reset_all = nullptr;
     QPushButton *btn_ars_trackers_delete_all_sessions = nullptr;
     QPushButton *btn_ars_trackers_download_all_sessions = nullptr;
     QLineEdit *edit_ars_trackers_download_destination = nullptr;
     QPushButton *btn_ars_trackers_download_browse = nullptr;
     QLabel *lbl_ars_trackers_sessions_status = nullptr;
     QTableWidget *table_ars_trackers_sessions = nullptr;
+    QLabel *lbl_ars_trackers_download_progress_detail = nullptr;
+    QProgressBar *progress_ars_trackers_download = nullptr;
     QLabel *lbl_ars_trackers_status = nullptr;
     QSpacerItem *verticalSpacer_ars_tracker_status;
     QWidget *tab_2;
@@ -1267,6 +1289,12 @@ private:
     int ars_trackers_stop_session_generation = 0;
     bool ars_trackers_stop_session_running = false;
     QMap<QString, ars_trackers_stop_session_item_t> ars_trackers_stop_session_items;
+    int ars_trackers_reset_generation = 0;
+    bool ars_trackers_reset_running = false;
+    QList<ars_trackers_reset_item_t> ars_trackers_reset_items;
+    int ars_trackers_reset_index = -1;
+    QSet<QString> ars_trackers_reset_expected_disconnect_ports;
+    QHash<QString, qint64> ars_trackers_reset_expected_disconnect_deadline_ms;
     int ars_trackers_session_download_generation = 0;
     bool ars_trackers_session_download_running = false;
     QString ars_trackers_session_download_name;

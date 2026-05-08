@@ -133,6 +133,10 @@ signals:
     void delete_loading_changed(bool loading);
     void export_loading_changed(bool loading);
     void export_progress_changed(const QString &progress_text);
+    void export_progress_detail_changed(const QString &remote_file,
+                                        qint64 bytes_completed,
+                                        qint64 total_bytes,
+                                        bool checking_existing);
     void export_file_list_changed(const QStringList &rows);
     void export_finished(bool success, bool cancelled, const QString &message);
 

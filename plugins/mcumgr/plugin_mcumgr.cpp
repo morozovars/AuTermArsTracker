@@ -35,6 +35,7 @@
 #include <QSerialPortInfo>
 #include <QScrollBar>
 #include <QFileInfo>
+#include <QLocale>
 #include <QStandardPaths>
 #include "plugin_mcumgr.h"
 #include "ars_tracker_parser.h"
@@ -3198,6 +3199,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						&plugin_mcumgr::ars_tracker_export_loading_changed);
 		connect(ars_tracker, &ars_tracker_backend::export_progress_changed, this,
 						&plugin_mcumgr::ars_tracker_export_progress_changed);
+		connect(ars_tracker, &ars_tracker_backend::export_progress_detail_changed, this,
+						&plugin_mcumgr::ars_tracker_export_progress_detail_changed);
 		connect(ars_tracker, &ars_tracker_backend::export_file_list_changed, this,
 						&plugin_mcumgr::ars_tracker_export_file_list_changed);
 		connect(ars_tracker, &ars_tracker_backend::export_finished, this,
@@ -6529,7 +6532,15 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		QLabel *lbl_ars_trackers_header = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_header->setObjectName("lbl_ars_trackers_header");
 		lbl_ars_trackers_header->setText("Trackers are detected automatically.");
-		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_header, 0, 0, 1, 1);
+		QHBoxLayout *trackers_header_layout = new QHBoxLayout();
+		trackers_header_layout->addWidget(lbl_ars_trackers_header);
+		trackers_header_layout->addStretch(1);
+		btn_ars_trackers_reset_all = new QPushButton(tab_ars_trackers);
+		btn_ars_trackers_reset_all->setObjectName("btn_ars_trackers_reset_all");
+		btn_ars_trackers_reset_all->setText("Reset all");
+		btn_ars_trackers_reset_all->setEnabled(true);
+		trackers_header_layout->addWidget(btn_ars_trackers_reset_all);
+		gridLayout_ars_trackers->addLayout(trackers_header_layout, 0, 0, 1, 1);
 
 		table_ars_trackers = new QTableWidget(tab_ars_trackers);
 		table_ars_trackers->setObjectName("table_ars_trackers");
@@ -6651,10 +6662,22 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				QStringList() << "Session" << "Trackers" << "Count" << "Status" << "Actions");
 		gridLayout_ars_trackers->addWidget(table_ars_trackers_sessions, 5, 0, 1, 1);
 
+		lbl_ars_trackers_download_progress_detail = new QLabel(tab_ars_trackers);
+		lbl_ars_trackers_download_progress_detail->setObjectName(
+				"lbl_ars_trackers_download_progress_detail");
+		lbl_ars_trackers_download_progress_detail->setText("No active download");
+		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_download_progress_detail, 6, 0, 1, 1);
+
+		progress_ars_trackers_download = new QProgressBar(tab_ars_trackers);
+		progress_ars_trackers_download->setObjectName("progress_ars_trackers_download");
+		progress_ars_trackers_download->setRange(0, 100);
+		progress_ars_trackers_download->setValue(0);
+		gridLayout_ars_trackers->addWidget(progress_ars_trackers_download, 7, 0, 1, 1);
+
 		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_status->setObjectName("lbl_ars_trackers_status");
 		lbl_ars_trackers_status->setText("Waiting for trackers...");
-		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_status, 6, 0, 1, 1);
+		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_status, 8, 0, 1, 1);
 
 		timer_ars_trackers_table_refresh = new QTimer(this);
 		timer_ars_trackers_table_refresh->setSingleShot(true);
@@ -6778,6 +6801,8 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 						&plugin_mcumgr::on_btn_ars_trackers_start_session_clicked);
 		connect(btn_ars_trackers_stop_session, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked);
+		connect(btn_ars_trackers_reset_all, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_reset_all_clicked);
 		connect(btn_ars_trackers_download_all_sessions, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked);
 		connect(btn_ars_trackers_delete_all_sessions, &QPushButton::clicked, this,
@@ -8860,6 +8885,31 @@ void plugin_mcumgr::remove_ars_tracker_device_by_port(const QString &port_name,
 		if (trimmed_port.isEmpty())
 		{
 				return;
+		}
+		const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+		const bool reset_expected_disconnect =
+				ars_trackers_reset_expected_disconnect_ports.contains(trimmed_port) &&
+				ars_trackers_reset_expected_disconnect_deadline_ms.value(trimmed_port, 0) >= now_ms;
+		if (reset_expected_disconnect)
+		{
+				log_debug() << "expected reset disconnect port=" << trimmed_port
+										<< "reason=" << reason;
+				if (ars_trackers_reset_running && ars_trackers_reset_index >= 0 &&
+						ars_trackers_reset_index < ars_trackers_reset_items.size())
+				{
+						ars_trackers_reset_item_t &item = ars_trackers_reset_items[ars_trackers_reset_index];
+						if (!item.finished &&
+								item.port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+						{
+								item.finished = true;
+								item.success = true;
+								item.expectedDisconnect = true;
+								item.error.clear();
+								QTimer::singleShot(0, this, &plugin_mcumgr::start_next_ars_trackers_reset_all);
+						}
+				}
+				ars_trackers_reset_expected_disconnect_ports.remove(trimmed_port);
+				ars_trackers_reset_expected_disconnect_deadline_ms.remove(trimmed_port);
 		}
 		if (ARS_TRACKERS_PORT_LIFETIME_TRACE)
 		{
@@ -12025,6 +12075,18 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 										<< ars_trackers_session_download_generation
 										<< "successJobs=" << success
 										<< "failedJobs=" << failed;
+				if (lbl_ars_trackers_download_progress_detail != nullptr)
+				{
+						lbl_ars_trackers_download_progress_detail->setText(
+								QString("Bulk download finished: %1 succeeded, %2 failed")
+										.arg(success)
+										.arg(failed));
+				}
+				if (progress_ars_trackers_download != nullptr)
+				{
+						progress_ars_trackers_download->setRange(0, 100);
+						progress_ars_trackers_download->setValue(failed == 0 ? 100 : 0);
+				}
 				if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL)
 				{
 						const bool session_ok = (failed == 0);
@@ -12126,6 +12188,19 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 		log_debug() << "session_download_job_backend_start port=" << device->portName
 								<< "session=" << job.sessionName
 								<< "localDir=" << job.destinationDir;
+		if (lbl_ars_trackers_download_progress_detail != nullptr)
+		{
+				QString tracker_display = job.trackerName.isEmpty() ? job.port :
+																															 QString("%1 (%2)").arg(job.trackerName, job.port);
+				lbl_ars_trackers_download_progress_detail->setText(
+						QString("Tracker: %1  Session: %2  File: <pending>  0%  0 / unknown bytes")
+								.arg(tracker_display, job.sessionName));
+		}
+		if (progress_ars_trackers_download != nullptr)
+		{
+				progress_ars_trackers_download->setRange(0, 100);
+				progress_ars_trackers_download->setValue(0);
+		}
 		QString error_message;
 		bool started = ars_tracker->begin_session_export_explicit(
 				job.sessionName, job.destinationDir, &error_message);
@@ -12242,6 +12317,80 @@ void plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation()
 															 &plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation);
 				}
 		}
+}
+
+void plugin_mcumgr::on_btn_ars_trackers_reset_all_clicked()
+{
+		if (ars_trackers_reset_running)
+		{
+				log_debug() << "reset_all_ignored reason=reset operation already running";
+				if (lbl_ars_trackers_status != nullptr)
+				{
+						lbl_ars_trackers_status->setText("Reset all already running");
+				}
+				return;
+		}
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_start_session_running || ars_trackers_stop_session_running ||
+				ars_trackers_session_download_running || ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE ||
+				ars_tracker_firmware_upload_active || ars_tracker_firmware_erase_active)
+		{
+				log_debug() << "reset_all_ignored reason=incompatible operation running";
+				if (lbl_ars_trackers_status != nullptr)
+				{
+						lbl_ars_trackers_status->setText("Reset all ignored: operation in progress");
+				}
+				return;
+		}
+
+		QList<ars_trackers_reset_item_t> targets;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected == false || device.shell == nullptr || device.processor == nullptr ||
+						device.transport == nullptr || device.serialPort == nullptr ||
+						device.serialPort->isOpen() == false)
+				{
+						continue;
+				}
+				ars_trackers_reset_item_t item;
+				item.port = device.portName;
+				item.serial = device.serialNumber;
+				item.displayName = device.displayName;
+				targets.append(item);
+		}
+		if (targets.isEmpty())
+		{
+				log_debug() << "reset_all_ignored reason=no connected trackers";
+				if (lbl_ars_trackers_status != nullptr)
+				{
+						lbl_ars_trackers_status->setText("Reset all ignored: no connected trackers");
+				}
+				return;
+		}
+
+		QMessageBox::StandardButton confirm = QMessageBox::question(
+				parent_window, "Reset all trackers",
+				"Reset all connected Ars trackers? USB COM ports may disappear temporarily.",
+				QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+		if (confirm != QMessageBox::Yes)
+		{
+				log_debug() << "reset_all_cancelled_by_user";
+				return;
+		}
+
+		ars_trackers_reset_generation++;
+		ars_trackers_reset_running = true;
+		ars_trackers_reset_items = targets;
+		ars_trackers_reset_index = -1;
+		ars_trackers_reset_expected_disconnect_ports.clear();
+		ars_trackers_reset_expected_disconnect_deadline_ms.clear();
+		log_debug() << "reset_all_started target_count=" << ars_trackers_reset_items.size();
+		if (lbl_ars_trackers_status != nullptr)
+		{
+				lbl_ars_trackers_status->setText(
+						QString("Reset all: 0 / %1").arg(ars_trackers_reset_items.size()));
+		}
+		start_next_ars_trackers_reset_all();
 }
 
 void plugin_mcumgr::finish_ars_trackers_bulk_sessions_operation(const QString &summary)
@@ -13184,6 +13333,163 @@ void plugin_mcumgr::maybe_finish_ars_trackers_stop_session()
 								<< "failed=" << failed;
 		QTimer::singleShot(0, this,
 											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+}
+
+void plugin_mcumgr::start_next_ars_trackers_reset_all()
+{
+		if (!ars_trackers_reset_running)
+		{
+				return;
+		}
+
+		ars_trackers_reset_index++;
+		if (ars_trackers_reset_index >= ars_trackers_reset_items.size())
+		{
+				finish_ars_trackers_reset_all();
+				return;
+		}
+
+		ars_trackers_reset_item_t &item = ars_trackers_reset_items[ars_trackers_reset_index];
+		log_debug() << "reset_all_step index="
+								<< (ars_trackers_reset_index + 1) << "/" << ars_trackers_reset_items.size()
+								<< "tracker=" << item.displayName
+								<< "port=" << item.port
+								<< "serial=" << item.serial;
+		if (lbl_ars_trackers_status != nullptr)
+		{
+				lbl_ars_trackers_status->setText(
+						QString("Reset all: %1 / %2  resetting %3")
+								.arg(ars_trackers_reset_index + 1)
+								.arg(ars_trackers_reset_items.size())
+								.arg(item.displayName.isEmpty() ? item.port : item.displayName));
+		}
+
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(item.port);
+		if (device == nullptr || !device->connected || device->shell == nullptr ||
+				device->processor == nullptr || device->transport == nullptr ||
+				device->serialPort == nullptr || !device->serialPort->isOpen())
+		{
+				item.finished = true;
+				item.success = false;
+				item.error = "Device unavailable";
+				log_warning() << "reset_all_failed tracker=" << item.displayName
+											<< "error=" << item.error;
+				QTimer::singleShot(0, this, &plugin_mcumgr::start_next_ars_trackers_reset_all);
+				return;
+		}
+
+		device->telemetryRefreshing = true;
+		device->processor->set_transport(device->transport);
+		set_group_transport_settings_for_transport(
+				device->shell, device->transport, ACTION_ARS_TRACKERS_RESET_ALL, 5000);
+		device->shellRc = 0;
+		QStringList args = QStringList() << "reset";
+		bool started = device->shell->start_execute(&args, &device->shellRc);
+		if (!started)
+		{
+				device->telemetryRefreshing = false;
+				item.finished = true;
+				item.success = false;
+				item.error = "Failed to start shell command";
+				log_warning() << "reset_all_failed tracker=" << item.displayName
+											<< "error=" << item.error;
+				QTimer::singleShot(0, this, &plugin_mcumgr::start_next_ars_trackers_reset_all);
+				return;
+		}
+
+		const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + 5000;
+		ars_trackers_reset_expected_disconnect_ports.insert(item.port);
+		ars_trackers_reset_expected_disconnect_deadline_ms.insert(item.port, deadline);
+		item.expectedDisconnect = true;
+		log_debug() << "reset_all_command_sent tracker=" << item.displayName
+								<< "port=" << item.port << "deadlineMs=" << deadline;
+
+		const int generation = ars_trackers_reset_generation;
+		const QString timeout_port = item.port;
+		QTimer::singleShot(5000, this, [this, generation, timeout_port]() {
+				if (!ars_trackers_reset_running || generation != ars_trackers_reset_generation)
+				{
+						return;
+				}
+				if (ars_trackers_reset_index < 0 ||
+						ars_trackers_reset_index >= ars_trackers_reset_items.size())
+				{
+						return;
+				}
+				ars_trackers_reset_item_t &current = ars_trackers_reset_items[ars_trackers_reset_index];
+				if (current.finished || current.port.compare(timeout_port, Qt::CaseInsensitive) != 0)
+				{
+						return;
+				}
+				bool port_gone = (find_ars_tracker_device_by_port(timeout_port) == nullptr);
+				current.finished = true;
+				if (port_gone)
+				{
+						current.success = true;
+						current.error.clear();
+						log_debug() << "reset_all_timeout_but_port_disappeared_treated_as_expected tracker="
+												<< current.displayName << "port=" << timeout_port;
+				}
+				else
+				{
+						current.success = false;
+						current.error = "Reset command timeout: no response and port did not disappear";
+						log_warning() << "reset_all_failed tracker=" << current.displayName
+													<< "error=" << current.error;
+				}
+				ars_trackers_reset_expected_disconnect_ports.remove(timeout_port);
+				ars_trackers_reset_expected_disconnect_deadline_ms.remove(timeout_port);
+				QTimer::singleShot(0, this, &plugin_mcumgr::start_next_ars_trackers_reset_all);
+		});
+}
+
+void plugin_mcumgr::finish_ars_trackers_reset_all()
+{
+		int sent = 0;
+		int failed = 0;
+		int expected_disconnect = 0;
+		for (const ars_trackers_reset_item_t &item : ars_trackers_reset_items)
+		{
+				if (item.success)
+				{
+						sent++;
+				}
+				else
+				{
+						failed++;
+				}
+				if (item.expectedDisconnect)
+				{
+						expected_disconnect++;
+				}
+		}
+		ars_trackers_reset_running = false;
+		ars_trackers_reset_index = -1;
+		ars_trackers_reset_items.clear();
+		ars_trackers_reset_expected_disconnect_ports.clear();
+		ars_trackers_reset_expected_disconnect_deadline_ms.clear();
+
+		log_debug() << "reset_all_finished sent=" << sent
+								<< "expectedDisconnect=" << expected_disconnect
+								<< "failed=" << failed;
+		if (lbl_ars_trackers_status != nullptr)
+		{
+				lbl_ars_trackers_status->setText(
+						QString("Reset all finished: %1 sent, %2 failed. Waiting for trackers to reappear...")
+								.arg(sent)
+								.arg(failed));
+		}
+		log_debug() << "reset_all_rescan_scheduled";
+		QTimer::singleShot(3000, this, [this]() {
+				log_debug() << "Rescanning after reset... (3s)";
+				request_ars_tracker_port_scan("reset-all-rescan-3s", true, true);
+				start_ars_trackers_sessions_refresh();
+		});
+		QTimer::singleShot(7000, this, [this]() {
+				log_debug() << "Rescanning after reset... (7s)";
+				request_ars_tracker_port_scan("reset-all-rescan-7s", true, true);
+				start_ars_trackers_sessions_refresh();
+		});
 }
 
 void plugin_mcumgr::on_btn_ars_tracker_refresh_clicked()
@@ -14310,6 +14616,74 @@ void plugin_mcumgr::ars_tracker_export_progress_changed(const QString &progress_
 		lbl_ars_tracker_progress->setText(progress_text);
 }
 
+void plugin_mcumgr::ars_tracker_export_progress_detail_changed(const QString &remote_file,
+																														 qint64 bytes_completed,
+																														 qint64 total_bytes,
+																														 bool checking_existing)
+{
+		if (ars_trackers_session_download_running == false ||
+				ars_trackers_session_download_index < 0 ||
+				ars_trackers_session_download_index >= ars_trackers_session_download_jobs.size())
+		{
+				return;
+		}
+		const ars_trackers_session_download_job_t &job =
+				ars_trackers_session_download_jobs.at(ars_trackers_session_download_index);
+		QString tracker_display = job.trackerName.trimmed();
+		if (tracker_display.isEmpty())
+		{
+				tracker_display = job.port;
+		}
+		else if (job.port.trimmed().isEmpty() == false)
+		{
+				tracker_display = QString("%1 (%2)").arg(tracker_display, job.port);
+		}
+
+		QString file_display = remote_file.trimmed();
+		if (file_display.isEmpty())
+		{
+				file_display = "<pending>";
+		}
+		else
+		{
+				file_display = QFileInfo(file_display).fileName();
+		}
+
+		int percent = 0;
+		QString bytes_display;
+		if (total_bytes > 0)
+		{
+				qint64 bounded_completed = qBound<qint64>(0, bytes_completed, total_bytes);
+				percent = int((bounded_completed * 100) / total_bytes);
+				bytes_display = QString("%1 / %2 bytes")
+														.arg(QLocale().toString(bounded_completed))
+														.arg(QLocale().toString(total_bytes));
+		}
+		else
+		{
+				bytes_display = QString("%1 / unknown bytes")
+														.arg(QLocale().toString(qMax<qint64>(0, bytes_completed)));
+		}
+
+		QString detail =
+				QString("Tracker: %1  Session: %2  File: %3  %4%  %5")
+						.arg(tracker_display, job.sessionName, file_display, QString::number(percent),
+								 bytes_display);
+		if (checking_existing)
+		{
+				detail.append(" (checking)");
+		}
+		if (lbl_ars_trackers_download_progress_detail != nullptr)
+		{
+				lbl_ars_trackers_download_progress_detail->setText(detail);
+		}
+		if (progress_ars_trackers_download != nullptr)
+		{
+				progress_ars_trackers_download->setRange(0, 100);
+				progress_ars_trackers_download->setValue(total_bytes > 0 ? percent : 0);
+		}
+}
+
 void plugin_mcumgr::ars_tracker_export_file_list_changed(const QStringList &rows)
 {
 		list_ars_tracker_files->clear();
@@ -14328,6 +14702,46 @@ void plugin_mcumgr::ars_tracker_export_finished(bool success, bool cancelled, co
 		ars_tracker_persistent_export_port.clear();
 		btn_cancel->setEnabled(false);
 		lbl_ars_tracker_status->setText(message);
+		if (lbl_ars_trackers_download_progress_detail != nullptr)
+		{
+				if (ars_trackers_session_download_running &&
+						ars_trackers_session_download_index >= 0 &&
+						ars_trackers_session_download_index < ars_trackers_session_download_jobs.size())
+				{
+						const ars_trackers_session_download_job_t &job =
+								ars_trackers_session_download_jobs.at(ars_trackers_session_download_index);
+						if (success && !cancelled)
+						{
+								lbl_ars_trackers_download_progress_detail->setText(
+										QString("Session download finished: %1 (%2)")
+												.arg(job.sessionName, job.trackerName.isEmpty() ? job.port :
+																															 job.trackerName));
+						}
+						else if (cancelled)
+						{
+								lbl_ars_trackers_download_progress_detail->setText(
+										QString("Download cancelled: Tracker %1, Session %2: %3")
+												.arg(job.trackerName.isEmpty() ? job.port : job.trackerName,
+														 job.sessionName, message));
+						}
+						else
+						{
+								lbl_ars_trackers_download_progress_detail->setText(
+										QString("Download failed: Tracker %1, Session %2: %3")
+												.arg(job.trackerName.isEmpty() ? job.port : job.trackerName,
+														 job.sessionName, message));
+						}
+				}
+				else if (!ars_trackers_session_download_running)
+				{
+						lbl_ars_trackers_download_progress_detail->setText("No active download");
+				}
+		}
+		if (progress_ars_trackers_download != nullptr)
+		{
+				progress_ars_trackers_download->setRange(0, 100);
+				progress_ars_trackers_download->setValue(success && !cancelled ? 100 : 0);
+		}
 
 		if (ars_trackers_session_download_running &&
 				ars_trackers_session_download_index >= 0 &&
@@ -14529,7 +14943,8 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_LIST &&
 				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE &&
 				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_START &&
-				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_STOP)
+				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_STOP &&
+				user_data != ACTION_ARS_TRACKERS_RESET_ALL)
 		{
 				return;
 		}
@@ -14874,6 +15289,46 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 										<< "success=" << ok;
 				mark_ars_trackers_stop_session_done(
 						device->portName, ok, false, ok ? QString() : error_string);
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKERS_RESET_ALL)
+		{
+				if (!ars_trackers_reset_running || ars_trackers_reset_index < 0 ||
+						ars_trackers_reset_index >= ars_trackers_reset_items.size())
+				{
+						return;
+				}
+
+				ars_trackers_reset_item_t &item = ars_trackers_reset_items[ars_trackers_reset_index];
+				if (item.finished || item.port.compare(device->portName, Qt::CaseInsensitive) != 0)
+				{
+						return;
+				}
+
+				device->telemetryRefreshing = false;
+				item.finished = true;
+				if (status == STATUS_COMPLETE && device->shellRc == 0)
+				{
+						item.success = true;
+						item.error.clear();
+						log_debug() << "reset_all_command_success tracker="
+												<< (item.displayName.isEmpty() ? item.port : item.displayName)
+												<< "port=" << item.port;
+				}
+				else
+				{
+						item.success = false;
+						item.error = error_string.trimmed().isEmpty() ?
+													 "Reset command failed" :
+													 error_string.trimmed();
+						log_warning() << "reset_all_failed tracker="
+													<< (item.displayName.isEmpty() ? item.port : item.displayName)
+													<< "error=" << item.error;
+				}
+				ars_trackers_reset_expected_disconnect_ports.remove(item.port);
+				ars_trackers_reset_expected_disconnect_deadline_ms.remove(item.port);
+				QTimer::singleShot(0, this, &plugin_mcumgr::start_next_ars_trackers_reset_all);
 				return;
 		}
 

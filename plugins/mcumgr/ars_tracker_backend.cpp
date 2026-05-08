@@ -2092,12 +2092,18 @@ void ars_tracker_backend::publish_progress_text(const QString& current_file)
     {
         progress.append(QString(" | Current: %1").arg(QFileInfo(display_file).fileName()));
 
-        if (current_item != nullptr)
+    if (current_item != nullptr)
+    {
+        bool  checking_existing = (current_item->status == ARS_TRACKER_STATUS_CHECKING_EXISTING);
+        qint64 bytes_completed = qMax<qint64>(0, current_item->bytes_completed);
+        qint64 total_bytes = qMax<qint64>(0, current_item->total_bytes);
+        emit export_progress_detail_changed(display_file, bytes_completed, total_bytes,
+                                            checking_existing);
+
+        if (current_item->status == ARS_TRACKER_STATUS_CHECKING_EXISTING)
         {
-            if (current_item->status == ARS_TRACKER_STATUS_CHECKING_EXISTING)
-            {
-                progress.append(" (checking)");
-            }
+            progress.append(" (checking)");
+        }
             else if (current_item->total_bytes > 0)
             {
                 qint64 bytes_completed =

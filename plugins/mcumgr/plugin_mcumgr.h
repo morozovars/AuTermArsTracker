@@ -52,6 +52,7 @@
 #include "debug_logger.h"
 #include "smp_json.h"
 #include "ars_tracker_backend.h"
+#include "ars_trackers_session_download_coordinator.h"
 
 class QSerialPort;
 
@@ -1299,7 +1300,6 @@ private:
     QHash<QString, qint64> ars_trackers_reset_expected_disconnect_deadline_ms;
     int ars_trackers_session_download_generation = 0;
     bool ars_trackers_session_download_running = false;
-    bool ars_trackers_session_download_cancel_requested = false;
     QString ars_trackers_session_download_name;
     QList<ars_trackers_session_download_job_t> ars_trackers_session_download_jobs;
     int ars_trackers_session_download_index = -1;
@@ -1311,6 +1311,7 @@ private:
     int ars_trackers_bulk_sessions_failed = 0;
     QString ars_trackers_bulk_sessions_last_error;
     QString ars_trackers_bulk_sessions_download_destination;
+    ArsTrackersSessionDownloadCoordinator *ars_trackers_session_download_coordinator = nullptr;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

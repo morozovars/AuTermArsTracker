@@ -282,7 +282,25 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		smp_groups.zephyr_mgmt   = new smp_group_zephyr_mgmt(processor);
 		smp_groups.enum_mgmt     = new smp_group_enum_mgmt(processor);
 		ars_tracker              = new ars_tracker_backend(this);
+		ars_trackers_session_download_coordinator =
+				new ArsTrackersSessionDownloadCoordinator(this);
 		error_lookup_form        = new error_lookup(parent_window, &smp_groups);
+
+		connect(ars_trackers_session_download_coordinator,
+						&ArsTrackersSessionDownloadCoordinator::logMessage, this,
+						[this](const QString &message) { log_debug() << message; });
+		connect(ars_trackers_session_download_coordinator,
+						&ArsTrackersSessionDownloadCoordinator::statusMessage, this,
+						[this](const QString &message) {
+								if (lbl_ars_trackers_sessions_status != nullptr)
+								{
+										lbl_ars_trackers_sessions_status->setText(message);
+								}
+								if (lbl_ars_trackers_download_progress_detail != nullptr)
+								{
+										lbl_ars_trackers_download_progress_detail->setText(message);
+								}
+						});
 
 		processor->set_json(log_json);
 		connect(log_json, SIGNAL(log(bool, QString*)), this, SLOT(custom_log(bool, QString*)));
@@ -11705,7 +11723,12 @@ void plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked()
 		ars_trackers_bulk_sessions_failed = 0;
 		ars_trackers_bulk_sessions_last_error.clear();
 		ars_trackers_bulk_sessions_download_destination = selected;
-		ars_trackers_session_download_cancel_requested = false;
+		if (ars_trackers_session_download_coordinator != nullptr)
+		{
+				ars_trackers_session_download_coordinator->clearCancel();
+				ars_trackers_session_download_coordinator->beginBulkDownload(
+						ars_trackers_bulk_sessions_queue.size());
+		}
 		log_debug() << "bulk_session_download_started sessions="
 								<< ars_trackers_bulk_sessions_queue.size()
 								<< "baseDestination=" << selected;
@@ -11814,13 +11837,17 @@ void plugin_mcumgr::on_btn_ars_trackers_cancel_download_clicked()
 				}
 				return;
 		}
-		if (ars_trackers_session_download_cancel_requested)
+		if (ars_trackers_session_download_coordinator != nullptr &&
+				ars_trackers_session_download_coordinator->isCancelling())
 		{
 				log_debug() << "trackers_download_cancel_ignored reason=already requested";
 				return;
 		}
 
-		ars_trackers_session_download_cancel_requested = true;
+		if (ars_trackers_session_download_coordinator != nullptr)
+		{
+				ars_trackers_session_download_coordinator->cancel();
+		}
 		if (ars_trackers_session_download_index >= 0 &&
 				ars_trackers_session_download_index < ars_trackers_session_download_jobs.size())
 		{
@@ -12052,7 +12079,6 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				ars_trackers_sessions_presence_map.value(session);
 		ars_trackers_session_download_generation++;
 		ars_trackers_session_download_running = true;
-		ars_trackers_session_download_cancel_requested = false;
 		ars_trackers_session_download_name = session;
 		ars_trackers_session_download_jobs.clear();
 		ars_trackers_session_download_index = -1;
@@ -12092,6 +12118,11 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				log_warning() << "session_download_job_failed reason=no jobs queued";
 				return;
 		}
+		if (ars_trackers_session_download_coordinator != nullptr)
+		{
+				ars_trackers_session_download_coordinator->beginSessionDownload(
+						session, ars_trackers_session_download_jobs.size());
+		}
 		start_next_ars_trackers_session_download_job();
 }
 
@@ -12099,7 +12130,8 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 {
 		if (!ars_trackers_session_download_running)
 				return;
-		if (ars_trackers_session_download_cancel_requested)
+		if (ars_trackers_session_download_coordinator != nullptr &&
+				ars_trackers_session_download_coordinator->isCancelling())
 		{
 				ars_trackers_session_download_running = false;
 				const int completed_sessions =
@@ -12147,7 +12179,11 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 												<< "totalSessions=" << ars_trackers_bulk_sessions_queue.size();
 						finish_ars_trackers_bulk_sessions_operation(summary);
 				}
-				ars_trackers_session_download_cancel_requested = false;
+				if (ars_trackers_session_download_coordinator != nullptr)
+				{
+						ars_trackers_session_download_coordinator->clearCancel();
+						ars_trackers_session_download_coordinator->finishSessionDownload();
+				}
 				update_ars_trackers_sessions_aggregate_and_ui();
 				return;
 		}
@@ -12170,6 +12206,10 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 						}
 				}
 				ars_trackers_session_download_running = false;
+				if (ars_trackers_session_download_coordinator != nullptr)
+				{
+						ars_trackers_session_download_coordinator->finishSessionDownload();
+				}
 				if (lbl_ars_trackers_sessions_status != nullptr)
 				{
 						if (failed == 0)
@@ -12210,7 +12250,8 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 				}
 				if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL)
 				{
-						if (ars_trackers_session_download_cancel_requested)
+						if (ars_trackers_session_download_coordinator != nullptr &&
+								ars_trackers_session_download_coordinator->isCancelling())
 						{
 								const int completed_sessions =
 										ars_trackers_bulk_sessions_success + ars_trackers_bulk_sessions_failed;
@@ -12223,7 +12264,10 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 														<< "totalSessions="
 														<< ars_trackers_bulk_sessions_queue.size();
 								finish_ars_trackers_bulk_sessions_operation(summary);
-								ars_trackers_session_download_cancel_requested = false;
+								if (ars_trackers_session_download_coordinator != nullptr)
+								{
+										ars_trackers_session_download_coordinator->clearCancel();
+								}
 								update_ars_trackers_sessions_aggregate_and_ui();
 								return;
 						}
@@ -12232,12 +12276,24 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 						if (session_ok)
 						{
 								ars_trackers_bulk_sessions_success++;
+								if (ars_trackers_session_download_coordinator != nullptr)
+								{
+										ars_trackers_session_download_coordinator->updateBulkCounters(
+												ars_trackers_bulk_sessions_success,
+												ars_trackers_bulk_sessions_failed);
+								}
 								log_debug() << "bulk_session_download_item_success session=" << session_name
 														<< "trackers=" << success;
 						}
 						else
 						{
 								ars_trackers_bulk_sessions_failed++;
+								if (ars_trackers_session_download_coordinator != nullptr)
+								{
+										ars_trackers_session_download_coordinator->updateBulkCounters(
+												ars_trackers_bulk_sessions_success,
+												ars_trackers_bulk_sessions_failed);
+								}
 								ars_trackers_bulk_sessions_last_error = last_error;
 								log_warning() << "bulk_session_download_item_failed session=" << session_name
 															<< "failedTrackers=" << failed
@@ -12373,7 +12429,8 @@ void plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation()
 				return;
 		}
 		if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL &&
-				ars_trackers_session_download_cancel_requested)
+				ars_trackers_session_download_coordinator != nullptr &&
+				ars_trackers_session_download_coordinator->isCancelling())
 		{
 				const int completed_sessions =
 						ars_trackers_bulk_sessions_success + ars_trackers_bulk_sessions_failed;
@@ -12384,7 +12441,7 @@ void plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation()
 										<< "completedSessions=" << completed_sessions
 										<< "totalSessions=" << ars_trackers_bulk_sessions_queue.size();
 				finish_ars_trackers_bulk_sessions_operation(summary);
-				ars_trackers_session_download_cancel_requested = false;
+				ars_trackers_session_download_coordinator->clearCancel();
 				return;
 		}
 		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
@@ -12560,6 +12617,10 @@ void plugin_mcumgr::finish_ars_trackers_bulk_sessions_operation(const QString &s
 		ars_trackers_bulk_sessions_success = 0;
 		ars_trackers_bulk_sessions_failed = 0;
 		ars_trackers_bulk_sessions_last_error.clear();
+		if (ars_trackers_session_download_coordinator != nullptr)
+		{
+				ars_trackers_session_download_coordinator->clearCancel();
+		}
 		if (lbl_ars_trackers_sessions_status != nullptr)
 		{
 				lbl_ars_trackers_sessions_status->setText(summary);

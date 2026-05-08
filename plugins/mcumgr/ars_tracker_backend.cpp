@@ -132,6 +132,13 @@ static QString format_export_byte_count(qint64 bytes)
     int precision = (suffix_index == 0 || value >= 100.0) ? 0 : (value >= 10.0 ? 1 : 2);
     return QString("%1%2").arg(QString::number(value, 'f', precision), suffixes[suffix_index]);
 }
+
+static QString ars_tracker_display_file_name(const QString &remote_file)
+{
+    const QString file_name = QFileInfo(remote_file).fileName();
+    return file_name.isEmpty() ? remote_file : file_name;
+}
+
 static QString normalize_hash_name(const QString& hash_name)
 {
     QString normalized = hash_name.trimmed().toLower();
@@ -2237,7 +2244,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
             publish_progress_text();
             emit status_message(
                 QString("Skipping %1, remote file is empty.")
-                    .arg(QFileInfo(item.remote_file).fileName()));
+                    .arg(ars_tracker_display_file_name(item.remote_file)));
             schedule_next_download_or_finish("remote file empty");
             return;
         }
@@ -2267,26 +2274,40 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
             {
                 emit status_message(
                     QString("Could not verify existing %1, resuming download from current file size.")
-                        .arg(QFileInfo(item.remote_file).fileName()));
+                        .arg(ars_tracker_display_file_name(item.remote_file)));
             }
             else if (local_hash == remote_hash)
             {
+                const QString remote_file = item.remote_file;
+                const QString display_file_name = ars_tracker_display_file_name(remote_file);
+                const bool is_sensor_file = (item.category == ARS_TRACKER_FILE_SENSOR);
+                const int queue_size_before_enqueue = download_queue.size();
+                log_debug() << "ArsTracker export skip-identical-local start:"
+                            << "remote_file=" << remote_file
+                            << "display_file_name=" << display_file_name
+                            << "index=" << current_download_index
+                            << "queue_size_before_enqueue=" << queue_size_before_enqueue
+                            << "is_sensor_file=" << is_sensor_file;
+
                 item.status          = ARS_TRACKER_STATUS_ALREADY_PRESENT;
                 item.bytes_completed = remote_size;
                 item.total_bytes     = remote_size;
                 item.error_text =
                     QString("Already present (%1, size match)").arg(export_hash_name.toUpper());
 
-                if (item.category == ARS_TRACKER_FILE_SENSOR)
+                if (is_sensor_file)
                 {
                     enqueue_next_sensor_candidate();
+                    log_debug() << "ArsTracker export skip-identical-local enqueue-next-sensor:"
+                                << "index=" << current_download_index
+                                << "queue_size_after_enqueue=" << download_queue.size();
                 }
 
                 publish_export_file_rows();
                 publish_progress_text();
                 emit status_message(
                     QString("Skipping %1, identical local copy already present.")
-                        .arg(QFileInfo(item.remote_file).fileName()));
+                        .arg(display_file_name));
                 schedule_next_download_or_finish("local file already present");
                 return;
             }
@@ -2330,7 +2351,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         publish_progress_text();
         emit status_message(
             QString("Skipping %1, remote file is missing.")
-                .arg(QFileInfo(item.remote_file).fileName()));
+                .arg(ars_tracker_display_file_name(item.remote_file)));
         schedule_next_download_or_finish("remote file missing");
         return;
     }
@@ -2358,7 +2379,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         publish_progress_text();
         emit status_message(
             QString("Skipping %1, remote file is empty.")
-                .arg(QFileInfo(item.remote_file).fileName()));
+                .arg(ars_tracker_display_file_name(item.remote_file)));
         schedule_next_download_or_finish("remote file empty");
         return;
     }
@@ -2388,7 +2409,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
     publish_export_file_rows();
     finish_export(false, false,
                   QString("Session export failed while checking %1.")
-                      .arg(QFileInfo(item.remote_file).fileName()));
+                      .arg(ars_tracker_display_file_name(item.remote_file)));
 }
 
 void ars_tracker_backend::schedule_current_file_download(const QString& reason)

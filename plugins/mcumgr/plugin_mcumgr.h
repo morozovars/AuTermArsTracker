@@ -499,6 +499,7 @@ private slots:
     void on_btn_ars_trackers_start_session_clicked();
     void on_btn_ars_trackers_stop_session_clicked();
     void on_btn_ars_trackers_reset_all_clicked();
+    void on_btn_ars_trackers_cancel_download_clicked();
     void on_btn_ars_trackers_delete_all_sessions_clicked();
     void on_btn_ars_trackers_download_all_sessions_clicked();
     void ars_tracker_status_message(const QString &message);
@@ -1106,6 +1107,7 @@ private:
     QPushButton *btn_ars_trackers_reset_all = nullptr;
     QPushButton *btn_ars_trackers_delete_all_sessions = nullptr;
     QPushButton *btn_ars_trackers_download_all_sessions = nullptr;
+    QPushButton *btn_ars_trackers_cancel_download = nullptr;
     QLineEdit *edit_ars_trackers_download_destination = nullptr;
     QPushButton *btn_ars_trackers_download_browse = nullptr;
     QLabel *lbl_ars_trackers_sessions_status = nullptr;
@@ -1297,6 +1299,7 @@ private:
     QHash<QString, qint64> ars_trackers_reset_expected_disconnect_deadline_ms;
     int ars_trackers_session_download_generation = 0;
     bool ars_trackers_session_download_running = false;
+    bool ars_trackers_session_download_cancel_requested = false;
     QString ars_trackers_session_download_name;
     QList<ars_trackers_session_download_job_t> ars_trackers_session_download_jobs;
     int ars_trackers_session_download_index = -1;

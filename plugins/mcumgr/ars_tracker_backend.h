@@ -108,6 +108,9 @@ public:
                                         int32_t shell_ret);
     bool begin_session_export(const QString &session_id, const QString &destination_path,
                               QString *error_message);
+    bool begin_session_export_explicit(const QString &session_name,
+                                       const QString &destination_path,
+                                       QString *error_message);
     void handle_export_hash_support_result(group_status status, const QString &error_message,
                                            const QList<hash_checksum_t> &supported_hashes);
     void handle_file_metadata_result(group_status status, const QString &error_message,
@@ -196,6 +199,10 @@ private:
                                     QString *error_message) const;
     bool compute_local_file_hash(const QString &file_path, const QString &hash_name,
                                  QByteArray *result, QString *error_message) const;
+    bool begin_session_export_internal(const ars_tracker_session_t &session,
+                                       const QString &destination_path,
+                                       bool destination_path_is_final,
+                                       QString *error_message);
 
     void reset_tracker_info_state();
     ars_tracker_info_field_t *tracker_info_field_for_step(tracker_info_step_t step);

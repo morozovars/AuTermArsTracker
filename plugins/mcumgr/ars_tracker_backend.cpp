@@ -1730,8 +1730,6 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
                                                const QString& destination_path,
                                                QString*       error_message)
 {
-    QString resolved_destination_path = resolve_destination_path(destination_path);
-
     if (tracker_info_loading == true)
     {
         if (error_message != nullptr)
@@ -1794,8 +1792,97 @@ bool ars_tracker_backend::begin_session_export(const QString& session_id,
         return false;
     }
 
-    QString export_root_path =
-        build_session_export_root_path(resolved_destination_path, session, error_message);
+    return begin_session_export_internal(session, destination_path, false, error_message);
+}
+
+bool ars_tracker_backend::begin_session_export_explicit(const QString& session_name,
+                                                        const QString& destination_path,
+                                                        QString*       error_message)
+{
+    if (tracker_info_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Tracker info refresh is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (delete_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session delete is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session list request is already in progress.");
+        }
+
+        return false;
+    }
+
+    if (export_loading == true)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("A session export is already in progress.");
+        }
+
+        return false;
+    }
+
+    QString trimmed_session_name = session_name.trimmed();
+    if (trimmed_session_name.isEmpty())
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Session name is empty.");
+        }
+
+        return false;
+    }
+
+    ars_tracker_session_t session;
+    session.id                  = trimmed_session_name;
+    session.display_name        = trimmed_session_name;
+    session.remote_path_or_name = trimmed_session_name;
+    session.raw_source_line     = trimmed_session_name;
+
+    return begin_session_export_internal(session, destination_path, true, error_message);
+}
+
+bool ars_tracker_backend::begin_session_export_internal(const ars_tracker_session_t& session,
+                                                        const QString& destination_path,
+                                                        bool           destination_path_is_final,
+                                                        QString*       error_message)
+{
+    QString resolved_destination_path = resolve_destination_path(destination_path);
+    QString export_root_path;
+
+    if (destination_path_is_final)
+    {
+        export_root_path = resolved_destination_path;
+    }
+    else
+    {
+        export_root_path =
+            build_session_export_root_path(resolved_destination_path, session, error_message);
+    }
+
+    log_debug() << "ArsTracker export path mode explicitFinal=" << destination_path_is_final
+                << "destinationPath=" << destination_path
+                << "resolvedDestination=" << resolved_destination_path
+                << "exportRoot=" << export_root_path
+                << "session=" << session.id
+                << "remoteRoot=" << session.remote_path_or_name;
 
     if (export_root_path.isEmpty())
     {

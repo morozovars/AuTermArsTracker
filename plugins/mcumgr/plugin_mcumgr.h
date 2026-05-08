@@ -296,6 +296,18 @@ struct ars_trackers_stop_session_item_t {
     QString error;
 };
 
+struct ars_trackers_session_download_job_t {
+    int generation = 0;
+    QString sessionName;
+    QString port;
+    QString serial;
+    QString trackerName;
+    QString destinationDir;
+    bool finished = false;
+    bool success = false;
+    QString error;
+};
+
 class ars_tracker_port_combo_box : public QComboBox
 {
     Q_OBJECT
@@ -516,6 +528,7 @@ private:
     bool ars_tracker_tab_is_active() const;
     bool ars_trackers_tab_is_active() const;
     void setup_ars_trackers_tab(QTabWidget *tabWidget_orig);
+    QString ars_trackers_download_destination_path() const;
     void refresh_ars_trackers_table_from_devices();
     void schedule_ars_trackers_table_refresh(const QString &reason,
                                              bool force_when_inactive = false);
@@ -643,6 +656,9 @@ private:
     void start_ars_trackers_delete_session(const QString &session_name,
                                            const QStringList &ports);
     void on_ars_trackers_session_delete_clicked(const QString &session_name);
+    void on_ars_trackers_session_download_clicked(const QString &session_name);
+    void start_ars_trackers_session_download(const QString &session_name);
+    void start_next_ars_trackers_session_download_job();
     void start_ars_trackers_start_session_operation(
             const QString &session_name, const QString &mode_code,
             const QList<ars_trackers_start_session_target_t> &targets);
@@ -1052,6 +1068,8 @@ private:
     QPushButton *btn_ars_trackers_sessions_refresh = nullptr;
     QPushButton *btn_ars_trackers_start_session = nullptr;
     QPushButton *btn_ars_trackers_stop_session = nullptr;
+    QLineEdit *edit_ars_trackers_download_destination = nullptr;
+    QPushButton *btn_ars_trackers_download_browse = nullptr;
     QLabel *lbl_ars_trackers_sessions_status = nullptr;
     QTableWidget *table_ars_trackers_sessions = nullptr;
     QLabel *lbl_ars_trackers_status = nullptr;
@@ -1231,6 +1249,11 @@ private:
     int ars_trackers_stop_session_generation = 0;
     bool ars_trackers_stop_session_running = false;
     QMap<QString, ars_trackers_stop_session_item_t> ars_trackers_stop_session_items;
+    int ars_trackers_session_download_generation = 0;
+    bool ars_trackers_session_download_running = false;
+    QString ars_trackers_session_download_name;
+    QList<ars_trackers_session_download_job_t> ars_trackers_session_download_jobs;
+    int ars_trackers_session_download_index = -1;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

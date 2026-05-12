@@ -42,6 +42,20 @@ void ArsTrackersSessionDownloadCoordinator::finishSessionDownload()
                              QString::number(contextsDisconnected),
                              QString::number(totalSessionsCompleted),
                              QString::number(totalSessionsPlanned)));
+    for (auto it = backendsByPort.begin(); it != backendsByPort.end(); ++it)
+    {
+        if (!it.value().isNull())
+        {
+            it.value()->deleteLater();
+        }
+    }
+    backendsByPort.clear();
+    backendToPort.clear();
+    routesByPort.clear();
+    fsByPort.clear();
+    legacyRoute = ArsTrackersDownloadRouteInfo();
+    legacyFsOperation = ArsTrackersDownloadFsOperationState();
+    legacyBackend = nullptr;
     emit parallelDownloadProgressChanged();
 }
 
@@ -351,6 +365,12 @@ void ArsTrackersSessionDownloadCoordinator::markContextSessionFinished(const QSt
     }
 
     ParallelContextState &ctx = contextsByPort[trimmedPort];
+    if (ctx.finished)
+    {
+        emit logMessage(QString("TRACKERS_PARALLEL_LATE_CALLBACK_IGNORED contextId=%1 port=%2")
+                            .arg(ctx.contextId, trimmedPort));
+        return;
+    }
     const QString finishedSession = (ctx.currentSessionIndex >= 0 && ctx.currentSessionIndex < ctx.sessionQueue.size())
                                         ? ctx.sessionQueue.at(ctx.currentSessionIndex)
                                         : QString();
@@ -414,7 +434,9 @@ void ArsTrackersSessionDownloadCoordinator::markContextSessionFinished(const QSt
 
         emit logMessage(QString("TRACKERS_PARALLEL_CONTEXT_FINISHED contextId=%1 state=%2")
                             .arg(ctx.contextId, state));
+        ctx.stateText = state;
     }
+    finishOperationIfTerminal("context-session-finished");
     emit parallelDownloadProgressChanged();
 }
 
@@ -479,6 +501,13 @@ void ArsTrackersSessionDownloadCoordinator::cancel()
     for (auto it = routesByPort.begin(); it != routesByPort.end(); ++it)
     {
         it.value().cancelRequested = true;
+    }
+    for (auto it = contextsByPort.begin(); it != contextsByPort.end(); ++it)
+    {
+        if (!it.value().finished)
+        {
+            it.value().stateText = "Cancelling";
+        }
     }
     emit logMessage("trackers_download_coordinator_cancel_requested");
     emit statusMessage("Cancelling download...");
@@ -676,5 +705,81 @@ ArsTrackersParallelDownloadProgress ArsTrackersSessionDownloadCoordinator::curre
         percentSum += ctx.percent;
     }
     snapshot.aggregatePercent = snapshot.totalContexts > 0 ? (percentSum / snapshot.totalContexts) : 0;
+    lastSnapshot = snapshot;
     return snapshot;
+}
+
+bool ArsTrackersSessionDownloadCoordinator::finishOperationIfTerminal(const QString &reason, QString *summaryOut)
+{
+    if (!active)
+    {
+        return false;
+    }
+
+    int terminalCount = 0;
+    int runningCount = 0;
+    int pendingCount = 0;
+    int finishedCount = 0;
+    int failedCount = 0;
+    int cancelledCount = 0;
+    int disconnectedCount = 0;
+    for (auto it = contextsByPort.constBegin(); it != contextsByPort.constEnd(); ++it)
+    {
+        const ParallelContextState &ctx = it.value();
+        if (ctx.finished)
+        {
+            ++terminalCount;
+            if (ctx.cancelled) ++cancelledCount;
+            else if (ctx.disconnected) ++disconnectedCount;
+            else if (ctx.failed) ++failedCount;
+            else ++finishedCount;
+        }
+        else if (ctx.stateText.compare("Pending", Qt::CaseInsensitive) == 0)
+        {
+            ++pendingCount;
+        }
+        else
+        {
+            ++runningCount;
+        }
+    }
+
+    emit logMessage(QString("TRACKERS_PARALLEL_OPERATION_TERMINAL_CHECK total=%1 terminal=%2 running=%3 pending=%4 activeBefore=%5 reason=%6")
+                        .arg(QString::number(contextsByPort.size()),
+                             QString::number(terminalCount),
+                             QString::number(runningCount),
+                             QString::number(pendingCount),
+                             active ? QString("true") : QString("false"),
+                             reason));
+
+    if (contextsByPort.isEmpty() || terminalCount < contextsByPort.size())
+    {
+        return false;
+    }
+
+    contextsFinished = finishedCount + failedCount + cancelledCount + disconnectedCount;
+    contextsFailed = failedCount;
+    contextsCancelled = cancelledCount;
+    contextsDisconnected = disconnectedCount;
+
+    const QString summary =
+            QString("Download finished: %1 finished, %2 failed, %3 cancelled / %4 trackers")
+                .arg(QString::number(finishedCount),
+                     QString::number(failedCount + disconnectedCount),
+                     QString::number(cancelledCount),
+                     QString::number(contextsByPort.size()));
+    if (summaryOut != nullptr)
+    {
+        *summaryOut = summary;
+    }
+
+    finishSessionDownload();
+    emit logMessage(QString("TRACKERS_PARALLEL_OPERATION_FINISHED operationId=%1 finished=%2 failed=%3 cancelled=%4 disconnected=%5 activeAfter=false")
+                        .arg(QString::number(routeGeneration),
+                             QString::number(finishedCount),
+                             QString::number(failedCount),
+                             QString::number(cancelledCount),
+                             QString::number(disconnectedCount)));
+    emit finished(summary);
+    return true;
 }

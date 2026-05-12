@@ -132,6 +132,7 @@ public:
                                  const QString &stateText,
                                  const QString &errorText);
     ArsTrackersParallelDownloadProgress currentParallelDownloadProgress() const;
+    bool finishOperationIfTerminal(const QString &reason, QString *summaryOut = nullptr);
 
 signals:
     void logMessage(const QString &message);
@@ -191,6 +192,7 @@ private:
     int contextsFailed = 0;
     int contextsCancelled = 0;
     int contextsDisconnected = 0;
+    mutable ArsTrackersParallelDownloadProgress lastSnapshot;
 
 public:
     ars_tracker_backend *activeLegacyBackend() const;

@@ -1884,12 +1884,28 @@ bool ars_tracker_backend::begin_session_export_internal(const ars_tracker_sessio
             build_session_export_root_path(resolved_destination_path, session, error_message);
     }
 
-    log_debug() << "ArsTracker export path mode explicitFinal=" << destination_path_is_final
-                << "destinationPath=" << destination_path
-                << "resolvedDestination=" << resolved_destination_path
-                << "exportRoot=" << export_root_path
-                << "session=" << session.id
-                << "remoteRoot=" << session.remote_path_or_name;
+#ifndef SKIPPLUGIN_LOGGER
+    if (logger == nullptr)
+    {
+        QMessageLogger(__FILE__, __LINE__, Q_FUNC_INFO, "mcumgr")
+            .warning()
+            .noquote()
+            << "TRACKERS_DOWNLOAD_BACKEND_LOGGER_MISSING"
+            << "backend=" << this
+            << "parent=" << parent()
+            << "session=" << session.id
+            << "destinationPath=" << destination_path;
+    }
+    else
+#endif
+    {
+        log_debug() << "ArsTracker export path mode explicitFinal=" << destination_path_is_final
+                    << "destinationPath=" << destination_path
+                    << "resolvedDestination=" << resolved_destination_path
+                    << "exportRoot=" << export_root_path
+                    << "session=" << session.id
+                    << "remoteRoot=" << session.remote_path_or_name;
+    }
 
     if (export_root_path.isEmpty())
     {

@@ -284,6 +284,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		ars_tracker              = new ars_tracker_backend(this);
 		ars_trackers_session_download_coordinator =
 				new ArsTrackersSessionDownloadCoordinator(this);
+		ars_trackers_session_download_coordinator->resetRoutingDiagnostics();
 		error_lookup_form        = new error_lookup(parent_window, &smp_groups);
 
 		connect(ars_trackers_session_download_coordinator,
@@ -301,6 +302,9 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 										lbl_ars_trackers_download_progress_detail->setText(message);
 								}
 						});
+		connect(ars_trackers_session_download_coordinator,
+						&ArsTrackersSessionDownloadCoordinator::parallelDownloadProgressChanged, this,
+						[this]() { render_ars_trackers_parallel_download_progress(); });
 
 		processor->set_json(log_json);
 		connect(log_json, SIGNAL(log(bool, QString*)), this, SLOT(custom_log(bool, QString*)));
@@ -8915,6 +8919,17 @@ void plugin_mcumgr::remove_ars_tracker_device_by_port(const QString &port_name,
 		{
 				return;
 		}
+		if (ars_trackers_session_download_coordinator != nullptr)
+		{
+				const ArsTrackersDownloadRouteInfo route =
+						ars_trackers_session_download_coordinator->resolveRouteForPort(trimmed_port);
+				if (route.valid &&
+						route.port.compare(trimmed_port, Qt::CaseInsensitive) == 0)
+				{
+						ars_trackers_session_download_coordinator->unregisterLegacyActiveRoute(
+								QString("active-port-removed:%1").arg(reason));
+				}
+		}
 		const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
 		const bool reset_expected_disconnect =
 				ars_trackers_reset_expected_disconnect_ports.contains(trimmed_port) &&
@@ -11706,6 +11721,8 @@ void plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked()
 				return QString::compare(a, b, Qt::CaseInsensitive) < 0;
 		});
 		ars_trackers_bulk_sessions_queue.clear();
+		QHash<QString, QStringList> tracker_queues;
+		QHash<QString, QString> tracker_display_by_port;
 		for (const QString &session : keys)
 		{
 				const ars_tracker_session_presence_t &presence =
@@ -11715,6 +11732,25 @@ void plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked()
 				item.ports = presence.ports;
 				item.trackerDisplays = presence.trackerDisplays;
 				ars_trackers_bulk_sessions_queue.append(item);
+				for (int i = 0; i < presence.ports.size(); ++i)
+				{
+						const QString port = presence.ports.at(i);
+						tracker_queues[port].append(session);
+						const QString display =
+								(i < presence.trackerDisplays.size() ? presence.trackerDisplays.at(i) : port);
+						if (!tracker_display_by_port.contains(port) ||
+								tracker_display_by_port.value(port).trimmed().isEmpty())
+						{
+								tracker_display_by_port.insert(port, display);
+						}
+				}
+		}
+		for (auto it = tracker_queues.begin(); it != tracker_queues.end(); ++it)
+		{
+				log_debug() << "TRACKERS_PARALLEL_QUEUE"
+										<< "port=" << it.key()
+										<< "display=" << tracker_display_by_port.value(it.key(), it.key())
+										<< "sessions=" << it.value().join(",");
 		}
 
 		ars_trackers_bulk_sessions_operation = ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL;
@@ -11847,6 +11883,8 @@ void plugin_mcumgr::on_btn_ars_trackers_cancel_download_clicked()
 		if (ars_trackers_session_download_coordinator != nullptr)
 		{
 				ars_trackers_session_download_coordinator->cancel();
+				ars_trackers_session_download_coordinator->markLegacyActiveRouteCancelRequested(
+						"cancel-requested");
 		}
 		if (ars_trackers_session_download_index >= 0 &&
 				ars_trackers_session_download_index < ars_trackers_session_download_jobs.size())
@@ -11870,7 +11908,16 @@ void plugin_mcumgr::on_btn_ars_trackers_cancel_download_clicked()
 		{
 				lbl_ars_trackers_download_progress_detail->setText("Cancelling download...");
 		}
-		ars_tracker->cancel_all();
+		ars_tracker_backend *active_backend = active_ars_trackers_download_backend();
+		if (active_backend == nullptr)
+		{
+				log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISSING reason=cancel-no-active-backend";
+				ars_tracker->cancel_all();
+		}
+		else
+		{
+				active_backend->cancel_all();
+		}
 }
 
 void plugin_mcumgr::start_ars_trackers_sessions_refresh()
@@ -12087,7 +12134,7 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 								<< "session=" << session
 								<< "trackers=" << presence.ports.size()
 								<< "destination=" << destination_path;
-		log_debug() << "session_download_parallel=false reason=\"Inspector export pipeline has global fs state\"";
+		QStringList target_logs;
 
 		for (int i = 0; i < presence.ports.size(); ++i)
 		{
@@ -12107,10 +12154,25 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				job.destinationDir =
 						QDir(destination_path).filePath(QString("%1/%2").arg(session, tracker_name));
 				ars_trackers_session_download_jobs.append(job);
+				target_logs.append(QString("%1(%2)").arg(tracker_name, job.port));
+		}
+		log_debug() << "TRACKERS_PARALLEL_TARGETS session=" << session
+								<< "targetCount=" << ars_trackers_session_download_jobs.size()
+								<< "targets=" << target_logs.join(",");
+		if (ars_trackers_session_download_jobs.size() == 1)
+		{
+				log_debug() << "TRACKERS_PARALLEL_TARGETS_SINGLE_REASON"
+										<< "session=" << session
+										<< "reason=session-present-on-one-tracker-or-filters-removed-others";
 		}
 		if (ars_trackers_session_download_jobs.isEmpty())
 		{
 				ars_trackers_session_download_running = false;
+				if (ars_trackers_session_download_coordinator != nullptr)
+				{
+						ars_trackers_session_download_coordinator->unregisterLegacyActiveRoute(
+								"no-jobs-queued");
+				}
 				if (lbl_ars_trackers_sessions_status != nullptr)
 				{
 						lbl_ars_trackers_sessions_status->setText("Download failed: no trackers to download");
@@ -12123,7 +12185,120 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				ars_trackers_session_download_coordinator->beginSessionDownload(
 						session, ars_trackers_session_download_jobs.size());
 		}
-		start_next_ars_trackers_session_download_job();
+		int started_contexts = 0;
+		int deferred_contexts = 0;
+		for (int job_index = 0; job_index < ars_trackers_session_download_jobs.size(); ++job_index)
+		{
+				ars_trackers_session_download_job_t &job = ars_trackers_session_download_jobs[job_index];
+				ars_tracker_device_t *device = find_ars_tracker_device_by_port(job.port);
+				if (device == nullptr || !device->connected || device->serialPort == nullptr ||
+						!device->serialPort->isOpen() || device->fsMgmt == nullptr ||
+						device->processor == nullptr || device->transport == nullptr)
+				{
+						job.finished = true;
+						job.success = false;
+						job.error = "device unavailable";
+						deferred_contexts++;
+						continue;
+				}
+
+				QString busy_reason;
+				if (ars_tracker_lightweight_telemetry_device_busy(*device, &busy_reason))
+				{
+						job.finished = true;
+						job.success = false;
+						job.error = QString("device busy: %1").arg(busy_reason);
+						deferred_contexts++;
+						continue;
+				}
+				if (!QDir().mkpath(job.destinationDir))
+				{
+						job.finished = true;
+						job.success = false;
+						job.error = QString("Failed to create local directory: %1").arg(job.destinationDir);
+						deferred_contexts++;
+						continue;
+				}
+
+				device->telemetryRefreshing = true;
+				ars_tracker_persistent_export_port = device->portName;
+				ars_trackers_session_download_coordinator->registerLegacyActiveRoute(
+						job.port, job.serial, job.trackerName);
+				QString backend_error;
+				if (!ars_trackers_session_download_coordinator->createLegacyBackendForActiveRoute(&backend_error))
+				{
+						device->telemetryRefreshing = false;
+						job.finished = true;
+						job.success = false;
+						job.error = backend_error.isEmpty() ? "context backend create failed" : backend_error;
+						deferred_contexts++;
+						continue;
+				}
+				ars_tracker_backend *context_backend =
+						ars_trackers_session_download_coordinator->activeLegacyBackendForPort(device->portName);
+				if (context_backend == nullptr)
+				{
+						device->telemetryRefreshing = false;
+						job.finished = true;
+						job.success = false;
+						job.error = "context backend not found";
+						deferred_contexts++;
+						continue;
+				}
+#ifndef SKIPPLUGIN_LOGGER
+				context_backend->set_logger(logger);
+#endif
+				connect(context_backend, &ars_tracker_backend::status_message, this,
+								&plugin_mcumgr::ars_tracker_status_message, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_progress_changed, this,
+								&plugin_mcumgr::ars_tracker_export_progress_changed, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_progress_detail_changed, this,
+								&plugin_mcumgr::ars_tracker_export_progress_detail_changed, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_file_list_changed, this,
+								&plugin_mcumgr::ars_tracker_export_file_list_changed, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_finished, this,
+								&plugin_mcumgr::ars_tracker_export_finished, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_file_download, this,
+								&plugin_mcumgr::ars_tracker_request_file_download, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_cancel_file_download, this,
+								&plugin_mcumgr::ars_tracker_request_cancel_file_download, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_file_hash_support, this,
+								&plugin_mcumgr::ars_tracker_request_file_hash_support, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_file_metadata, this,
+								&plugin_mcumgr::ars_tracker_request_file_metadata, Qt::UniqueConnection);
+
+				log_debug() << "TRACKERS_PARALLEL_CONTEXT_START"
+										<< "port=" << device->portName
+										<< "session=" << job.sessionName
+										<< "backend=" << context_backend;
+				ars_trackers_session_download_coordinator->updateContextProgress(
+						device->portName, job.sessionName, QString(), 0, 0, 0, "Running");
+				log_debug() << "TRACKERS_DOWNLOAD_LOCAL_PATH"
+										<< "contextId="
+										<< ars_trackers_session_download_coordinator->resolveRouteForPort(
+														 device->portName).contextId
+										<< "port=" << device->portName
+										<< "session=" << job.sessionName
+										<< "localDir=" << job.destinationDir;
+				QString error_message;
+				const bool started = context_backend->begin_session_export_explicit(
+						job.sessionName, job.destinationDir, &error_message);
+				if (!started)
+				{
+						device->telemetryRefreshing = false;
+						job.finished = true;
+						job.success = false;
+						job.error = error_message.trimmed().isEmpty() ? "backend start failed" : error_message;
+						deferred_contexts++;
+						continue;
+				}
+				started_contexts++;
+		}
+		log_debug() << "TRACKERS_PARALLEL_CONTEXT_START_SUMMARY"
+								<< "created=" << ars_trackers_session_download_jobs.size()
+								<< "startedNow=" << started_contexts
+								<< "deferred=" << deferred_contexts
+								<< "maxConcurrency=unlimited-within-operation";
 }
 
 void plugin_mcumgr::start_next_ars_trackers_session_download_job()
@@ -12134,6 +12309,11 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 				ars_trackers_session_download_coordinator->isCancelling())
 		{
 				ars_trackers_session_download_running = false;
+				if (ars_trackers_session_download_coordinator != nullptr)
+				{
+						ars_trackers_session_download_coordinator->unregisterLegacyActiveRoute(
+								"cancelled-before-next-job");
+				}
 				const int completed_sessions =
 						ars_trackers_bulk_sessions_success + ars_trackers_bulk_sessions_failed;
 				if (lbl_ars_trackers_sessions_status != nullptr)
@@ -12208,6 +12388,8 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 				ars_trackers_session_download_running = false;
 				if (ars_trackers_session_download_coordinator != nullptr)
 				{
+						ars_trackers_session_download_coordinator->unregisterLegacyActiveRoute(
+								"all-jobs-finished");
 						ars_trackers_session_download_coordinator->finishSessionDownload();
 				}
 				if (lbl_ars_trackers_sessions_status != nullptr)
@@ -12312,6 +12494,11 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 				job.finished = true;
 				job.success = false;
 				job.error = reason;
+				if (ars_trackers_session_download_coordinator != nullptr)
+				{
+						ars_trackers_session_download_coordinator->unregisterLegacyActiveRoute(
+								QString("job-failed:%1").arg(reason));
+				}
 				log_warning() << "session_download_job_failed port=" << job.port
 											<< "tracker=" << job.trackerName
 											<< "reason=" << reason;
@@ -12376,6 +12563,78 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 
 		device->telemetryRefreshing = true;
 		ars_tracker_persistent_export_port = device->portName;
+		if (ars_trackers_session_download_coordinator != nullptr)
+		{
+				ars_trackers_session_download_coordinator->registerLegacyActiveRoute(
+						job.port, job.serial, job.trackerName);
+				QString backend_error;
+				if (!ars_trackers_session_download_coordinator->createLegacyBackendForActiveRoute(
+								&backend_error))
+				{
+						device->telemetryRefreshing = false;
+						log_warning() << "TRACKERS_DOWNLOAD_BACKEND_CREATE_FAILED"
+													<< "port=" << device->portName
+													<< "reason=" << backend_error;
+						fail_job(backend_error.isEmpty() ? "context backend create failed" : backend_error);
+						return;
+				}
+				ars_tracker_backend *context_backend =
+						ars_trackers_session_download_coordinator->activeLegacyBackendForPort(
+								device->portName);
+				if (context_backend == nullptr)
+				{
+						device->telemetryRefreshing = false;
+						log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISSING"
+													<< "port=" << device->portName
+													<< "reason=backend-not-found-after-create";
+						fail_job("context backend not found");
+						return;
+				}
+#ifndef SKIPPLUGIN_LOGGER
+				context_backend->set_logger(logger);
+#endif
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_INIT"
+										<< "contextId="
+										<< ars_trackers_session_download_coordinator
+														 ->resolveRouteForPort(device->portName)
+														 .contextId
+										<< "port=" << device->portName
+										<< "display=" << job.trackerName
+										<< "session=" << job.sessionName
+										<< "destination=" << job.destinationDir
+										<< "backend=" << context_backend
+										<< "backendParent=" << context_backend->parent()
+#ifndef SKIPPLUGIN_LOGGER
+										<< "logger=" << logger
+#endif
+						;
+				connect(context_backend, &ars_tracker_backend::status_message, this,
+								&plugin_mcumgr::ars_tracker_status_message, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_progress_changed, this,
+								&plugin_mcumgr::ars_tracker_export_progress_changed,
+								Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_progress_detail_changed, this,
+								&plugin_mcumgr::ars_tracker_export_progress_detail_changed,
+								Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_file_list_changed, this,
+								&plugin_mcumgr::ars_tracker_export_file_list_changed,
+								Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::export_finished, this,
+								&plugin_mcumgr::ars_tracker_export_finished, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_file_download, this,
+								&plugin_mcumgr::ars_tracker_request_file_download, Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_cancel_file_download, this,
+								&plugin_mcumgr::ars_tracker_request_cancel_file_download,
+								Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_file_hash_support, this,
+								&plugin_mcumgr::ars_tracker_request_file_hash_support,
+								Qt::UniqueConnection);
+				connect(context_backend, &ars_tracker_backend::request_file_metadata, this,
+								&plugin_mcumgr::ars_tracker_request_file_metadata, Qt::UniqueConnection);
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_CONNECT_SIGNALS"
+										<< "port=" << device->portName
+										<< "backend=" << context_backend;
+		}
 		log_debug() << "session_download_job_start port=" << device->portName
 								<< "tracker=" << job.trackerName
 								<< "localDir=" << job.destinationDir;
@@ -12396,7 +12655,22 @@ void plugin_mcumgr::start_next_ars_trackers_session_download_job()
 				progress_ars_trackers_download->setValue(0);
 		}
 		QString error_message;
-		bool started = ars_tracker->begin_session_export_explicit(
+		ars_tracker_backend *job_backend = active_ars_trackers_download_backend(device->portName);
+		if (job_backend == nullptr)
+		{
+				device->telemetryRefreshing = false;
+				log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISSING"
+											<< "port=" << device->portName
+											<< "reason=no-active-backend-for-begin-export";
+				fail_job("context backend missing");
+				return;
+		}
+		log_debug() << "TRACKERS_DOWNLOAD_BACKEND_BEGIN_EXPORT"
+								<< "port=" << device->portName
+								<< "session=" << job.sessionName
+								<< "destination=" << job.destinationDir
+								<< "backend=" << job_backend;
+		bool started = job_backend->begin_session_export_explicit(
 				job.sessionName, job.destinationDir, &error_message);
 		if (!started)
 		{
@@ -12619,6 +12893,8 @@ void plugin_mcumgr::finish_ars_trackers_bulk_sessions_operation(const QString &s
 		ars_trackers_bulk_sessions_last_error.clear();
 		if (ars_trackers_session_download_coordinator != nullptr)
 		{
+				ars_trackers_session_download_coordinator->unregisterLegacyActiveRoute(
+						"bulk-operation-finished");
 				ars_trackers_session_download_coordinator->clearCancel();
 		}
 		if (lbl_ars_trackers_sessions_status != nullptr)
@@ -14831,10 +15107,50 @@ void plugin_mcumgr::ars_tracker_export_progress_changed(const QString &progress_
 }
 
 void plugin_mcumgr::ars_tracker_export_progress_detail_changed(const QString &remote_file,
-																														 qint64 bytes_completed,
-																														 qint64 total_bytes,
-																														 bool checking_existing)
+																															 qint64 bytes_completed,
+																															 qint64 total_bytes,
+																															 bool checking_existing)
 {
+		if (ars_trackers_session_download_running && ars_trackers_session_download_coordinator != nullptr)
+		{
+				ars_tracker_backend *sender_backend = qobject_cast<ars_tracker_backend *>(sender());
+				QString context_port;
+				QString context_session;
+				if (sender_backend != nullptr)
+				{
+						const ArsTrackersDownloadRouteInfo route_info =
+								ars_trackers_session_download_coordinator->resolveRouteForBackend(sender_backend);
+						context_port = route_info.port;
+				}
+				if (context_port.isEmpty())
+				{
+						log_warning() << "TRACKERS_PARALLEL_UI_PROGRESS_UNKNOWN_BACKEND"
+													<< "backend=" << sender_backend;
+						context_port = ars_tracker_persistent_export_port;
+				}
+				for (const ars_trackers_session_download_job_t &job : ars_trackers_session_download_jobs)
+				{
+						if (job.port.compare(context_port, Qt::CaseInsensitive) == 0)
+						{
+								context_session = job.sessionName;
+								break;
+						}
+				}
+				const int percent =
+						(total_bytes > 0) ? int((qBound<qint64>(0, bytes_completed, total_bytes) * 100) / total_bytes) : 0;
+				ars_trackers_session_download_coordinator->updateContextProgress(
+						context_port, context_session, remote_file, qMax<qint64>(0, bytes_completed),
+						qMax<qint64>(0, total_bytes), percent, checking_existing ? "Checking" : "Running");
+				log_debug() << "TRACKERS_PARALLEL_UI_CONTEXT_PROGRESS"
+										<< "port=" << context_port
+										<< "session=" << context_session
+										<< "file=" << remote_file
+										<< "percent=" << percent
+										<< "bytes=" << bytes_completed << "/" << total_bytes;
+				render_ars_trackers_parallel_download_progress();
+				return;
+		}
+
 		if (ars_trackers_session_download_running == false ||
 				ars_trackers_session_download_index < 0 ||
 				ars_trackers_session_download_index >= ars_trackers_session_download_jobs.size())
@@ -14898,6 +15214,91 @@ void plugin_mcumgr::ars_tracker_export_progress_detail_changed(const QString &re
 		}
 }
 
+void plugin_mcumgr::render_ars_trackers_parallel_download_progress()
+{
+		if (ars_trackers_session_download_coordinator == nullptr)
+		{
+				return;
+		}
+		const ArsTrackersParallelDownloadProgress snapshot =
+				ars_trackers_session_download_coordinator->currentParallelDownloadProgress();
+		log_debug() << "TRACKERS_PARALLEL_UI_PROGRESS_SNAPSHOT"
+								<< "total=" << snapshot.totalContexts
+								<< "running=" << snapshot.runningContexts
+								<< "finished=" << snapshot.finishedContexts
+								<< "failed=" << snapshot.failedContexts
+								<< "cancelled=" << snapshot.cancelledContexts
+								<< "percent=" << snapshot.aggregatePercent;
+		QString summary;
+		if (!snapshot.active && snapshot.totalContexts == 0)
+		{
+				summary = "No active download";
+		}
+		else if (snapshot.cancelling)
+		{
+				summary = QString("Cancelling: %1 running, %2 finished, %3 failed, %4 cancelled / %5 trackers")
+											.arg(snapshot.runningContexts)
+											.arg(snapshot.finishedContexts)
+											.arg(snapshot.failedContexts)
+											.arg(snapshot.cancelledContexts)
+											.arg(snapshot.totalContexts);
+		}
+		else if (snapshot.runningContexts > 0)
+		{
+				summary = QString("Downloading: %1 running, %2 finished, %3 failed / %4 trackers")
+											.arg(snapshot.runningContexts)
+											.arg(snapshot.finishedContexts)
+											.arg(snapshot.failedContexts)
+											.arg(snapshot.totalContexts);
+		}
+		else
+		{
+				summary = QString("Download finished: %1 finished, %2 failed, %3 cancelled / %4 trackers")
+											.arg(snapshot.finishedContexts)
+											.arg(snapshot.failedContexts)
+											.arg(snapshot.cancelledContexts)
+											.arg(snapshot.totalContexts);
+		}
+		if (lbl_ars_trackers_sessions_status != nullptr)
+		{
+				lbl_ars_trackers_sessions_status->setText(summary);
+		}
+		QStringList detail_lines;
+		for (const ArsTrackersTrackerDownloadProgress &row : snapshot.trackers)
+		{
+				const QString tracker = row.displayName.trimmed().isEmpty() ? row.port : row.displayName;
+				const QString file_name = row.currentRemoteFile.trimmed().isEmpty()
+																		 ? QString("<pending>")
+																		 : QFileInfo(row.currentRemoteFile).fileName();
+				QString bytes_text = row.bytesTotal > 0
+														 ? QString("%1 / %2 bytes")
+																	 .arg(QLocale().toString(qint64(row.bytesDone)))
+																	 .arg(QLocale().toString(qint64(row.bytesTotal)))
+														 : QString("%1 / unknown bytes")
+																	 .arg(QLocale().toString(qint64(row.bytesDone)));
+				detail_lines.append(QString("%1  %2  %3  %4  %5%  %6  [%7]")
+																.arg(tracker,
+																		 row.port,
+																		 row.currentSession,
+																		 file_name,
+																		 QString::number(row.percent),
+																		 bytes_text,
+																		 row.stateText));
+		}
+		if (lbl_ars_trackers_download_progress_detail != nullptr)
+		{
+				lbl_ars_trackers_download_progress_detail->setWordWrap(true);
+				lbl_ars_trackers_download_progress_detail->setText(
+						detail_lines.isEmpty() ? summary : detail_lines.join("\n"));
+		}
+		if (progress_ars_trackers_download != nullptr)
+		{
+				progress_ars_trackers_download->setRange(0, 100);
+				progress_ars_trackers_download->setValue(qBound(0, snapshot.aggregatePercent, 100));
+		}
+		log_debug() << "TRACKERS_PARALLEL_UI_RENDER summary=" << summary;
+}
+
 void plugin_mcumgr::ars_tracker_export_file_list_changed(const QStringList &rows)
 {
 		list_ars_tracker_files->clear();
@@ -14906,6 +15307,15 @@ void plugin_mcumgr::ars_tracker_export_file_list_changed(const QStringList &rows
 
 void plugin_mcumgr::ars_tracker_export_finished(bool success, bool cancelled, const QString &message)
 {
+		ars_tracker_backend *sender_backend = qobject_cast<ars_tracker_backend *>(sender());
+		if (ars_trackers_session_download_running)
+		{
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_FINISHED"
+										<< "backend=" << sender_backend
+										<< "success=" << success
+										<< "cancelled=" << cancelled
+										<< "message=" << message;
+		}
 		reset_ars_tracker_export_fs_operation();
 		mode = ACTION_IDLE;
 		QString finished_port = ars_tracker_persistent_export_port;
@@ -14957,12 +15367,38 @@ void plugin_mcumgr::ars_tracker_export_finished(bool success, bool cancelled, co
 				progress_ars_trackers_download->setValue(success && !cancelled ? 100 : 0);
 		}
 
-		if (ars_trackers_session_download_running &&
-				ars_trackers_session_download_index >= 0 &&
-				ars_trackers_session_download_index < ars_trackers_session_download_jobs.size())
+		if (ars_trackers_session_download_running)
 		{
-				ars_trackers_session_download_job_t &job =
-						ars_trackers_session_download_jobs[ars_trackers_session_download_index];
+				QString finished_port = ars_tracker_persistent_export_port;
+				if (ars_trackers_session_download_coordinator != nullptr && sender_backend != nullptr)
+				{
+						ArsTrackersDownloadRouteInfo route_info =
+								ars_trackers_session_download_coordinator->resolveRouteForBackend(sender_backend);
+						if (route_info.valid)
+						{
+								finished_port = route_info.port;
+						}
+				}
+				int job_idx = -1;
+				for (int i = 0; i < ars_trackers_session_download_jobs.size(); ++i)
+				{
+						if (ars_trackers_session_download_jobs[i].port.compare(
+										finished_port, Qt::CaseInsensitive) == 0 &&
+								ars_trackers_session_download_jobs[i].finished == false)
+						{
+								job_idx = i;
+								break;
+						}
+				}
+				if (job_idx < 0)
+				{
+						log_warning() << "TRACKERS_PARALLEL_BACKEND_MISSING"
+													<< "type=export_finished"
+													<< "port=" << finished_port
+													<< "backend=" << sender_backend;
+						return;
+				}
+				ars_trackers_session_download_job_t &job = ars_trackers_session_download_jobs[job_idx];
 				job.finished = true;
 				job.success = (success && !cancelled);
 				job.error = message;
@@ -14983,8 +15419,56 @@ void plugin_mcumgr::ars_tracker_export_finished(bool success, bool cancelled, co
 				log_debug() << "session_download_job_done port=" << job.port
 										<< "success=" << job.success
 										<< "message=" << message;
-				QTimer::singleShot(0, this,
-													 &plugin_mcumgr::start_next_ars_trackers_session_download_job);
+				if (ars_trackers_session_download_coordinator != nullptr)
+				{
+						ars_trackers_session_download_coordinator->setContextTerminalState(
+								job.port,
+								cancelled ? "Cancelled" : (success ? "Finished" : "Failed"),
+								message);
+				}
+				bool all_finished = true;
+				for (const ars_trackers_session_download_job_t &item : ars_trackers_session_download_jobs)
+				{
+						if (!item.finished)
+						{
+								all_finished = false;
+								break;
+						}
+				}
+				if (all_finished)
+				{
+						int success_count = 0;
+						int failed_count = 0;
+						QString last_error;
+						for (const ars_trackers_session_download_job_t &item : ars_trackers_session_download_jobs)
+						{
+								if (item.success) success_count++;
+								else
+								{
+										failed_count++;
+										if (!item.error.trimmed().isEmpty()) last_error = item.error.trimmed();
+								}
+						}
+						ars_trackers_session_download_running = false;
+						if (ars_trackers_session_download_coordinator != nullptr)
+						{
+								ars_trackers_session_download_coordinator->finishSessionDownload();
+						}
+						if (lbl_ars_trackers_sessions_status != nullptr)
+						{
+								lbl_ars_trackers_sessions_status->setText(
+										failed_count == 0 ?
+												QString("Downloaded %1 from %2 / %3 trackers")
+														.arg(ars_trackers_session_download_name)
+														.arg(success_count)
+														.arg(ars_trackers_session_download_jobs.size()) :
+												QString("Downloaded from %1 / %2 trackers, failed %3. Last error: %4")
+														.arg(success_count)
+														.arg(ars_trackers_session_download_jobs.size())
+														.arg(failed_count)
+														.arg(last_error.isEmpty() ? QString("unknown error") : last_error));
+						}
+				}
 		}
 		Q_UNUSED(finished_port);
 }
@@ -15579,6 +16063,113 @@ void plugin_mcumgr::handle_ars_tracker_persistent_fs_status(uint8_t user_data,
 				return;
 		}
 
+		ArsTrackersDownloadRouteInfo route_info;
+		const bool has_coordinator = (ars_trackers_session_download_coordinator != nullptr);
+		if (has_coordinator)
+		{
+				route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForPort(device->portName);
+		}
+		const bool legacy_port_match =
+				ars_tracker_persistent_export_port.compare(device->portName, Qt::CaseInsensitive) == 0;
+		const bool legacy_path = legacy_port_match;
+		log_debug() << "TRACKERS_DOWNLOAD_ROUTE status"
+								<< "port=" << device->portName
+								<< "sender=" << signal_sender
+								<< "display=" << device->displayName
+								<< "serial=" << device->serialNumber
+								<< "legacyPort=" << ars_tracker_persistent_export_port
+								<< "routeValid=" << route_info.valid
+								<< "routeHasContext=" << route_info.hasContext
+								<< "cancelRequested=" << route_info.cancelRequested
+								<< "contextId=" << route_info.contextId
+								<< "generation=" << route_info.generation
+								<< "legacyPath=" << legacy_path
+								<< "routeReason=" << route_info.reason;
+		if (has_coordinator && route_info.valid && !legacy_port_match)
+		{
+				log_warning() << "TRACKERS_DOWNLOAD_ROUTE_MISMATCH status"
+											<< "port=" << device->portName
+											<< "legacyPort=" << ars_tracker_persistent_export_port
+											<< "contextId=" << route_info.contextId
+											<< "generation=" << route_info.generation;
+		}
+
+		const bool trackers_route_match = has_coordinator && route_info.valid;
+		if (trackers_route_match)
+		{
+				if (!ars_trackers_session_download_coordinator->hasLegacyFsOperationForPort(
+								device->portName))
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_FS_STALE_CALLBACK status"
+													<< "port=" << device->portName
+													<< "contextId=" << route_info.contextId
+													<< "generation=" << route_info.generation
+													<< "user_data=" << int(user_data)
+													<< "status=" << int(status);
+						return;
+				}
+				ArsTrackersDownloadFsOperationState fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationForPort(
+								device->portName);
+				log_debug() << "TRACKERS_DOWNLOAD_FS_STATUS"
+										<< "contextId=" << route_info.contextId
+										<< "generation=" << route_info.generation
+										<< "port=" << device->portName
+										<< "phase=" << fs_state.phaseName
+										<< "status=" << int(status)
+										<< "remote=" << fs_state.remoteFile;
+				log_debug() << "TRACKERS_PARALLEL_FS_STATUS"
+										<< "contextId=" << route_info.contextId
+										<< "port=" << device->portName
+										<< "phase=" << fs_state.phaseName
+										<< "status=" << int(status);
+				ars_tracker_backend *context_backend =
+						active_ars_trackers_download_backend(device->portName);
+				if (context_backend == nullptr)
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISSING"
+													<< "contextId=" << route_info.contextId
+													<< "generation=" << route_info.generation
+													<< "port=" << device->portName
+													<< "reason=status-callback-backend-null";
+						ars_trackers_session_download_coordinator->resetLegacyFsOperation(
+								device->portName, QString("status-callback-no-backend-%1").arg(int(status)));
+						return;
+				}
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_STATUS"
+										<< "contextId=" << route_info.contextId
+										<< "generation=" << route_info.generation
+										<< "port=" << device->portName
+										<< "backend=" << context_backend
+										<< "phase=" << fs_state.phaseName
+										<< "status=" << int(status);
+				ars_trackers_session_download_coordinator->resetLegacyFsOperation(
+						device->portName, QString("status-callback-%1").arg(int(status)));
+				if (fs_state.phase == int(ARS_TRACKER_EXPORT_FS_HASH_SUPPORT))
+				{
+						context_backend->handle_export_hash_support_result(
+								status, error_string, fs_state.supportedHashChecksumList);
+				}
+				else if (fs_state.phase == int(ARS_TRACKER_EXPORT_FS_METADATA))
+				{
+						context_backend->handle_file_metadata_result(
+								status, error_string, fs_state.hashChecksumResponse, fs_state.sizeResponse);
+				}
+				else if (fs_state.phase == int(ARS_TRACKER_EXPORT_FS_DOWNLOAD))
+				{
+						context_backend->handle_file_download_result(status, error_string);
+				}
+				else
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_FS_STALE_CALLBACK unknown-phase"
+													<< "port=" << device->portName
+													<< "phase=" << fs_state.phase
+													<< "contextId=" << route_info.contextId;
+				}
+				return;
+		}
+
 		if (ars_tracker_persistent_export_port.compare(device->portName, Qt::CaseInsensitive) != 0)
 		{
 				log_debug() << "ArsTracker persistent fs status ignored for stale device port="
@@ -15609,6 +16200,108 @@ void plugin_mcumgr::handle_ars_tracker_persistent_fs_progress(uint8_t user_data,
 
 		if (device == nullptr)
 		{
+				return;
+		}
+
+		ArsTrackersDownloadRouteInfo route_info;
+		const bool has_coordinator = (ars_trackers_session_download_coordinator != nullptr);
+		if (has_coordinator)
+		{
+				route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForPort(device->portName);
+		}
+		const bool legacy_port_match =
+				ars_tracker_persistent_export_port.compare(device->portName, Qt::CaseInsensitive) == 0;
+		const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+		const int prev_percent = ars_trackers_route_diag_last_percent_by_port.value(device->portName, -1);
+		const qint64 prev_ms = ars_trackers_route_diag_last_ms_by_port.value(device->portName, -1);
+		const bool should_log_progress_diag =
+				(prev_percent != int(percent)) && (prev_ms < 0 || (now_ms - prev_ms) >= 500);
+		if (should_log_progress_diag)
+		{
+				ars_trackers_route_diag_last_percent_by_port.insert(device->portName, int(percent));
+				ars_trackers_route_diag_last_ms_by_port.insert(device->portName, now_ms);
+				log_debug() << "TRACKERS_DOWNLOAD_ROUTE progress"
+										<< "port=" << device->portName
+										<< "sender=" << signal_sender
+										<< "display=" << device->displayName
+										<< "serial=" << device->serialNumber
+										<< "legacyPort=" << ars_tracker_persistent_export_port
+										<< "percent=" << int(percent)
+										<< "routeValid=" << route_info.valid
+										<< "routeHasContext=" << route_info.hasContext
+										<< "cancelRequested=" << route_info.cancelRequested
+										<< "contextId=" << route_info.contextId
+										<< "generation=" << route_info.generation
+										<< "legacyPath=" << legacy_port_match
+										<< "routeReason=" << route_info.reason;
+		}
+		if (has_coordinator && route_info.valid && !legacy_port_match)
+		{
+				log_warning() << "TRACKERS_DOWNLOAD_ROUTE_MISMATCH progress"
+											<< "port=" << device->portName
+											<< "legacyPort=" << ars_tracker_persistent_export_port
+											<< "contextId=" << route_info.contextId
+											<< "generation=" << route_info.generation;
+		}
+
+		const bool trackers_route_match = has_coordinator && route_info.valid;
+		if (trackers_route_match)
+		{
+				if (!ars_trackers_session_download_coordinator->hasLegacyFsOperationForPort(
+								device->portName))
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_FS_STALE_CALLBACK progress"
+													<< "port=" << device->portName
+													<< "contextId=" << route_info.contextId
+													<< "generation=" << route_info.generation
+													<< "percent=" << int(percent);
+						return;
+				}
+				ArsTrackersDownloadFsOperationState fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationForPort(
+								device->portName);
+				if (should_log_progress_diag)
+				{
+						log_debug() << "TRACKERS_DOWNLOAD_FS_PROGRESS"
+												<< "contextId=" << route_info.contextId
+												<< "generation=" << route_info.generation
+												<< "port=" << device->portName
+												<< "remote=" << fs_state.remoteFile
+												<< "percent=" << int(percent);
+						log_debug() << "TRACKERS_PARALLEL_FS_PROGRESS"
+												<< "contextId=" << route_info.contextId
+												<< "port=" << device->portName
+												<< "remote=" << fs_state.remoteFile
+												<< "percent=" << int(percent);
+				}
+				if (fs_state.phase == int(ARS_TRACKER_EXPORT_FS_DOWNLOAD))
+				{
+						if (ars_trackers_session_download_coordinator != nullptr)
+						{
+								ars_trackers_session_download_coordinator->updateContextProgress(
+										device->portName, QString(), fs_state.remoteFile, 0, 0, int(percent), "Running");
+						}
+						ars_tracker_backend *context_backend =
+								active_ars_trackers_download_backend(device->portName);
+						if (context_backend == nullptr)
+						{
+								log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISSING"
+															<< "contextId=" << route_info.contextId
+															<< "generation=" << route_info.generation
+															<< "port=" << device->portName
+															<< "reason=progress-callback-backend-null";
+								return;
+						}
+						log_debug() << "TRACKERS_DOWNLOAD_BACKEND_PROGRESS"
+												<< "contextId=" << route_info.contextId
+												<< "generation=" << route_info.generation
+												<< "port=" << device->portName
+												<< "backend=" << context_backend
+												<< "remote=" << fs_state.remoteFile
+												<< "percent=" << int(percent);
+						context_backend->handle_file_download_progress(percent);
+				}
 				return;
 		}
 
@@ -16103,6 +16796,67 @@ bool plugin_mcumgr::ars_tracker_export_fs_start_failed(uint32_t sequence,
 		return true;
 }
 
+ars_tracker_backend *plugin_mcumgr::active_ars_trackers_download_backend(
+		const QString &port, QString *context_id) const
+{
+		if (ars_trackers_session_download_coordinator == nullptr)
+		{
+				return nullptr;
+		}
+		if (context_id != nullptr)
+		{
+				ArsTrackersDownloadRouteInfo route_info;
+				if (!port.trimmed().isEmpty())
+				{
+						route_info =
+								ars_trackers_session_download_coordinator->resolveRouteForPort(port.trimmed());
+				}
+				else if (ars_trackers_session_download_coordinator->hasLegacyActiveRoute())
+				{
+						route_info = ars_trackers_session_download_coordinator->resolveRouteForPort(
+								ars_tracker_persistent_export_port);
+				}
+				*context_id = route_info.contextId;
+		}
+		if (!port.trimmed().isEmpty())
+		{
+				return ars_trackers_session_download_coordinator->activeLegacyBackendForPort(
+						port.trimmed());
+		}
+		return ars_trackers_session_download_coordinator->activeLegacyBackend();
+}
+
+bool plugin_mcumgr::is_sender_active_ars_trackers_download_backend(
+		QString *context_id, QString *port) const
+{
+		if (ars_trackers_session_download_coordinator == nullptr)
+		{
+				return false;
+		}
+		ars_tracker_backend *active_backend =
+				ars_trackers_session_download_coordinator->activeLegacyBackend();
+		QObject *signal_sender = sender();
+		if (signal_sender == nullptr || active_backend == nullptr)
+		{
+				return false;
+		}
+		if (context_id != nullptr || port != nullptr)
+		{
+				ArsTrackersDownloadRouteInfo route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForPort(
+								ars_tracker_persistent_export_port);
+				if (context_id != nullptr)
+				{
+						*context_id = route_info.contextId;
+				}
+				if (port != nullptr)
+				{
+						*port = route_info.port;
+				}
+		}
+		return signal_sender == active_backend;
+}
+
 void plugin_mcumgr::handle_ars_tracker_export_fs_status(uint8_t user_data, group_status status,
 																												const QString &error_string)
 {
@@ -16171,14 +16925,31 @@ void plugin_mcumgr::handle_ars_tracker_export_fs_status(uint8_t user_data, group
 
 void plugin_mcumgr::ars_tracker_request_file_hash_support()
 {
+		ars_tracker_backend *request_backend = qobject_cast<ars_tracker_backend *>(sender());
+		if (request_backend == nullptr)
+		{
+				request_backend = ars_tracker;
+		}
 		mode = ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT;
+		QString request_port = ars_tracker_persistent_export_port;
+		QString request_context_id;
+		if (ars_trackers_session_download_coordinator != nullptr && request_backend != nullptr)
+		{
+				const ArsTrackersDownloadRouteInfo route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForBackend(request_backend);
+				if (route_info.valid)
+				{
+						request_port = route_info.port;
+						request_context_id = route_info.contextId;
+				}
+		}
 		smp_group_fs_mgmt *target_fs = smp_groups.fs_mgmt;
 		smp_transport *target_transport = active_transport();
 		smp_processor *target_processor = processor;
 		if (ars_tracker_has_connected_devices())
 		{
 				ars_tracker_device_t *device =
-						find_ars_tracker_device_by_port(ars_tracker_persistent_export_port);
+						find_ars_tracker_device_by_port(request_port);
 				if (device == nullptr)
 				{
 						device = active_ars_tracker_device();
@@ -16188,12 +16959,13 @@ void plugin_mcumgr::ars_tracker_request_file_hash_support()
 						device->serialPort->isOpen() == false)
 				{
 						log_debug() << "ArsTracker operation failed: no active persistent transport";
-						ars_tracker->handle_export_hash_support_result(
+						request_backend->handle_export_hash_support_result(
 								STATUS_PROCESSOR_TRANSPORT_ERROR,
 								QString("No active tracker transport available."), QList<hash_checksum_t>());
 						return;
 				}
 
+				request_port = device->portName;
 				ars_tracker_persistent_export_port = device->portName;
 				target_fs = device->fsMgmt;
 				target_transport = device->transport;
@@ -16210,25 +16982,127 @@ void plugin_mcumgr::ars_tracker_request_file_hash_support()
 				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_HASH_SUPPORT);
 		}
 
-		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
-				ARS_TRACKER_EXPORT_FS_HASH_SUPPORT, QString());
+		const bool trackers_route_match =
+				(ars_trackers_session_download_coordinator != nullptr) &&
+				ars_trackers_session_download_coordinator->resolveRouteForPort(
+						request_port).valid &&
+				request_port.isEmpty() == false;
 
-		bool started = target_fs->start_supported_hashes_checksums(
-				&ars_tracker_export_supported_hash_checksum_list);
+		uint32_t sequence = 0;
+		if (trackers_route_match)
+		{
+				ars_tracker_backend *active_backend =
+						active_ars_trackers_download_backend(request_port);
+				if (request_backend != active_backend)
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISMATCH"
+													<< "type=hash_support"
+													<< "senderBackend=" << request_backend
+													<< "activeBackend=" << active_backend
+													<< "port=" << request_port;
+						return;
+				}
+				ArsTrackersDownloadRouteInfo route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForPort(
+								request_port);
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_REQUEST"
+										<< "contextId=" << route_info.contextId
+										<< "generation=" << route_info.generation
+										<< "backend=" << request_backend
+										<< "type=hash_support";
+				log_debug() << "TRACKERS_PARALLEL_BACKEND_REQUEST"
+										<< "contextId=" << route_info.contextId
+										<< "port=" << request_port
+										<< "backend=" << request_backend
+										<< "type=hash";
+				QString begin_error;
+				if (!ars_trackers_session_download_coordinator->beginLegacyFsOperation(
+								request_port,
+								int(ARS_TRACKER_EXPORT_FS_HASH_SUPPORT), "hash_support", QString(), QString(),
+								&begin_error))
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_FS_STALE_CALLBACK begin-failed"
+													<< "port=" << request_port
+													<< "reason=" << begin_error;
+						request_backend->handle_export_hash_support_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR, begin_error, QList<hash_checksum_t>());
+						return;
+				}
+				ArsTrackersDownloadFsOperationState *fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationMutableForPort(
+								request_port);
+				sequence = fs_state != nullptr ? uint32_t(fs_state->sequence) : 0;
+		}
+		else
+		{
+				sequence = begin_ars_tracker_export_fs_operation(
+						ARS_TRACKER_EXPORT_FS_HASH_SUPPORT, QString());
+		}
+
+		QList<hash_checksum_t> *supported_hashes_target = &ars_tracker_export_supported_hash_checksum_list;
+		if (trackers_route_match)
+		{
+				ArsTrackersDownloadFsOperationState *fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationMutableForPort(
+								request_port);
+				if (fs_state != nullptr)
+				{
+						supported_hashes_target = &fs_state->supportedHashChecksumList;
+				}
+		}
+
+				log_debug() << "TRACKERS_PARALLEL_FS_SEND_ATTEMPT"
+										<< "contextId=" << request_context_id
+										<< "port=" << request_port
+										<< "fsGroup=" << target_fs
+										<< "phase=hash_support"
+										<< "remote="
+										<< "activeGlobalFs=" << ars_tracker_export_fs_active
+										<< "activeContextFs="
+										<< (ars_trackers_session_download_coordinator->hasLegacyFsOperationForPort(
+														request_port))
+										<< "processorBusy=n/a"
+										<< "groupBusy=n/a";
+		bool started = target_fs->start_supported_hashes_checksums(supported_hashes_target);
+		log_debug() << "TRACKERS_PARALLEL_FS_SEND_RESULT"
+								<< "contextId=" << request_context_id
+								<< "port=" << request_port
+								<< "status=" << (started ? "started" : "failed")
+								<< "error=" << (started ? "" : "start_supported_hashes_checksums failed");
 
 		if (started == false)
 		{
-				if (ars_tracker_export_fs_start_failed(
-								sequence, ARS_TRACKER_EXPORT_FS_HASH_SUPPORT, QString(),
-								QString("Could not query tracker file hash support.")) == true)
+				if (trackers_route_match)
 				{
-						ars_tracker->handle_export_hash_support_result(
+						ars_trackers_session_download_coordinator->resetLegacyFsOperation(
+								request_port, "start-failed-hash-support");
+						request_backend->handle_export_hash_support_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR,
+								QString("Could not query tracker file hash support."), QList<hash_checksum_t>());
+				}
+				else if (ars_tracker_export_fs_start_failed(
+										 sequence, ARS_TRACKER_EXPORT_FS_HASH_SUPPORT, QString(),
+										 QString("Could not query tracker file hash support.")) == true)
+				{
+						request_backend->handle_export_hash_support_result(
 								STATUS_PROCESSOR_TRANSPORT_ERROR,
 								QString("Could not query tracker file hash support."), QList<hash_checksum_t>());
 				}
 		}
 		else
 		{
+				if (trackers_route_match)
+				{
+						ArsTrackersDownloadRouteInfo route_info =
+								ars_trackers_session_download_coordinator->resolveRouteForPort(
+										request_port);
+						log_debug() << "TRACKERS_DOWNLOAD_FS_BEGIN"
+												<< "contextId=" << route_info.contextId
+												<< "generation=" << route_info.generation
+												<< "port=" << request_port
+												<< "phase=hash_support"
+												<< "remote=" << QString();
+				}
 				log_debug() << "ArsTracker export hash support started seq" << sequence;
 				btn_cancel->setEnabled(true);
 		}
@@ -16237,7 +17111,24 @@ void plugin_mcumgr::ars_tracker_request_file_hash_support()
 void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file,
 																											const QString &hash_name)
 {
-		log_debug() << "session_download_file_metadata_start port=" << ars_tracker_persistent_export_port
+		ars_tracker_backend *request_backend = qobject_cast<ars_tracker_backend *>(sender());
+		if (request_backend == nullptr)
+		{
+				request_backend = ars_tracker;
+		}
+		QString request_port = ars_tracker_persistent_export_port;
+		QString request_context_id;
+		if (ars_trackers_session_download_coordinator != nullptr && request_backend != nullptr)
+		{
+				const ArsTrackersDownloadRouteInfo route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForBackend(request_backend);
+				if (route_info.valid)
+				{
+						request_port = route_info.port;
+						request_context_id = route_info.contextId;
+				}
+		}
+		log_debug() << "session_download_file_metadata_start port=" << request_port
 								<< "remote=" << remote_file;
 		mode = ACTION_ARS_TRACKER_EXPORT_METADATA;
 		smp_group_fs_mgmt *target_fs = smp_groups.fs_mgmt;
@@ -16246,7 +17137,7 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 		if (ars_tracker_has_connected_devices())
 		{
 				ars_tracker_device_t *device =
-						find_ars_tracker_device_by_port(ars_tracker_persistent_export_port);
+						find_ars_tracker_device_by_port(request_port);
 				if (device == nullptr)
 				{
 						device = active_ars_tracker_device();
@@ -16256,12 +17147,13 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 						device->serialPort->isOpen() == false)
 				{
 						log_debug() << "ArsTracker operation failed: no active persistent transport";
-						ars_tracker->handle_file_metadata_result(
+						request_backend->handle_file_metadata_result(
 								STATUS_PROCESSOR_TRANSPORT_ERROR,
 								QString("No active tracker transport available."), QByteArray(), 0);
 						return;
 				}
 
+				request_port = device->portName;
 				ars_tracker_persistent_export_port = device->portName;
 				target_fs = device->fsMgmt;
 				target_transport = device->transport;
@@ -16306,21 +17198,88 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 				}
 		}
 
-		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
-				ARS_TRACKER_EXPORT_FS_METADATA, remote_file);
+		const bool trackers_route_match =
+				(ars_trackers_session_download_coordinator != nullptr) &&
+						ars_trackers_session_download_coordinator->resolveRouteForPort(
+						request_port).valid &&
+				request_port.isEmpty() == false;
 
-		bool started = false;
-
-		if (hash_name.isEmpty())
+		uint32_t sequence = 0;
+		if (trackers_route_match)
 		{
-				started = target_fs->start_status(
-						remote_file, &ars_tracker_export_fs_size_response);
+				ars_tracker_backend *active_backend =
+						active_ars_trackers_download_backend(request_port);
+				if (request_backend != active_backend)
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISMATCH"
+													<< "type=metadata"
+													<< "senderBackend=" << request_backend
+													<< "activeBackend=" << active_backend
+													<< "port=" << request_port
+													<< "remote=" << remote_file;
+						return;
+				}
+				ArsTrackersDownloadRouteInfo route_info =
+								ars_trackers_session_download_coordinator->resolveRouteForPort(
+								request_port);
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_REQUEST"
+										<< "contextId=" << route_info.contextId
+										<< "generation=" << route_info.generation
+										<< "backend=" << request_backend
+										<< "type=metadata"
+										<< "remote=" << remote_file;
+				log_debug() << "TRACKERS_PARALLEL_BACKEND_REQUEST"
+										<< "contextId=" << route_info.contextId
+										<< "port=" << request_port
+										<< "backend=" << request_backend
+										<< "type=metadata"
+										<< "remote=" << remote_file;
+				QString begin_error;
+				if (!ars_trackers_session_download_coordinator->beginLegacyFsOperation(
+								request_port, int(ARS_TRACKER_EXPORT_FS_METADATA),
+								"metadata", remote_file, QString(), &begin_error))
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_FS_STALE_CALLBACK begin-failed"
+													<< "port=" << request_port
+													<< "reason=" << begin_error;
+						request_backend->handle_file_metadata_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR, begin_error, QByteArray(), 0);
+						return;
+				}
+				ArsTrackersDownloadFsOperationState *fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationMutableForPort(
+								request_port);
+				sequence = fs_state != nullptr ? uint32_t(fs_state->sequence) : 0;
 		}
 		else
 		{
-				started = target_fs->start_hash_checksum(remote_file, hash_name,
-																									 &ars_tracker_export_fs_hash_checksum_response,
-																									 &ars_tracker_export_fs_size_response);
+				sequence = begin_ars_tracker_export_fs_operation(
+						ARS_TRACKER_EXPORT_FS_METADATA, remote_file);
+		}
+
+		bool started = false;
+		QByteArray *hash_response_target = &ars_tracker_export_fs_hash_checksum_response;
+		uint32_t *size_response_target = &ars_tracker_export_fs_size_response;
+		if (trackers_route_match)
+		{
+				ArsTrackersDownloadFsOperationState *fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationMutableForPort(
+								request_port);
+				if (fs_state != nullptr)
+				{
+						hash_response_target = &fs_state->hashChecksumResponse;
+						size_response_target = &fs_state->sizeResponse;
+				}
+		}
+
+		if (hash_name.isEmpty())
+		{
+				started = target_fs->start_status(remote_file, size_response_target);
+		}
+		else
+		{
+				started = target_fs->start_hash_checksum(
+						remote_file, hash_name, hash_response_target, size_response_target);
 		}
 
 		if (started == false)
@@ -16329,15 +17288,34 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 																QString("Could not start remote file check.") :
 																QString("Could not start remote file verification.");
 
-				if (ars_tracker_export_fs_start_failed(
-								sequence, ARS_TRACKER_EXPORT_FS_METADATA, remote_file, error_message) == true)
+				if (trackers_route_match)
 				{
-						ars_tracker->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+						ars_trackers_session_download_coordinator->resetLegacyFsOperation(
+								request_port, "start-failed-metadata");
+						request_backend->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+																									 error_message, QByteArray(), 0);
+				}
+				else if (ars_tracker_export_fs_start_failed(
+										 sequence, ARS_TRACKER_EXPORT_FS_METADATA, remote_file, error_message) == true)
+				{
+						request_backend->handle_file_metadata_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
 																										 error_message, QByteArray(), 0);
 				}
 		}
 		else
 		{
+				if (trackers_route_match)
+				{
+						ArsTrackersDownloadRouteInfo route_info =
+								ars_trackers_session_download_coordinator->resolveRouteForPort(
+										request_port);
+						log_debug() << "TRACKERS_DOWNLOAD_FS_BEGIN"
+												<< "contextId=" << route_info.contextId
+												<< "generation=" << route_info.generation
+												<< "port=" << request_port
+												<< "phase=metadata"
+												<< "remote=" << remote_file;
+				}
 				log_debug() << "ArsTracker export metadata started seq" << sequence
 										<< "remote" << remote_file
 										<< "hash type" << hash_name;
@@ -16347,7 +17325,24 @@ void plugin_mcumgr::ars_tracker_request_file_metadata(const QString &remote_file
 
 void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file, const QString &local_temp_file)
 {
-		log_debug() << "session_download_file_download_start port=" << ars_tracker_persistent_export_port
+		ars_tracker_backend *request_backend = qobject_cast<ars_tracker_backend *>(sender());
+		if (request_backend == nullptr)
+		{
+				request_backend = ars_tracker;
+		}
+		QString request_port = ars_tracker_persistent_export_port;
+		QString request_context_id;
+		if (ars_trackers_session_download_coordinator != nullptr && request_backend != nullptr)
+		{
+				const ArsTrackersDownloadRouteInfo route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForBackend(request_backend);
+				if (route_info.valid)
+				{
+						request_port = route_info.port;
+						request_context_id = route_info.contextId;
+				}
+		}
+		log_debug() << "session_download_file_download_start port=" << request_port
 								<< "remote=" << remote_file
 								<< "local=" << local_temp_file;
 		mode = ACTION_ARS_TRACKER_EXPORT_DOWNLOAD;
@@ -16357,7 +17352,7 @@ void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file
 		if (ars_tracker_has_connected_devices())
 		{
 				ars_tracker_device_t *device =
-						find_ars_tracker_device_by_port(ars_tracker_persistent_export_port);
+						find_ars_tracker_device_by_port(request_port);
 				if (device == nullptr)
 				{
 						device = active_ars_tracker_device();
@@ -16367,12 +17362,13 @@ void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file
 						device->serialPort->isOpen() == false)
 				{
 						log_debug() << "ArsTracker operation failed: no active persistent transport";
-						ars_tracker->handle_file_download_result(
+						request_backend->handle_file_download_result(
 								STATUS_PROCESSOR_TRANSPORT_ERROR,
 								QString("No active tracker transport available."));
 						return;
 				}
 
+				request_port = device->portName;
 				ars_tracker_persistent_export_port = device->portName;
 				target_fs = device->fsMgmt;
 				target_transport = device->transport;
@@ -16389,24 +17385,117 @@ void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file
 				set_group_transport_settings(smp_groups.fs_mgmt, ACTION_ARS_TRACKER_EXPORT_DOWNLOAD);
 		}
 
-		const uint32_t sequence = begin_ars_tracker_export_fs_operation(
-				ARS_TRACKER_EXPORT_FS_DOWNLOAD, remote_file, local_temp_file);
+		const bool trackers_route_match =
+				(ars_trackers_session_download_coordinator != nullptr) &&
+						ars_trackers_session_download_coordinator->resolveRouteForPort(
+						request_port).valid &&
+				request_port.isEmpty() == false;
 
+		uint32_t sequence = 0;
+		if (trackers_route_match)
+		{
+				ars_tracker_backend *active_backend =
+						active_ars_trackers_download_backend(request_port);
+				if (request_backend != active_backend)
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISMATCH"
+													<< "type=download"
+													<< "senderBackend=" << request_backend
+													<< "activeBackend=" << active_backend
+													<< "port=" << request_port
+													<< "remote=" << remote_file;
+						return;
+				}
+				ArsTrackersDownloadRouteInfo route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForPort(
+								request_port);
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_REQUEST"
+										<< "contextId=" << route_info.contextId
+										<< "generation=" << route_info.generation
+										<< "backend=" << request_backend
+										<< "type=download"
+										<< "remote=" << remote_file
+										<< "localTemp=" << local_temp_file;
+				log_debug() << "TRACKERS_PARALLEL_BACKEND_REQUEST"
+										<< "contextId=" << route_info.contextId
+										<< "port=" << request_port
+										<< "backend=" << request_backend
+										<< "type=download"
+										<< "remote=" << remote_file;
+				QString begin_error;
+				if (!ars_trackers_session_download_coordinator->beginLegacyFsOperation(
+								request_port, int(ARS_TRACKER_EXPORT_FS_DOWNLOAD),
+								"download", remote_file, local_temp_file, &begin_error))
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_FS_STALE_CALLBACK begin-failed"
+													<< "port=" << request_port
+													<< "reason=" << begin_error;
+						request_backend->handle_file_download_result(
+								STATUS_PROCESSOR_TRANSPORT_ERROR, begin_error);
+						return;
+				}
+				ArsTrackersDownloadFsOperationState *fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationMutableForPort(
+								request_port);
+				sequence = fs_state != nullptr ? uint32_t(fs_state->sequence) : 0;
+		}
+		else
+		{
+				sequence = begin_ars_tracker_export_fs_operation(
+						ARS_TRACKER_EXPORT_FS_DOWNLOAD, remote_file, local_temp_file);
+		}
+
+		log_debug() << "TRACKERS_PARALLEL_FS_SEND_ATTEMPT"
+								<< "contextId=" << request_context_id
+								<< "port=" << request_port
+								<< "fsGroup=" << target_fs
+								<< "phase=download"
+								<< "remote=" << remote_file
+								<< "activeGlobalFs=" << ars_tracker_export_fs_active
+								<< "activeContextFs="
+								<< (ars_trackers_session_download_coordinator != nullptr &&
+										ars_trackers_session_download_coordinator->hasLegacyFsOperationForPort(request_port))
+								<< "processorBusy=n/a"
+								<< "groupBusy=n/a";
 		bool started = target_fs->start_download(remote_file, local_temp_file);
+		log_debug() << "TRACKERS_PARALLEL_FS_SEND_RESULT"
+								<< "contextId=" << request_context_id
+								<< "port=" << request_port
+								<< "status=" << (started ? "started" : "failed")
+								<< "error=" << (started ? "" : "start_download failed");
 
 		if (started == false)
 		{
 				QString error_message = QString("Could not start file transfer.");
 
-				if (ars_tracker_export_fs_start_failed(
-								sequence, ARS_TRACKER_EXPORT_FS_DOWNLOAD, remote_file, error_message) == true)
+				if (trackers_route_match)
 				{
-						ars_tracker->handle_file_download_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+						ars_trackers_session_download_coordinator->resetLegacyFsOperation(
+								request_port, "start-failed-download");
+						request_backend->handle_file_download_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
+																										 error_message);
+				}
+				else if (ars_tracker_export_fs_start_failed(
+										 sequence, ARS_TRACKER_EXPORT_FS_DOWNLOAD, remote_file, error_message) == true)
+				{
+						request_backend->handle_file_download_result(STATUS_PROCESSOR_TRANSPORT_ERROR,
 																										 error_message);
 				}
 		}
 		else
 		{
+				if (trackers_route_match)
+				{
+						ArsTrackersDownloadRouteInfo route_info =
+								ars_trackers_session_download_coordinator->resolveRouteForPort(
+										request_port);
+						log_debug() << "TRACKERS_DOWNLOAD_FS_BEGIN"
+												<< "contextId=" << route_info.contextId
+												<< "generation=" << route_info.generation
+												<< "port=" << request_port
+												<< "phase=download"
+												<< "remote=" << remote_file;
+				}
 				log_debug() << "ArsTracker export download started seq" << sequence
 										<< "remote" << remote_file
 										<< "local temp" << local_temp_file;
@@ -16416,16 +17505,58 @@ void plugin_mcumgr::ars_tracker_request_file_download(const QString &remote_file
 
 void plugin_mcumgr::ars_tracker_request_cancel_file_download()
 {
-		if (ars_tracker_export_fs_active == false)
+		ars_tracker_backend *request_backend = qobject_cast<ars_tracker_backend *>(sender());
+		if (request_backend == nullptr)
+		{
+				request_backend = ars_tracker;
+		}
+		const bool trackers_route_match =
+				(ars_trackers_session_download_coordinator != nullptr) &&
+				ars_trackers_session_download_coordinator->hasLegacyFsOperationForPort(
+						ars_tracker_persistent_export_port);
+		if (trackers_route_match)
+		{
+				ars_tracker_backend *active_backend =
+						active_ars_trackers_download_backend(ars_tracker_persistent_export_port);
+				if (request_backend != active_backend)
+				{
+						log_warning() << "TRACKERS_DOWNLOAD_BACKEND_MISMATCH"
+													<< "type=cancel"
+													<< "senderBackend=" << request_backend
+													<< "activeBackend=" << active_backend
+													<< "port=" << ars_tracker_persistent_export_port;
+						return;
+				}
+				ArsTrackersDownloadRouteInfo route_info =
+						ars_trackers_session_download_coordinator->resolveRouteForPort(
+								ars_tracker_persistent_export_port);
+				log_debug() << "TRACKERS_DOWNLOAD_BACKEND_REQUEST"
+										<< "contextId=" << route_info.contextId
+										<< "generation=" << route_info.generation
+										<< "backend=" << request_backend
+										<< "type=cancel";
+		}
+		if (ars_tracker_export_fs_active == false && !trackers_route_match)
 		{
 				log_debug() << "ArsTracker export fs cancel ignored; no active fs op";
 				return;
 		}
-
-		log_debug() << "ArsTracker export fs cancel seq" << ars_tracker_export_fs_sequence
-								<< "phase"
-								<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
-								<< "remote" << ars_tracker_export_fs_remote_file;
+		if (trackers_route_match)
+		{
+				ArsTrackersDownloadFsOperationState fs_state =
+						ars_trackers_session_download_coordinator->legacyFsOperationForPort(
+								ars_tracker_persistent_export_port);
+				log_debug() << "ArsTracker export fs cancel seq" << fs_state.sequence
+										<< "phase" << fs_state.phaseName
+										<< "remote" << fs_state.remoteFile;
+		}
+		else
+		{
+				log_debug() << "ArsTracker export fs cancel seq" << ars_tracker_export_fs_sequence
+										<< "phase"
+										<< ars_tracker_export_fs_phase_name(ars_tracker_export_fs_phase)
+										<< "remote" << ars_tracker_export_fs_remote_file;
+		}
 		if (ars_tracker_persistent_export_port.isEmpty() == false)
 		{
 				ars_tracker_device_t *device =

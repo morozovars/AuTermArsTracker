@@ -736,6 +736,11 @@ private:
                                             ars_tracker_export_fs_phase_t phase,
                                             const QString &remote_file,
                                             const QString &error_message);
+    ars_tracker_backend *active_ars_trackers_download_backend(
+            const QString &port = QString(), QString *context_id = nullptr) const;
+    bool is_sender_active_ars_trackers_download_backend(
+            QString *context_id = nullptr, QString *port = nullptr) const;
+    void render_ars_trackers_parallel_download_progress();
 
     //Form items
 ///AUTOGEN_START_OBJECTS
@@ -1312,6 +1317,8 @@ private:
     QString ars_trackers_bulk_sessions_last_error;
     QString ars_trackers_bulk_sessions_download_destination;
     ArsTrackersSessionDownloadCoordinator *ars_trackers_session_download_coordinator = nullptr;
+    QHash<QString, int> ars_trackers_route_diag_last_percent_by_port;
+    QHash<QString, qint64> ars_trackers_route_diag_last_ms_by_port;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

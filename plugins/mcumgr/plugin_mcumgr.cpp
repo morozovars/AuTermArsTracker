@@ -6486,7 +6486,6 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 
 		QLabel *lbl_ars_trackers_header = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_header->setObjectName("lbl_ars_trackers_header");
-		lbl_ars_trackers_header->setText("Trackers are detected automatically.");
 		QHBoxLayout *trackers_header_layout = new QHBoxLayout();
 		trackers_header_layout->addWidget(lbl_ars_trackers_header);
 		trackers_header_layout->addStretch(1);

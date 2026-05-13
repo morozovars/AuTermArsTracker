@@ -20,6 +20,7 @@ SOURCES += \
     ars_trackers_ui_state.cpp \
     ../../AuTerm/AutEscape.cpp \
     ars_tracker_backend.cpp \
+    ars_tracker_utils.cpp \
     ars_tracker_parser.cpp \
     crc16.cpp \
     debug_logger.cpp \
@@ -46,6 +47,7 @@ HEADERS += \
     ars_trackers_ui_state.h \
     ../../AuTerm/AutEscape.h \
     ars_tracker_backend.h \
+    ars_tracker_utils.h \
     ars_tracker_parser.h \
     crc16.h \
     debug_logger.h \

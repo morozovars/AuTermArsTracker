@@ -30,6 +30,13 @@ void ArsTrackersSessionDownloadCoordinator::beginSessionDownload(const QString &
 
 void ArsTrackersSessionDownloadCoordinator::finishSessionDownload()
 {
+    const int contextsBefore = contextsByPort.size();
+    const int routesBefore = routesByPort.size();
+    emit logMessage("TRACKERS_PARALLEL_CLEANUP_BEGIN reason=finish-session-download");
+    emit logMessage(QString("TRACKERS_PARALLEL_CLEANUP_CONTEXTS routes=%1 backendRoutes=%2 fsStates=%3")
+                        .arg(QString::number(routesByPort.size()),
+                             QString::number(backendToPort.size()),
+                             QString::number(fsByPort.size())));
     active = false;
     cancelling = false;
     currentSessionName.clear();
@@ -56,6 +63,18 @@ void ArsTrackersSessionDownloadCoordinator::finishSessionDownload()
     legacyRoute = ArsTrackersDownloadRouteInfo();
     legacyFsOperation = ArsTrackersDownloadFsOperationState();
     legacyBackend = nullptr;
+    emit logMessage(QString("TRACKERS_PARALLEL_CLEANUP_DONE active=%1 cancelling=%2 contexts=%3 routes=%4")
+                        .arg(active ? QString("true") : QString("false"),
+                             cancelling ? QString("true") : QString("false"),
+                             QString::number(contextsByPort.size()),
+                             QString::number(routesByPort.size())));
+    emit logMessage(QString("TRACKERS_OPERATION_CLEANUP_AFTER_FINISH operationId=%1 contextsBefore=%2 contextsAfter=%3 routesBefore=%4 routesAfter=%5 activeAfter=false readyForNext=true")
+                        .arg(QString::number(routeGeneration),
+                             QString::number(contextsBefore),
+                             QString::number(contextsByPort.size()),
+                             QString::number(routesBefore),
+                             QString::number(routesByPort.size())));
+    emit logMessage("TRACKERS_PARALLEL_READY_FOR_NEXT_DOWNLOAD ready=true reason=cleanup-complete");
     emit parallelDownloadProgressChanged();
 }
 
@@ -435,6 +454,13 @@ void ArsTrackersSessionDownloadCoordinator::markContextSessionFinished(const QSt
         emit logMessage(QString("TRACKERS_PARALLEL_CONTEXT_FINISHED contextId=%1 state=%2")
                             .arg(ctx.contextId, state));
         ctx.stateText = state;
+        const int remainingSessions = qMax(0, ctx.sessionQueue.size() - (ctx.currentSessionIndex + 1));
+        emit logMessage(QString("TRACKERS_PARALLEL_CONTEXT_TERMINAL contextId=%1 port=%2 state=%3 session=%4 remainingSessions=%5")
+                            .arg(ctx.contextId,
+                                 ctx.port,
+                                 state,
+                                 finishedSession,
+                                 QString::number(remainingSessions)));
     }
     finishOperationIfTerminal("context-session-finished");
     emit parallelDownloadProgressChanged();
@@ -483,6 +509,9 @@ int ArsTrackersSessionDownloadCoordinator::cancelledContextCount() const { retur
 int ArsTrackersSessionDownloadCoordinator::disconnectedContextCount() const { return contextsDisconnected; }
 int ArsTrackersSessionDownloadCoordinator::completedSessionCount() const { return totalSessionsCompleted; }
 int ArsTrackersSessionDownloadCoordinator::totalSessionCount() const { return totalSessionsPlanned; }
+int ArsTrackersSessionDownloadCoordinator::routeCount() const { return routesByPort.size(); }
+int ArsTrackersSessionDownloadCoordinator::backendRouteCount() const { return backendToPort.size(); }
+int ArsTrackersSessionDownloadCoordinator::fsStateCount() const { return fsByPort.size(); }
 
 void ArsTrackersSessionDownloadCoordinator::cancel()
 {
@@ -744,11 +773,12 @@ bool ArsTrackersSessionDownloadCoordinator::finishOperationIfTerminal(const QStr
         }
     }
 
-    emit logMessage(QString("TRACKERS_PARALLEL_OPERATION_TERMINAL_CHECK total=%1 terminal=%2 running=%3 pending=%4 activeBefore=%5 reason=%6")
+    emit logMessage(QString("TRACKERS_PARALLEL_OPERATION_TERMINAL_CHECK total=%1 terminal=%2 running=%3 pending=%4 cancelling=%5 activeBefore=%6 reason=%7")
                         .arg(QString::number(contextsByPort.size()),
                              QString::number(terminalCount),
                              QString::number(runningCount),
                              QString::number(pendingCount),
+                             cancelling ? QString("true") : QString("false"),
                              active ? QString("true") : QString("false"),
                              reason));
 
@@ -774,8 +804,9 @@ bool ArsTrackersSessionDownloadCoordinator::finishOperationIfTerminal(const QStr
     }
 
     finishSessionDownload();
-    emit logMessage(QString("TRACKERS_PARALLEL_OPERATION_FINISHED operationId=%1 finished=%2 failed=%3 cancelled=%4 disconnected=%5 activeAfter=false")
+    emit logMessage(QString("TRACKERS_PARALLEL_OPERATION_FINISHED operationId=%1 total=%2 finished=%3 failed=%4 cancelled=%5 disconnected=%6 activeAfter=false")
                         .arg(QString::number(routeGeneration),
+                             QString::number(finishedCount + failedCount + cancelledCount + disconnectedCount),
                              QString::number(finishedCount),
                              QString::number(failedCount),
                              QString::number(cancelledCount),

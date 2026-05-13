@@ -39,6 +39,7 @@
 #include <QStandardPaths>
 #include "plugin_mcumgr.h"
 #include "ars_tracker_parser.h"
+#include "ars_tracker_utils.h"
 #include "ars_trackers_ui_state.h"
 
 static const uint16_t timeout_erase_ms = 14000;
@@ -165,81 +166,6 @@ static void ars_trackers_perf_maybe_log_summary(bool tab_active)
 		g_ars_trackers_perf_stats.port_monitor_max_ms_window = 0;
 		g_ars_trackers_perf_stats.slow_serial_reads_window = 0;
 		g_ars_trackers_perf_stats.slow_serial_read_max_ms_window = 0;
-}
-
-static QString ars_tracker_scan_status_to_string(group_status status)
-{
-		switch (status)
-		{
-		case STATUS_COMPLETE:
-				return "complete";
-		case STATUS_ERROR:
-				return "error";
-		case STATUS_TIMEOUT:
-				return "timeout";
-		case STATUS_CANCELLED:
-				return "cancelled";
-		case STATUS_PROCESSOR_TRANSPORT_ERROR:
-				return "processor_transport_error";
-		default:
-				return QString("unknown(%1)").arg(int(status));
-		}
-}
-
-struct ars_tracker_parsed_status_t
-{
-		int code = -1;
-		QString name = "Unknown";
-		QString color = "808080";
-};
-
-static ars_tracker_parsed_status_t parse_ars_tracker_status_text(const QString &raw_status)
-{
-		ars_tracker_parsed_status_t parsed_status;
-		QString cleaned_status = raw_status.trimmed();
-		if (cleaned_status.isEmpty() || cleaned_status.compare("Not loaded", Qt::CaseInsensitive) == 0 ||
-				cleaned_status.compare("N/A", Qt::CaseInsensitive) == 0 ||
-				cleaned_status.startsWith("Loading", Qt::CaseInsensitive) ||
-				cleaned_status.startsWith("Error", Qt::CaseInsensitive))
-		{
-				return parsed_status;
-		}
-		QString first_token = cleaned_status.section(',', 0, 0).trimmed();
-		bool conversion_ok = false;
-		int code = first_token.toInt(&conversion_ok);
-
-		if (conversion_ok == false)
-		{
-				qWarning() << "ArsTracker status parse failed for raw value" << raw_status;
-				return parsed_status;
-		}
-
-		parsed_status.code = code;
-		switch (code)
-		{
-		case 0:
-				parsed_status.name = "Init";
-				parsed_status.color = "808080";
-				break;
-		case 1:
-				parsed_status.name = "Ready";
-				parsed_status.color = "1976D2";
-				break;
-		case 2:
-				parsed_status.name = "Active";
-				parsed_status.color = "2E7D32";
-				break;
-		case 3:
-				parsed_status.name = "Error";
-				parsed_status.color = "D32F2F";
-				break;
-		default:
-				qWarning() << "ArsTracker status code is unknown for raw value" << raw_status
-											<< "code" << code;
-				break;
-		}
-
-		return parsed_status;
 }
 
 enum tree_img_slot_info_columns
@@ -6424,18 +6350,7 @@ void plugin_mcumgr::custom_message_callback(enum custom_message_callback_t type,
 
 void plugin_mcumgr::size_abbreviation(uint32_t size, QString *output)
 {
-		const QStringList list_abbreviations = { "B", "KiB", "MiB", "GiB", "TiB" };
-		float             converted_size     = size;
-		uint8_t           abbreviation_index = 0;
-
-		while (converted_size >= 1024 && abbreviation_index < list_abbreviations.size())
-		{
-				converted_size /= 1024.0;
-				++abbreviation_index;
-		}
-
-		output->append(
-				QString::number(converted_size, 'g', 3).append(list_abbreviations.at(abbreviation_index)));
+		ars_tracker_utils::append_size_abbreviation(size, output);
 }
 
 void plugin_mcumgr::on_tree_IMG_Slot_Info_itemDoubleClicked(QTreeWidgetItem *item, int)
@@ -7254,45 +7169,19 @@ void plugin_mcumgr::schedule_ars_tracker_port_scan_debounce(
 bool plugin_mcumgr::ars_tracker_serial_is_valid(const QString &serial_number,
 																								QString *error_message) const
 {
-		QString trimmed_serial = serial_number.trimmed();
-		QStringList serial_parts = trimmed_serial.split('.');
-		if (trimmed_serial.isEmpty())
+		const bool valid = ars_tracker_utils::serial_is_valid(serial_number, error_message);
+		if (valid)
 		{
-				if (error_message != nullptr)
+				const QString trimmed_serial = serial_number.trimmed();
+				log_debug() << "ArsTracker serial validation accepted" << trimmed_serial;
+				const QString unique_field = trimmed_serial.section('.', -1, -1).trimmed();
+				if (unique_field.compare("FFFFFFFF", Qt::CaseInsensitive) == 0)
 				{
-						*error_message = "Decoded serial is empty.";
+						log_debug() << "ArsTracker serial validation accepted FFFFFFFF serial"
+												<< trimmed_serial;
 				}
-				return false;
 		}
-
-		if (serial_parts.length() < 4 || serial_parts.at(0) != "ARS" || serial_parts.at(1) != "1")
-		{
-				if (error_message != nullptr)
-				{
-						*error_message = "Decoded serial format is not a supported ArsTracker serial.";
-				}
-				return false;
-		}
-
-		QString side_field = serial_parts.at(2).trimmed();
-		QString unique_field = serial_parts.last().trimmed();
-		if ((side_field != "1" && side_field != "2") || unique_field.isEmpty())
-		{
-				if (error_message != nullptr)
-				{
-						*error_message = "Decoded serial side or unique field is invalid.";
-				}
-				return false;
-		}
-
-		log_debug() << "ArsTracker serial validation accepted" << trimmed_serial;
-		if (unique_field.compare("FFFFFFFF", Qt::CaseInsensitive) == 0)
-		{
-				log_debug() << "ArsTracker serial validation accepted FFFFFFFF serial"
-										<< trimmed_serial;
-		}
-
-		return true;
+		return valid;
 }
 
 qint64 plugin_mcumgr::ars_tracker_next_failed_port_retry_ms(const QString &port_name) const
@@ -7418,51 +7307,31 @@ QString plugin_mcumgr::ars_tracker_device_display_text(const QString &serial_num
 																											 const QString &port_name) const
 {
 		QString trimmed_serial = serial_number.trimmed();
+		const QString display_text =
+				ars_tracker_utils::device_display_text(serial_number, port_name, ARS_TRACKER_DISPLAY_PARSE_VERBOSE);
 		if (trimmed_serial.isEmpty())
 		{
 				log_debug() << "ArsTracker UI tracker display fallback to port name because serial is empty."
 										<< "port=" << port_name;
-				return port_name;
+				return display_text;
 		}
-
-		QStringList serial_parts = trimmed_serial.split('.');
+		const QStringList serial_parts = trimmed_serial.split('.');
 		if (serial_parts.length() >= 4)
 		{
-				QString tracker_type = serial_parts.at(2).trimmed();
-				QString tracker_unique = serial_parts.last().trimmed();
-				QString tracker_side;
-
-				if (tracker_type == "1")
+				const QString tracker_type = serial_parts.at(2).trimmed();
+				const QString tracker_unique = serial_parts.last().trimmed();
+				const bool typed = (tracker_type == "1" || tracker_type == "2");
+				if (!typed || tracker_unique.isEmpty())
 				{
-						tracker_side = "R";
+						log_warning() << "ArsTracker UI tracker display fallback because serial type is unexpected."
+													<< "full serial=" << trimmed_serial << "type=" << tracker_type
+													<< "unique=" << tracker_unique << "port=" << port_name;
 				}
-				else if (tracker_type == "2")
-				{
-						tracker_side = "L";
-				}
-
-				if (tracker_unique.isEmpty() == false && tracker_side.isEmpty() == false)
-				{
-						QString display_text = tracker_unique % tracker_side;
-						if (ARS_TRACKER_DISPLAY_PARSE_VERBOSE)
-						{
-								log_debug() << "ArsTracker UI tracker display parsed. full serial="
-														<< trimmed_serial << "unique=" << tracker_unique
-														<< "side=" << tracker_side << "display=" << display_text
-														<< "port=" << port_name;
-						}
-						return display_text;
-				}
-
-				log_warning() << "ArsTracker UI tracker display fallback because serial type is unexpected."
-											<< "full serial=" << trimmed_serial << "type=" << tracker_type
-											<< "unique=" << tracker_unique << "port=" << port_name;
-				return trimmed_serial;
+				return display_text;
 		}
-
 		log_warning() << "ArsTracker UI tracker display fallback because serial format is unexpected."
 									<< "full serial=" << trimmed_serial << "port=" << port_name;
-		return trimmed_serial;
+		return display_text;
 }
 
 QString plugin_mcumgr::ars_tracker_port_display_text(const QString &port_name,
@@ -7473,33 +7342,16 @@ QString plugin_mcumgr::ars_tracker_port_display_text(const QString &port_name,
 
 QString plugin_mcumgr::ars_tracker_pair_id_from_serial(const QString &serial) const
 {
-		QString trimmed_serial = serial.trimmed();
-		if (trimmed_serial.isEmpty())
-		{
-				return QString("-");
-		}
-		QStringList parts = trimmed_serial.split('.');
-		if (parts.length() >= 4)
-		{
-				QString suffix = parts.last().trimmed();
-				return suffix.isEmpty() ? QString("-") : suffix;
-		}
-		return QString("-");
+		return ars_tracker_utils::pair_id_from_serial(serial);
 }
 
 QString plugin_mcumgr::ars_tracker_side_label_from_serial_or_device(
 		const ars_tracker_device_t &device) const
 {
-		QString serial = device.serialNumber.trimmed();
-		QStringList parts = serial.split('.');
-		QString side_token = parts.length() >= 3 ? parts.at(2).trimmed() : QString();
-		if (side_token == "1")
+		QString side_from_serial = ars_tracker_utils::side_label_from_serial(device.serialNumber);
+		if (side_from_serial != "-")
 		{
-				return "Right";
-		}
-		if (side_token == "2")
-		{
-				return "Left";
+				return side_from_serial;
 		}
 		QString side = device.side.trimmed();
 		if (side.compare("R", Qt::CaseInsensitive) == 0 || side.compare("Right", Qt::CaseInsensitive) == 0)
@@ -7543,75 +7395,17 @@ QString plugin_mcumgr::ars_tracker_lightweight_telemetry_command_to_string(
 
 QString plugin_mcumgr::compact_ars_tracker_telemetry_text(const QString &raw_text) const
 {
-		QString cleaned = raw_text;
-		cleaned.replace('\r', ' ');
-		cleaned.replace('\n', ' ');
-		cleaned = cleaned.simplified();
-		return cleaned;
+		return ars_tracker_utils::compact_telemetry_text(raw_text);
 }
 
 QString plugin_mcumgr::format_ars_tracker_battery_compact(const QString &raw_text) const
 {
-		const QString compact = compact_ars_tracker_telemetry_text(raw_text);
-		ars_tracker_parser::battery_info_t battery_info;
-		QString parse_error;
-		if (ars_tracker_parser::parse_battery_info_output(
-						compact, &battery_info, nullptr, &parse_error))
-		{
-				return QString("%1 mV  %2%").arg(battery_info.volt_mV).arg(battery_info.soc);
-		}
-
-		const QStringList fields = compact.split(',', Qt::KeepEmptyParts);
-		if (fields.size() >= 3)
-		{
-				bool volt_ok = false;
-				bool soc_ok = false;
-				const int volt_mv = fields.at(0).trimmed().toInt(&volt_ok, 10);
-				const int soc = fields.at(2).trimmed().toInt(&soc_ok, 10);
-				if (volt_ok && soc_ok)
-				{
-						return QString("%1 mV  %2%").arg(volt_mv).arg(soc);
-				}
-		}
-
-		return compact;
+		return ars_tracker_utils::format_battery_compact(raw_text);
 }
 
 QString plugin_mcumgr::format_ars_tracker_memory_compact(const QString &raw_text) const
 {
-		const QString compact = compact_ars_tracker_telemetry_text(raw_text);
-		ars_tracker_parser::memory_usage_t memory_usage;
-		QString parse_error;
-		if (ars_tracker_parser::parse_memory_usage_output(
-						compact, &memory_usage, nullptr, &parse_error))
-		{
-				const double total_mb =
-						double(memory_usage.total_bytes) / (1024.0 * 1024.0);
-				const double used_mb =
-						double(memory_usage.used_bytes) / (1024.0 * 1024.0);
-				return QString("%1 MB / %2 MB")
-						.arg(qRound(total_mb))
-						.arg(qRound(used_mb));
-		}
-
-		const QStringList fields = compact.split(',', Qt::KeepEmptyParts);
-		if (fields.size() >= 2)
-		{
-				bool total_ok = false;
-				bool used_ok = false;
-				const quint64 total_bytes = fields.at(0).trimmed().toULongLong(&total_ok, 10);
-				const quint64 used_bytes = fields.at(1).trimmed().toULongLong(&used_ok, 10);
-				if (total_ok && used_ok)
-				{
-						const double total_mb = double(total_bytes) / (1024.0 * 1024.0);
-						const double used_mb = double(used_bytes) / (1024.0 * 1024.0);
-						return QString("%1 MB / %2 MB")
-								.arg(qRound(total_mb))
-								.arg(qRound(used_mb));
-				}
-		}
-
-		return compact;
+		return ars_tracker_utils::format_memory_compact(raw_text);
 }
 
 void plugin_mcumgr::enqueue_ars_tracker_lightweight_telemetry_request(
@@ -8018,83 +7812,8 @@ void plugin_mcumgr::store_ars_tracker_lightweight_telemetry_response(
 								<< ars_tracker_lightweight_telemetry_command_to_string(command);
 }
 
-struct ars_tracker_serial_parts_t {
-		bool valid = false;
-		QString fullSerial;
-		QString pairId;
-		QString sideCode;
-		QString sideName;
-		bool isRight = false;
-		bool isLeft = false;
-};
-
-static ars_tracker_serial_parts_t parse_ars_tracker_serial_parts(const QString &serial)
-{
-		ars_tracker_serial_parts_t parts;
-		parts.fullSerial = serial.trimmed();
-		QStringList tokens = parts.fullSerial.split('.');
-		if (tokens.size() != 4)
-		{
-				parts.sideName = "Unknown";
-				return parts;
-		}
-		if (tokens.at(0).trimmed().compare("ARS", Qt::CaseInsensitive) != 0)
-		{
-				parts.sideName = "Unknown";
-				return parts;
-		}
-		parts.sideCode = tokens.at(2).trimmed();
-		parts.pairId = tokens.at(3).trimmed();
-		if (parts.pairId.isEmpty())
-		{
-				parts.sideName = "Unknown";
-				return parts;
-		}
-		parts.valid = true;
-		if (parts.sideCode == "1")
-		{
-				parts.isRight = true;
-				parts.sideName = "Right";
-		}
-		else if (parts.sideCode == "2")
-		{
-				parts.isLeft = true;
-				parts.sideName = "Left";
-		}
-		else
-		{
-				parts.sideName = "Unknown";
-		}
-		return parts;
-}
-
-static QString format_ars_tracker_session_display_name(const QString &raw_name)
-{
-		QString name = raw_name.trimmed();
-		if (name.isEmpty())
-		{
-				return name;
-		}
-		for (const QChar &ch : name)
-		{
-				if (ch.isDigit() == false)
-				{
-						return name;
-				}
-		}
-		bool ok = false;
-		qint64 secs = name.toLongLong(&ok, 10);
-		if (!ok || secs < 1500000000LL || secs > 2500000000LL)
-		{
-				return name;
-		}
-		QDateTime dt = QDateTime::fromSecsSinceEpoch(secs).toLocalTime();
-		if (dt.isValid() == false)
-		{
-				return name;
-		}
-		return QString("%1 - %2").arg(name, dt.toString("dd MMM yyyy HH:mm"));
-}
+using ars_tracker_serial_parts_t = ars_tracker_utils::serial_parts_t;
+using ars_tracker_parsed_status_t = ars_tracker_utils::parsed_status_t;
 
 bool plugin_mcumgr::ars_trackers_table_refresh_is_low_priority(const QString &reason) const
 {
@@ -8390,7 +8109,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 				QString raw_status = device.telemetryStatusLoaded ?
 																	 device.telemetryStatusRaw :
 																	 field_display_text(device.info.tracker_status);
-				ars_tracker_parsed_status_t parsed_status = parse_ars_tracker_status_text(raw_status);
+				ars_tracker_parsed_status_t parsed_status = ars_tracker_utils::parse_status_text(raw_status);
 				tracker_cell_view_t item;
 				item.device = &device;
 				item.display_name = display_name;
@@ -8415,7 +8134,7 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 						build_status_format_ms += status_timer.elapsed();
 				}
 				ars_tracker_serial_parts_t serial_parts =
-						parse_ars_tracker_serial_parts(device.serialNumber);
+						ars_tracker_utils::parse_serial_parts(device.serialNumber);
 				QString pair_key;
 				if (serial_parts.valid)
 				{
@@ -10685,7 +10404,7 @@ void plugin_mcumgr::handle_ars_tracker_scan_shell_status(uint8_t user_data, grou
 		{
 				log_debug() << "ARS_PORT_LIFETIME scan_status"
 										<< "port=" << ars_tracker_scan_current_port
-										<< "status=" << ars_tracker_scan_status_to_string(status);
+										<< "status=" << ars_tracker_utils::scan_status_to_string(status);
 		}
 		Q_UNUSED(user_data);
 
@@ -10696,7 +10415,7 @@ void plugin_mcumgr::handle_ars_tracker_scan_shell_status(uint8_t user_data, grou
 
 		log_debug() << "ArsTracker port scan param sn callback for"
 								<< ars_tracker_scan_current_port << "status="
-								<< ars_tracker_scan_status_to_string(status) << "response=" << error_string;
+								<< ars_tracker_utils::scan_status_to_string(status) << "response=" << error_string;
 
 		if (status != STATUS_COMPLETE)
 		{
@@ -11346,7 +11065,7 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 				{
 						continue;
 				}
-				ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+				ars_tracker_serial_parts_t parts = ars_tracker_utils::parse_serial_parts(device.serialNumber);
 				QString pair_id = parts.valid ? parts.pairId : QString("unknown:%1").arg(device.portName);
 				if (!pairs.contains(pair_id))
 				{
@@ -11366,7 +11085,7 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 				{
 						if (!it.value().ports.contains(device.portName, Qt::CaseInsensitive))
 								continue;
-						ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+						ars_tracker_serial_parts_t parts = ars_tracker_utils::parse_serial_parts(device.serialNumber);
 						if (parts.isRight)
 						{
 								right = device.displayName;
@@ -11554,7 +11273,7 @@ void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 				{
 						continue;
 				}
-				ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+				ars_tracker_serial_parts_t parts = ars_tracker_utils::parse_serial_parts(device.serialNumber);
 				QString pair_id = parts.valid ? parts.pairId : QString("unknown:%1").arg(device.portName);
 				if (!pairs.contains(pair_id))
 				{
@@ -11574,7 +11293,7 @@ void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 				{
 						if (!it.value().ports.contains(device.portName, Qt::CaseInsensitive))
 								continue;
-						ars_tracker_serial_parts_t parts = parse_ars_tracker_serial_parts(device.serialNumber);
+						ars_tracker_serial_parts_t parts = ars_tracker_utils::parse_serial_parts(device.serialNumber);
 						if (parts.isRight)
 						{
 								right = device.displayName;
@@ -11662,14 +11381,44 @@ void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked()
 {
+		const ArsTrackersParallelDownloadProgress state_snapshot =
+				(ars_trackers_session_download_coordinator != nullptr)
+						? ars_trackers_session_download_coordinator->currentParallelDownloadProgress()
+						: ArsTrackersParallelDownloadProgress();
+		log_debug() << "TRACKERS_PARALLEL_STATE"
+								<< "active=" << state_snapshot.active
+								<< "cancelling=" << state_snapshot.cancelling
+								<< "contexts=" << state_snapshot.totalContexts
+								<< "running=" << state_snapshot.runningContexts
+								<< "pending=" << qMax(0, state_snapshot.totalContexts - state_snapshot.runningContexts -
+																	state_snapshot.finishedContexts - state_snapshot.failedContexts -
+																	state_snapshot.cancelledContexts - state_snapshot.disconnectedContexts)
+								<< "terminal=" << (state_snapshot.finishedContexts + state_snapshot.failedContexts +
+																	 state_snapshot.cancelledContexts + state_snapshot.disconnectedContexts);
+		log_debug() << "TRACKERS_PARALLEL_LEGACY_STATE"
+								<< "sessionDownloadRunning=" << ars_trackers_session_download_running
+								<< "index=" << ars_trackers_session_download_index
+								<< "jobs=" << ars_trackers_session_download_jobs.size()
+								<< "bulkOperation=" << int(ars_trackers_bulk_sessions_operation);
 		if (ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE)
 		{
+				log_warning() << "TRACKERS_PARALLEL_START_GUARD"
+											<< "requested=download-all"
+											<< "session=<all>"
+											<< "allowed=false"
+											<< "reason=bulk-operation-running";
+				log_warning() << "TRACKERS_PARALLEL_READY_FOR_NEXT_DOWNLOAD ready=false reason=bulk-operation-running";
 				if (lbl_ars_trackers_sessions_status != nullptr)
 				{
 						lbl_ars_trackers_sessions_status->setText("Bulk sessions operation already running");
 				}
 				return;
 		}
+		log_debug() << "TRACKERS_PARALLEL_START_GUARD"
+								<< "requested=download-all"
+								<< "session=<all>"
+								<< "allowed=true"
+								<< "reason=ready";
 		if (ars_trackers_sessions_presence_map.isEmpty())
 		{
 				log_debug() << "bulk_session_download_skipped reason=no sessions";
@@ -11899,6 +11648,12 @@ void plugin_mcumgr::on_btn_ars_trackers_cancel_download_clicked()
 						ars_trackers_session_download_name.clear();
 						ars_trackers_session_download_jobs.clear();
 						log_debug() << "TRACKERS_PARALLEL_LEGACY_STATE_CLEARED reason=operation-finished";
+						log_debug() << "TRACKERS_PARALLEL_READY_FOR_NEXT_DOWNLOAD ready=true reason=cancel-finished";
+						if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL)
+						{
+								QTimer::singleShot(0, this,
+																	 &plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation);
+						}
 				}
 				render_ars_trackers_parallel_download_progress();
 				return;
@@ -12114,10 +11869,84 @@ void plugin_mcumgr::on_ars_trackers_session_download_clicked(const QString &sess
 void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_name)
 {
 		QString session = session_name.trimmed();
+		log_debug() << "TRACKERS_TARGET_DIAG_PRESENCE_MAP"
+								<< "requestedSession=" << session
+								<< "sessionCount=" << ars_trackers_sessions_presence_map.size();
+		for (auto it = ars_trackers_sessions_presence_map.constBegin();
+				 it != ars_trackers_sessions_presence_map.constEnd(); ++it)
+		{
+				const ars_tracker_session_presence_t &presence = it.value();
+				QStringList trackers;
+				const int max_count = qMax(presence.ports.size(),
+															 qMax(presence.trackerDisplays.size(), presence.trackerSerials.size()));
+				for (int i = 0; i < max_count; ++i)
+				{
+						const QString display = (i < presence.trackerDisplays.size()) ? presence.trackerDisplays.at(i) : QString("-");
+						const QString serial = (i < presence.trackerSerials.size()) ? presence.trackerSerials.at(i) : QString("-");
+						const QString port = (i < presence.ports.size()) ? presence.ports.at(i) : QString("-");
+						trackers.append(QString("%1/%2/%3").arg(display, serial, port));
+				}
+				log_debug() << "TRACKERS_TARGET_DIAG_SESSION"
+										<< "session=" << it.key()
+										<< "trackerCount=" << presence.ports.size()
+										<< "trackers=" << trackers.join(", ");
+		}
+		log_debug() << "TRACKERS_TARGET_DIAG_REQUEST"
+								<< "session=" << session
+								<< "existsInPresenceMap=" << ars_trackers_sessions_presence_map.contains(session)
+								<< "trackerCount="
+								<< (ars_trackers_sessions_presence_map.contains(session)
+												? ars_trackers_sessions_presence_map.value(session).ports.size()
+												: 0);
 		if (session.isEmpty() || !ars_trackers_sessions_presence_map.contains(session))
 		{
+				log_warning() << "TRACKERS_PARALLEL_START_GUARD"
+											<< "requested=single"
+											<< "session=" << session
+											<< "allowed=false"
+											<< "reason=session-missing-or-empty";
 				return;
 		}
+		const ArsTrackersParallelDownloadProgress state_snapshot =
+				(ars_trackers_session_download_coordinator != nullptr)
+						? ars_trackers_session_download_coordinator->currentParallelDownloadProgress()
+						: ArsTrackersParallelDownloadProgress();
+		log_debug() << "TRACKERS_PARALLEL_STATE"
+								<< "active=" << state_snapshot.active
+								<< "cancelling=" << state_snapshot.cancelling
+								<< "contexts=" << state_snapshot.totalContexts
+								<< "running=" << state_snapshot.runningContexts
+								<< "pending=" << qMax(0, state_snapshot.totalContexts - state_snapshot.runningContexts -
+																	state_snapshot.finishedContexts - state_snapshot.failedContexts -
+																	state_snapshot.cancelledContexts - state_snapshot.disconnectedContexts)
+								<< "terminal=" << (state_snapshot.finishedContexts + state_snapshot.failedContexts +
+																	 state_snapshot.cancelledContexts + state_snapshot.disconnectedContexts);
+		log_debug() << "TRACKERS_PARALLEL_LEGACY_STATE"
+								<< "sessionDownloadRunning=" << ars_trackers_session_download_running
+								<< "index=" << ars_trackers_session_download_index
+								<< "jobs=" << ars_trackers_session_download_jobs.size()
+								<< "bulkOperation=" << int(ars_trackers_bulk_sessions_operation);
+		log_debug() << "TRACKERS_SECOND_START_STATE"
+								<< "beforeStart=true"
+								<< "active=" << state_snapshot.active
+								<< "cancelling=" << state_snapshot.cancelling
+								<< "contexts=" << state_snapshot.totalContexts
+								<< "routesByPort="
+								<< (ars_trackers_session_download_coordinator != nullptr
+												? ars_trackers_session_download_coordinator->routeCount()
+												: 0)
+								<< "routesByBackend="
+								<< (ars_trackers_session_download_coordinator != nullptr
+												? ars_trackers_session_download_coordinator->backendRouteCount()
+												: 0)
+								<< "fsStates="
+								<< (ars_trackers_session_download_coordinator != nullptr
+												? ars_trackers_session_download_coordinator->fsStateCount()
+												: 0)
+								<< "previousOperationId="
+								<< (ars_trackers_session_download_coordinator != nullptr
+												? ars_trackers_session_download_coordinator->currentGeneration()
+												: 0);
 		if (ars_trackers_session_download_running &&
 				(ars_trackers_session_download_coordinator == nullptr ||
 				 !ars_trackers_session_download_coordinator->isActive()))
@@ -12130,6 +11959,12 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 		}
 		if (ars_trackers_session_download_running)
 		{
+				log_warning() << "TRACKERS_PARALLEL_START_GUARD"
+											<< "requested=single"
+											<< "session=" << session
+											<< "allowed=false"
+											<< "reason=legacy-running-flag";
+				log_warning() << "TRACKERS_PARALLEL_READY_FOR_NEXT_DOWNLOAD ready=false reason=legacy-running-flag";
 				if (lbl_ars_trackers_sessions_status != nullptr)
 						lbl_ars_trackers_sessions_status->setText("Already downloading");
 				return;
@@ -12137,6 +11972,12 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 		if (ars_trackers_session_download_coordinator != nullptr &&
 				ars_trackers_session_download_coordinator->isActive())
 		{
+				log_warning() << "TRACKERS_PARALLEL_START_GUARD"
+											<< "requested=single"
+											<< "session=" << session
+											<< "allowed=false"
+											<< "reason=coordinator-active";
+				log_warning() << "TRACKERS_PARALLEL_READY_FOR_NEXT_DOWNLOAD ready=false reason=coordinator-active";
 				log_warning() << "TRACKERS_PARALLEL_START_IGNORED_ALREADY_ACTIVE"
 											<< "session=" << session;
 				if (lbl_ars_trackers_sessions_status != nullptr)
@@ -12145,6 +11986,11 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				}
 				return;
 		}
+		log_debug() << "TRACKERS_PARALLEL_START_GUARD"
+								<< "requested=single"
+								<< "session=" << session
+								<< "allowed=true"
+								<< "reason=ready";
 		QString destination_path = ars_trackers_download_destination_path();
 		if (destination_path.isEmpty())
 		{
@@ -12190,6 +12036,25 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				}
 				job.destinationDir =
 						QDir(destination_path).filePath(QString("%1/%2").arg(session, tracker_name));
+				ars_tracker_device_t *candidate_device = find_ars_tracker_device_by_port(job.port);
+				bool connected = (candidate_device != nullptr && candidate_device->connected &&
+													candidate_device->serialPort != nullptr && candidate_device->serialPort->isOpen());
+				QString busy_reason;
+				const bool busy = (candidate_device != nullptr) &&
+													ars_tracker_lightweight_telemetry_device_busy(*candidate_device, &busy_reason);
+				const bool route_exists =
+						(ars_trackers_session_download_coordinator != nullptr) &&
+						ars_trackers_session_download_coordinator->resolveRouteForPort(job.port).valid;
+				log_debug() << "TRACKERS_TARGET_DIAG_CANDIDATE"
+										<< "session=" << session
+										<< "port=" << job.port
+										<< "display=" << job.trackerName
+										<< "serial=" << job.serial
+										<< "connected=" << connected
+										<< "routeExists=" << route_exists
+										<< "busy=" << busy
+										<< "accepted=" << true
+										<< "reason=candidate-from-presence-map";
 				ars_trackers_session_download_jobs.append(job);
 				target_logs.append(QString("%1(%2)").arg(tracker_name, job.port));
 		}
@@ -12242,11 +12107,27 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				QString busy_reason;
 				if (ars_tracker_lightweight_telemetry_device_busy(*device, &busy_reason))
 				{
-						job.finished = true;
-						job.success = false;
-						job.error = QString("device busy: %1").arg(busy_reason);
-						deferred_contexts++;
-						continue;
+						const bool telemetry_only_busy =
+								(busy_reason.compare("device_telemetry_or_sessions_refreshing", Qt::CaseInsensitive) == 0);
+						log_debug() << "TRACKERS_TARGET_DIAG_CANDIDATE"
+												<< "session=" << session
+												<< "port=" << job.port
+												<< "display=" << job.trackerName
+												<< "serial=" << job.serial
+												<< "connected=" << true
+												<< "routeExists=" << false
+												<< "busy=" << true
+												<< "accepted=" << telemetry_only_busy
+												<< "reason=" << (telemetry_only_busy ? "telemetry-busy-allowed" :
+																								 QString("device busy: %1").arg(busy_reason));
+						if (!telemetry_only_busy)
+						{
+								job.finished = true;
+								job.success = false;
+								job.error = QString("device busy: %1").arg(busy_reason);
+								deferred_contexts++;
+								continue;
+						}
 				}
 				if (!QDir().mkpath(job.destinationDir))
 				{
@@ -13183,7 +13064,7 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 						for (const QString &serial : presence.trackerSerials)
 						{
 								ars_tracker_serial_parts_t parts =
-										parse_ars_tracker_serial_parts(serial);
+										ars_tracker_utils::parse_serial_parts(serial);
 								if (parts.valid)
 								{
 										if (parts.isRight)
@@ -13210,7 +13091,7 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 						}
 
 						QTableWidgetItem *session_item =
-								new QTableWidgetItem(format_ars_tracker_session_display_name(session));
+								new QTableWidgetItem(ars_tracker_utils::format_session_display_name(session));
 						session_item->setData(Qt::UserRole, session);
 						table_ars_trackers_sessions->setItem(row, 0, session_item);
 						table_ars_trackers_sessions->setItem(
@@ -14861,7 +14742,7 @@ void plugin_mcumgr::update_ars_tracker_status_indicator(const QString &raw_statu
 		}
 
 		log_debug() << "ArsTracker status raw value:" << raw_status;
-		ars_tracker_parsed_status_t parsed_status = parse_ars_tracker_status_text(raw_status);
+		ars_tracker_parsed_status_t parsed_status = ars_tracker_utils::parse_status_text(raw_status);
 		log_debug() << "ArsTracker parsed status code=" << parsed_status.code << "name="
 								<< parsed_status.name << "color=" << parsed_status.color;
 
@@ -15411,14 +15292,49 @@ void plugin_mcumgr::ars_tracker_export_finished(bool success, bool cancelled, co
 								"export-finished", &summary);
 				if (operation_finished)
 				{
+						log_debug() << "TRACKERS_PARALLEL_CLEANUP_BEGIN reason=operation-finished-plugin";
 						ars_trackers_session_download_running = false;
 						ars_trackers_session_download_index = -1;
-						ars_trackers_session_download_name.clear();
+						const QString finished_session_name = ars_trackers_session_download_name;
 						ars_trackers_session_download_jobs.clear();
+						ars_trackers_session_download_name.clear();
 						log_debug() << "TRACKERS_PARALLEL_LEGACY_STATE_CLEARED reason=operation-finished";
+						log_debug() << "TRACKERS_PARALLEL_CLEANUP_DONE active=false cancelling=false contexts="
+												<< (ars_trackers_session_download_coordinator != nullptr
+																? ars_trackers_session_download_coordinator->contextCount()
+																: 0)
+												<< "routes=0";
+						log_debug() << "TRACKERS_PARALLEL_READY_FOR_NEXT_DOWNLOAD ready=true reason=operation-finished";
 						if (lbl_ars_trackers_sessions_status != nullptr && !summary.trimmed().isEmpty())
 						{
 								lbl_ars_trackers_sessions_status->setText(summary);
+						}
+						if (ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_DOWNLOAD_ALL)
+						{
+								const bool session_ok = (success && !cancelled);
+								if (session_ok)
+								{
+										ars_trackers_bulk_sessions_success++;
+								}
+								else
+								{
+										ars_trackers_bulk_sessions_failed++;
+										ars_trackers_bulk_sessions_last_error = message;
+								}
+								if (ars_trackers_session_download_coordinator != nullptr)
+								{
+										ars_trackers_session_download_coordinator->updateBulkCounters(
+												ars_trackers_bulk_sessions_success,
+												ars_trackers_bulk_sessions_failed);
+								}
+								log_debug() << "bulk_session_download_item_finished"
+														<< "session=" << finished_session_name
+														<< "success=" << session_ok
+														<< "cancelled=" << cancelled
+														<< "failedCount=" << ars_trackers_bulk_sessions_failed
+														<< "successCount=" << ars_trackers_bulk_sessions_success;
+								QTimer::singleShot(0, this,
+																	 &plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation);
 						}
 				}
 				render_ars_trackers_parallel_download_progress();
@@ -15748,7 +15664,7 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 		{
 				log_debug() << "ARS_PORT_LIFETIME persistent_status_begin"
 										<< "action=" << int(user_data)
-										<< "status=" << ars_tracker_scan_status_to_string(status);
+										<< "status=" << ars_tracker_utils::scan_status_to_string(status);
 		}
 		if (user_data != ACTION_ARS_TRACKER_INFO_REFRESH &&
 				user_data != ACTION_ARS_TRACKER_SESSION_LIST &&
@@ -15819,7 +15735,7 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				{
 						log_debug() << "Lightweight telemetry stale callback ignored: port="
 												<< device->portName << "status="
-												<< ars_tracker_scan_status_to_string(status);
+												<< ars_tracker_utils::scan_status_to_string(status);
 						return;
 				}
 
@@ -15827,7 +15743,7 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 										<< "command="
 										<< ars_tracker_lightweight_telemetry_command_to_string(
 													 ars_tracker_lightweight_telemetry_active_command)
-										<< "status=" << ars_tracker_scan_status_to_string(status)
+										<< "status=" << ars_tracker_utils::scan_status_to_string(status)
 										<< "response=" << error_string;
 				bool changed = false;
 				QElapsedTimer telemetry_timer;
@@ -16032,7 +15948,7 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				}
 				log_debug() << "start_session_response port=" << device->portName
 										<< "success=" << ok
-										<< "status=" << ars_tracker_scan_status_to_string(status);
+										<< "status=" << ars_tracker_utils::scan_status_to_string(status);
 				mark_ars_trackers_start_session_done(device->portName, ok, err);
 				return;
 		}
@@ -16059,7 +15975,7 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 								ars_tracker_parser::parse_status_output(
 										error_string, &parsed_status, &parse_error))
 						{
-								ars_tracker_parsed_status_t st = parse_ars_tracker_status_text(parsed_status);
+								ars_tracker_parsed_status_t st = ars_tracker_utils::parse_status_text(parsed_status);
 								active = st.name.compare("Active", Qt::CaseInsensitive) == 0;
 						}
 						log_debug() << "stop_session_status_response port=" << device->portName
@@ -17826,3 +17742,4 @@ void plugin_mcumgr::update_img_state_table()
 				model_image_state.appendRow(table_entry);
 		}
 }
+

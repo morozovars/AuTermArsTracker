@@ -121,6 +121,9 @@ public:
     int disconnectedContextCount() const;
     int completedSessionCount() const;
     int totalSessionCount() const;
+    int routeCount() const;
+    int backendRouteCount() const;
+    int fsStateCount() const;
     void updateContextProgress(const QString &port,
                                const QString &currentSession,
                                const QString &currentRemoteFile,

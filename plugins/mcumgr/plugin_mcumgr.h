@@ -686,6 +686,7 @@ private:
     QString format_ars_tracker_battery_compact(const QString &raw_text) const;
     QString format_ars_tracker_memory_compact(const QString &raw_text) const;
     void start_ars_trackers_sessions_refresh();
+    void start_ars_trackers_sessions_refresh(bool background, const QString &origin);
     void start_ars_trackers_delete_session(const QString &session_name,
                                            const QStringList &ports);
     void on_ars_trackers_session_delete_clicked(const QString &session_name);
@@ -741,6 +742,11 @@ private:
     bool is_sender_active_ars_trackers_download_backend(
             QString *context_id = nullptr, QString *port = nullptr) const;
     void render_ars_trackers_parallel_download_progress();
+    void schedule_ars_trackers_parallel_download_progress_render(bool force = false);
+    void schedule_ars_trackers_sessions_ui_refresh(const QString &reason, bool force = false);
+    bool is_ars_trackers_download_active_for_port(const QString &port) const;
+    void normalize_ars_trackers_loading_state(const QString &reason);
+    void log_ars_trackers_already_loading_guard(const QString &origin) const;
 
     //Form items
 ///AUTOGEN_START_OBJECTS
@@ -1283,7 +1289,10 @@ private:
     QTimer *timer_ars_tracker_lightweight_telemetry_timeout = nullptr;
     int ars_trackers_sessions_query_generation = 0;
     bool ars_trackers_sessions_query_running = false;
+    bool ars_trackers_sessions_query_background_running = false;
+    QString ars_trackers_sessions_query_origin;
     QMap<QString, ars_trackers_sessions_query_item_t> ars_trackers_sessions_query_items;
+    QMap<QString, QStringList> ars_trackers_sessions_cache_by_port;
     QMap<QString, ars_tracker_session_presence_t> ars_trackers_sessions_presence_map;
     int ars_trackers_sessions_delete_generation = 0;
     bool ars_trackers_sessions_delete_running = false;
@@ -1312,6 +1321,7 @@ private:
             ARS_TRACKERS_BULK_SESSIONS_NONE;
     QList<ars_trackers_bulk_session_item_t> ars_trackers_bulk_sessions_queue;
     int ars_trackers_bulk_sessions_index = -1;
+    bool ars_trackers_bulk_sessions_next_retry_scheduled = false;
     int ars_trackers_bulk_sessions_success = 0;
     int ars_trackers_bulk_sessions_failed = 0;
     QString ars_trackers_bulk_sessions_last_error;
@@ -1319,6 +1329,40 @@ private:
     ArsTrackersSessionDownloadCoordinator *ars_trackers_session_download_coordinator = nullptr;
     QHash<QString, int> ars_trackers_route_diag_last_percent_by_port;
     QHash<QString, qint64> ars_trackers_route_diag_last_ms_by_port;
+    QSet<QString> ars_trackers_active_download_ports;
+    QSet<QString> ars_trackers_pending_post_download_telemetry_ports;
+    QHash<QString, qint64> ars_mt_tracker_start_ms_by_port;
+    QHash<QString, quint64> ars_mt_tracker_bytes_by_port;
+    QHash<QString, int> ars_mt_tracker_files_downloaded_by_port;
+    QHash<QString, int> ars_mt_tracker_files_skipped_by_port;
+    QHash<QString, int> ars_mt_tracker_files_missing_by_port;
+    QHash<QString, int> ars_mt_tracker_files_failed_by_port;
+    QHash<QString, qint64> ars_mt_file_metadata_start_ms_by_key;
+    QHash<QString, qint64> ars_mt_file_download_start_ms_by_key;
+    QHash<QString, quint64> ars_mt_file_resume_offset_by_key;
+    qint64 ars_mt_bulk_start_ms = 0;
+    qint64 ars_mt_session_start_ms = 0;
+    int ars_mt_bulk_sessions_planned = 0;
+    int ars_mt_bulk_trackers_planned = 0;
+    bool ars_mt_parallel_render_pending = false;
+    qint64 ars_mt_last_parallel_render_ms = 0;
+    int ars_mt_parallel_render_calls_window = 0;
+    qint64 ars_mt_parallel_render_total_ms_window = 0;
+    qint64 ars_mt_parallel_render_max_ms_window = 0;
+    qint64 ars_mt_parallel_render_window_start_ms = 0;
+    QTimer *timer_ars_trackers_parallel_render = nullptr;
+    bool ars_mt_sessions_ui_refresh_pending = false;
+    bool ars_mt_sessions_ui_refresh_from_timer = false;
+    bool ars_mt_sessions_ui_refresh_force_once = false;
+    int ars_mt_sessions_ui_update_calls_during_download = 0;
+    qint64 ars_mt_sessions_ui_update_total_ms_during_download = 0;
+    qint64 ars_mt_sessions_ui_update_max_ms_during_download = 0;
+    QTimer *timer_ars_trackers_sessions_ui_refresh = nullptr;
+    int ars_mt_telemetry_started_during_download = 0;
+    int ars_mt_telemetry_busy_during_download = 0;
+    int ars_mt_telemetry_deferred_during_download = 0;
+    int ars_mt_telemetry_completed_during_download = 0;
+    int ars_mt_telemetry_skipped_during_download = 0;
     bool uart_transport_locked;
     QDateTime rtc_time_date_response;
     smp_json *log_json;

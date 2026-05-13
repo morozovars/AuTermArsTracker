@@ -32,7 +32,16 @@ void ArsTrackersSessionDownloadCoordinator::finishSessionDownload()
 {
     const int contextsBefore = contextsByPort.size();
     const int routesBefore = routesByPort.size();
+    const int backendsBefore = backendsByPort.size();
+    const int fsBefore = fsByPort.size();
     emit logMessage("TRACKERS_PARALLEL_CLEANUP_BEGIN reason=finish-session-download");
+    emit logMessage(QString("ARS_MT_BULK coordinator_finish_begin active=%1 currentSession=%2 contexts=%3 routes=%4 backends=%5 fs=%6")
+                        .arg(active ? QString("true") : QString("false"),
+                             currentSessionName,
+                             QString::number(contextsBefore),
+                             QString::number(routesBefore),
+                             QString::number(backendsBefore),
+                             QString::number(fsBefore)));
     emit logMessage(QString("TRACKERS_PARALLEL_CLEANUP_CONTEXTS routes=%1 backendRoutes=%2 fsStates=%3")
                         .arg(QString::number(routesByPort.size()),
                              QString::number(backendToPort.size()),
@@ -60,9 +69,17 @@ void ArsTrackersSessionDownloadCoordinator::finishSessionDownload()
     backendToPort.clear();
     routesByPort.clear();
     fsByPort.clear();
+    contextsByPort.clear();
     legacyRoute = ArsTrackersDownloadRouteInfo();
     legacyFsOperation = ArsTrackersDownloadFsOperationState();
     legacyBackend = nullptr;
+    contextsFinished = 0;
+    contextsFailed = 0;
+    contextsCancelled = 0;
+    contextsDisconnected = 0;
+    totalSessionsPlanned = 0;
+    totalSessionsCompleted = 0;
+    lastSnapshot = ArsTrackersParallelDownloadProgress();
     emit logMessage(QString("TRACKERS_PARALLEL_CLEANUP_DONE active=%1 cancelling=%2 contexts=%3 routes=%4")
                         .arg(active ? QString("true") : QString("false"),
                              cancelling ? QString("true") : QString("false"),
@@ -74,6 +91,9 @@ void ArsTrackersSessionDownloadCoordinator::finishSessionDownload()
                              QString::number(contextsByPort.size()),
                              QString::number(routesBefore),
                              QString::number(routesByPort.size())));
+    emit logMessage(QString("ARS_MT_BULK coordinator_finish_cleanup before_contexts=%1 after_contexts=%2")
+                        .arg(QString::number(contextsBefore),
+                             QString::number(contextsByPort.size())));
     emit logMessage("TRACKERS_PARALLEL_READY_FOR_NEXT_DOWNLOAD ready=true reason=cleanup-complete");
     emit parallelDownloadProgressChanged();
 }
@@ -462,7 +482,6 @@ void ArsTrackersSessionDownloadCoordinator::markContextSessionFinished(const QSt
                                  finishedSession,
                                  QString::number(remainingSessions)));
     }
-    finishOperationIfTerminal("context-session-finished");
     emit parallelDownloadProgressChanged();
 }
 
@@ -668,6 +687,15 @@ void ArsTrackersSessionDownloadCoordinator::updateContextProgress(const QString 
         return;
     }
     ParallelContextState &ctx = contextsByPort[trimmedPort];
+    if (ctx.finished)
+    {
+        emit logMessage(QString("TRACKERS_PARALLEL_LATE_CALLBACK_IGNORED contextId=%1 port=%2 reason=terminal-progress state=%3 file=%4")
+                            .arg(ctx.contextId,
+                                 trimmedPort,
+                                 ctx.stateText,
+                                 currentRemoteFile));
+        return;
+    }
     if (!currentSession.trimmed().isEmpty())
     {
         ctx.currentSession = currentSession.trimmed();
@@ -680,6 +708,15 @@ void ArsTrackersSessionDownloadCoordinator::updateContextProgress(const QString 
     {
         ctx.stateText = stateText.trimmed();
     }
+    emit logMessage(QString("ARS_MT_STATE context_progress contextId=%1 port=%2 session=%3 file=%4 state=%5 bytes=%6/%7 percent=%8 terminal=false")
+                        .arg(ctx.contextId,
+                             ctx.port,
+                             ctx.currentSession,
+                             ctx.currentRemoteFile,
+                             ctx.stateText,
+                             QString::number(ctx.bytesDone),
+                             QString::number(ctx.bytesTotal),
+                             QString::number(ctx.percent)));
     emit parallelDownloadProgressChanged();
 }
 

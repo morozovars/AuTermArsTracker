@@ -6494,8 +6494,6 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		btn_ars_trackers_reset_all->setObjectName("btn_ars_trackers_reset_all");
 		btn_ars_trackers_reset_all->setText("Reset all");
 		btn_ars_trackers_reset_all->setEnabled(true);
-		trackers_header_layout->addWidget(btn_ars_trackers_reset_all);
-		gridLayout_ars_trackers->addLayout(trackers_header_layout, 0, 0, 1, 1);
 
 		QFrame *trackers_primary_actions_panel = new QFrame(tab_ars_trackers);
 		trackers_primary_actions_panel->setObjectName("trackers_primary_actions_panel");
@@ -6511,15 +6509,18 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				new QVBoxLayout(trackers_primary_actions_panel);
 		trackers_primary_actions_layout->setContentsMargins(10, 10, 10, 10);
 		trackers_primary_actions_layout->setSpacing(8);
+		QHBoxLayout *trackers_primary_top_layout = new QHBoxLayout();
+		trackers_primary_top_layout->setSpacing(10);
 		QLabel *lbl_trackers_primary_actions = new QLabel(trackers_primary_actions_panel);
 		lbl_trackers_primary_actions->setObjectName("lbl_trackers_primary_actions");
-		lbl_trackers_primary_actions->setText("Session control (all connected trackers)");
 		QFont trackers_primary_title_font = lbl_trackers_primary_actions->font();
 		trackers_primary_title_font.setBold(true);
 		lbl_trackers_primary_actions->setFont(trackers_primary_title_font);
-		trackers_primary_actions_layout->addWidget(lbl_trackers_primary_actions);
+		trackers_primary_top_layout->addWidget(lbl_trackers_primary_actions);
+		trackers_primary_top_layout->addStretch(1);
 		QHBoxLayout *trackers_primary_buttons_layout = new QHBoxLayout();
 		trackers_primary_buttons_layout->setSpacing(10);
+		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_reset_all);
 		btn_ars_trackers_start_session = new QPushButton(trackers_primary_actions_panel);
 		btn_ars_trackers_start_session->setObjectName("btn_ars_trackers_start_session");
 		btn_ars_trackers_start_session->setText("Start all trackers");
@@ -6564,9 +6565,9 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				"QPushButton:pressed { background-color: #a72f29; }"
 				"QPushButton:disabled { background-color: #d8a6a2; color: #fff1f0; }");
 		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_stop_session);
-		trackers_primary_buttons_layout->addStretch(1);
-		trackers_primary_actions_layout->addLayout(trackers_primary_buttons_layout);
-		gridLayout_ars_trackers->addWidget(trackers_primary_actions_panel, 1, 0, 1, 1);
+		trackers_primary_top_layout->addLayout(trackers_primary_buttons_layout);
+		trackers_primary_actions_layout->addLayout(trackers_primary_top_layout);
+		trackers_primary_actions_panel->setMinimumWidth(320);
 
 		table_ars_trackers = new QTableWidget(tab_ars_trackers);
 		table_ars_trackers->setObjectName("table_ars_trackers");
@@ -6587,7 +6588,7 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		{
 				table_ars_trackers->verticalHeader()->setDefaultSectionSize(200);
 		}
-		gridLayout_ars_trackers->addWidget(table_ars_trackers, 2, 0, 1, 1);
+		table_ars_trackers->setMinimumWidth(360);
 
 		QLabel *lbl_sessions_title = new QLabel(tab_ars_trackers);
 		lbl_sessions_title->setObjectName("lbl_ars_trackers_sessions_title");
@@ -6595,7 +6596,6 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		QFont sessions_title_font = lbl_sessions_title->font();
 		sessions_title_font.setBold(true);
 		lbl_sessions_title->setFont(sessions_title_font);
-		gridLayout_ars_trackers->addWidget(lbl_sessions_title, 3, 0, 1, 1);
 
 		QHBoxLayout *sessions_destination_layout = new QHBoxLayout();
 		QLabel *lbl_ars_trackers_destination = new QLabel(tab_ars_trackers);
@@ -6619,7 +6619,6 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		btn_ars_trackers_download_browse->setObjectName("btn_ars_trackers_download_browse");
 		btn_ars_trackers_download_browse->setText("Browse...");
 		sessions_destination_layout->addWidget(btn_ars_trackers_download_browse);
-		gridLayout_ars_trackers->addLayout(sessions_destination_layout, 4, 0, 1, 1);
 		connect(btn_ars_trackers_download_browse, &QPushButton::clicked, this, [this]() {
 				QString current = ars_trackers_download_destination_path();
 				QString selected = QFileDialog::getExistingDirectory(
@@ -6663,32 +6662,65 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		lbl_ars_trackers_sessions_status->setText("Not loaded");
 		sessions_controls_layout->addWidget(lbl_ars_trackers_sessions_status);
 		sessions_controls_layout->addStretch(1);
-		gridLayout_ars_trackers->addLayout(sessions_controls_layout, 5, 0, 1, 1);
 
 		table_ars_trackers_sessions = new QTableWidget(tab_ars_trackers);
 		table_ars_trackers_sessions->setObjectName("table_ars_trackers_sessions");
-		table_ars_trackers_sessions->setColumnCount(5);
+		table_ars_trackers_sessions->setColumnCount(3);
 		table_ars_trackers_sessions->setRowCount(0);
 		table_ars_trackers_sessions->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		table_ars_trackers_sessions->setSelectionMode(QAbstractItemView::NoSelection);
 		table_ars_trackers_sessions->setAlternatingRowColors(true);
+		table_ars_trackers_sessions->setWordWrap(true);
+		table_ars_trackers_sessions->setTextElideMode(Qt::ElideNone);
 		table_ars_trackers_sessions->verticalHeader()->setVisible(false);
-		table_ars_trackers_sessions->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+		table_ars_trackers_sessions->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+		table_ars_trackers_sessions->horizontalHeader()->setStretchLastSection(false);
+		table_ars_trackers_sessions->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+		table_ars_trackers_sessions->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+		table_ars_trackers_sessions->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 		table_ars_trackers_sessions->setHorizontalHeaderLabels(
-				QStringList() << "Session" << "Trackers" << "Count" << "Status" << "Actions");
-		gridLayout_ars_trackers->addWidget(table_ars_trackers_sessions, 6, 0, 1, 1);
+				QStringList() << "Session" << "Trackers" << "Actions");
+		table_ars_trackers_sessions->setMinimumWidth(520);
 
 		lbl_ars_trackers_download_progress_detail = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_download_progress_detail->setObjectName(
 				"lbl_ars_trackers_download_progress_detail");
+		lbl_ars_trackers_download_progress_detail->setWordWrap(true);
+		lbl_ars_trackers_download_progress_detail->setAlignment(Qt::AlignLeft | Qt::AlignTop);
 		lbl_ars_trackers_download_progress_detail->setText("No active download");
-		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_download_progress_detail, 7, 0, 1, 1);
+		QScrollArea *ars_trackers_download_progress_scroll = new QScrollArea(tab_ars_trackers);
+		ars_trackers_download_progress_scroll->setObjectName(
+				"ars_trackers_download_progress_scroll");
+		ars_trackers_download_progress_scroll->setWidgetResizable(true);
+		ars_trackers_download_progress_scroll->setHorizontalScrollBarPolicy(
+				Qt::ScrollBarAlwaysOff);
+		ars_trackers_download_progress_scroll->setVerticalScrollBarPolicy(
+				Qt::ScrollBarAsNeeded);
+		QWidget *ars_trackers_download_progress_scroll_content =
+				new QWidget(ars_trackers_download_progress_scroll);
+		QVBoxLayout *ars_trackers_download_progress_scroll_layout =
+				new QVBoxLayout(ars_trackers_download_progress_scroll_content);
+		ars_trackers_download_progress_scroll_layout->setContentsMargins(4, 4, 4, 4);
+		ars_trackers_download_progress_scroll_layout->setSpacing(0);
+		ars_trackers_download_progress_scroll_layout->addWidget(
+				lbl_ars_trackers_download_progress_detail);
+		ars_trackers_download_progress_scroll_layout->addStretch(1);
+		ars_trackers_download_progress_scroll->setWidget(
+				ars_trackers_download_progress_scroll_content);
+		const QFontMetrics trackers_progress_fm(
+				lbl_ars_trackers_download_progress_detail->font());
+		const int trackers_progress_detail_lines = 12;
+		const int trackers_progress_detail_max_height =
+				(trackers_progress_fm.lineSpacing() * trackers_progress_detail_lines) + 12;
+		ars_trackers_download_progress_scroll->setMaximumHeight(
+				trackers_progress_detail_max_height);
+		ars_trackers_download_progress_scroll->setMinimumHeight(
+				trackers_progress_detail_max_height);
 
 		progress_ars_trackers_download = new QProgressBar(tab_ars_trackers);
 		progress_ars_trackers_download->setObjectName("progress_ars_trackers_download");
 		progress_ars_trackers_download->setRange(0, 100);
 		progress_ars_trackers_download->setValue(0);
-		gridLayout_ars_trackers->addWidget(progress_ars_trackers_download, 8, 0, 1, 1);
 
 		QHBoxLayout *trackers_download_progress_actions_layout = new QHBoxLayout();
 		trackers_download_progress_actions_layout->addStretch(1);
@@ -6697,12 +6729,39 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		btn_ars_trackers_cancel_download->setText("Cancel");
 		btn_ars_trackers_cancel_download->setEnabled(true);
 		trackers_download_progress_actions_layout->addWidget(btn_ars_trackers_cancel_download);
-		gridLayout_ars_trackers->addLayout(trackers_download_progress_actions_layout, 9, 0, 1, 1);
 
 		lbl_ars_trackers_status = new QLabel(tab_ars_trackers);
 		lbl_ars_trackers_status->setObjectName("lbl_ars_trackers_status");
 		lbl_ars_trackers_status->setText("Waiting for trackers...");
-		gridLayout_ars_trackers->addWidget(lbl_ars_trackers_status, 10, 0, 1, 1);
+		QHBoxLayout *trackers_bottom_columns_layout = new QHBoxLayout();
+		trackers_bottom_columns_layout->setObjectName("trackers_bottom_columns_layout");
+		trackers_bottom_columns_layout->setSpacing(10);
+
+		QVBoxLayout *trackers_sessions_column_layout = new QVBoxLayout();
+		trackers_sessions_column_layout->setObjectName("trackers_sessions_column_layout");
+		trackers_sessions_column_layout->setSpacing(6);
+		trackers_sessions_column_layout->addWidget(lbl_sessions_title);
+		trackers_sessions_column_layout->addLayout(sessions_destination_layout);
+		trackers_sessions_column_layout->addLayout(sessions_controls_layout);
+		trackers_sessions_column_layout->addWidget(table_ars_trackers_sessions, 1);
+		trackers_sessions_column_layout->addWidget(ars_trackers_download_progress_scroll);
+		trackers_sessions_column_layout->addWidget(progress_ars_trackers_download);
+		trackers_sessions_column_layout->addLayout(trackers_download_progress_actions_layout);
+
+		QVBoxLayout *trackers_connected_column_layout = new QVBoxLayout();
+		trackers_connected_column_layout->setObjectName("trackers_connected_column_layout");
+		trackers_connected_column_layout->setSpacing(6);
+		trackers_connected_column_layout->addLayout(trackers_header_layout);
+		trackers_connected_column_layout->addWidget(table_ars_trackers, 1);
+		trackers_connected_column_layout->addWidget(lbl_ars_trackers_status);
+
+		trackers_bottom_columns_layout->addLayout(trackers_sessions_column_layout, 3);
+		trackers_bottom_columns_layout->addLayout(trackers_connected_column_layout, 7);
+
+		gridLayout_ars_trackers->addWidget(trackers_primary_actions_panel, 0, 0, 1, 1);
+		gridLayout_ars_trackers->addLayout(trackers_bottom_columns_layout, 1, 0, 1, 1);
+		gridLayout_ars_trackers->setRowStretch(0, 0);
+		gridLayout_ars_trackers->setRowStretch(1, 1);
 
 		timer_ars_trackers_table_refresh = new QTimer(this);
 		timer_ars_trackers_table_refresh->setSingleShot(true);
@@ -13614,55 +13673,19 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 				{
 						const ars_tracker_session_presence_t &presence =
 								ars_trackers_sessions_presence_map[session];
-						QString status = "Single tracker";
-						bool has_complete_pair = false;
-						QSet<QString> pair_right;
-						QSet<QString> pair_left;
-						for (const QString &serial : presence.trackerSerials)
-						{
-								ars_tracker_serial_parts_t parts =
-										ars_tracker_utils::parse_serial_parts(serial);
-								if (parts.valid)
-								{
-										if (parts.isRight)
-										{
-												pair_right.insert(parts.pairId);
-										}
-										else if (parts.isLeft)
-										{
-												pair_left.insert(parts.pairId);
-										}
-								}
-						}
-						for (const QString &pair_id : pair_right)
-						{
-								if (pair_left.contains(pair_id))
-								{
-										has_complete_pair = true;
-										break;
-								}
-						}
-						if (presence.trackerDisplays.size() > 1)
-						{
-								status = has_complete_pair ? "Complete pair" : "Partial";
-						}
-
 						QTableWidgetItem *session_item =
 								new QTableWidgetItem(ars_tracker_utils::format_session_display_name(session));
 						session_item->setData(Qt::UserRole, session);
 						table_ars_trackers_sessions->setItem(row, 0, session_item);
+						QStringList trackers_multiline = presence.trackerDisplays;
+						std::sort(trackers_multiline.begin(), trackers_multiline.end(),
+											[](const QString &a, const QString &b) {
+													return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+											});
 						table_ars_trackers_sessions->setItem(
-								row, 1, new QTableWidgetItem(presence.trackerDisplays.join(", ")));
-						table_ars_trackers_sessions->setItem(
-								row, 2, new QTableWidgetItem(QString::number(presence.trackerDisplays.size())));
-						if (ars_trackers_session_download_running &&
-								session == ars_trackers_session_download_name)
-						{
-								status = "Downloading...";
-						}
-						table_ars_trackers_sessions->setItem(row, 3, new QTableWidgetItem(status));
+								row, 1, new QTableWidgetItem(trackers_multiline.join(", ")));
 						QWidget *actions_cell = new QWidget(table_ars_trackers_sessions);
-						QHBoxLayout *actions_layout = new QHBoxLayout(actions_cell);
+						QVBoxLayout *actions_layout = new QVBoxLayout(actions_cell);
 						actions_layout->setContentsMargins(2, 2, 2, 2);
 						actions_layout->setSpacing(4);
 						QPushButton *download_btn = new QPushButton("Download");
@@ -13671,7 +13694,7 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 								presence.ports.isEmpty() == false);
 						connect(download_btn, &QPushButton::clicked, this,
 										[this, session]() { on_ars_trackers_session_download_clicked(session); });
-						QPushButton *delete_btn = new QPushButton("Delete...");
+						QPushButton *delete_btn = new QPushButton("Delete");
 						delete_btn->setEnabled(
 								ui_output.perSessionActionsEnabled &&
 								presence.ports.isEmpty() == false);
@@ -13679,10 +13702,11 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 										[this, session]() { on_ars_trackers_session_delete_clicked(session); });
 						actions_layout->addWidget(download_btn);
 						actions_layout->addWidget(delete_btn);
-						actions_layout->addStretch(1);
-						table_ars_trackers_sessions->setCellWidget(row, 4, actions_cell);
+						table_ars_trackers_sessions->setCellWidget(row, 2, actions_cell);
 						row++;
 				}
+				table_ars_trackers_sessions->resizeColumnToContents(2);
+				table_ars_trackers_sessions->resizeRowsToContents();
 		}
 
 		if (lbl_ars_trackers_sessions_status != nullptr)

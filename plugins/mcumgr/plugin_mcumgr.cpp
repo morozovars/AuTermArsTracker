@@ -6519,7 +6519,7 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 		trackers_primary_top_layout->addStretch(1);
 		QHBoxLayout *trackers_primary_buttons_layout = new QHBoxLayout();
 		trackers_primary_buttons_layout->setSpacing(10);
-		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_reset_all);
+		trackers_primary_buttons_layout->setAlignment(Qt::AlignVCenter);
 		btn_ars_trackers_start_session = new QPushButton(trackers_primary_actions_panel);
 		btn_ars_trackers_start_session->setObjectName("btn_ars_trackers_start_session");
 		btn_ars_trackers_start_session->setText("Start all trackers");
@@ -6564,6 +6564,23 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				"QPushButton:pressed { background-color: #a72f29; }"
 				"QPushButton:disabled { background-color: #d8a6a2; color: #fff1f0; }");
 		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_stop_session);
+		btn_ars_trackers_reset_all->setMinimumHeight(46);
+		btn_ars_trackers_reset_all->setMinimumWidth(150);
+		QFont reset_btn_font = btn_ars_trackers_reset_all->font();
+		reset_btn_font.setBold(true);
+		btn_ars_trackers_reset_all->setFont(reset_btn_font);
+		btn_ars_trackers_reset_all->setStyleSheet(
+				"QPushButton {"
+				"  background-color: #e8edf4;"
+				"  color: #1f2937;"
+				"  border: 1px solid #b8c3d1;"
+				"  border-radius: 6px;"
+				"  padding: 8px 14px;"
+				"}"
+				"QPushButton:hover { background-color: #dfe6ef; }"
+				"QPushButton:pressed { background-color: #d1dbe8; }"
+				"QPushButton:disabled { background-color: #edf1f6; color: #8a97a8; }");
+		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_reset_all);
 		trackers_primary_top_layout->addLayout(trackers_primary_buttons_layout);
 		trackers_primary_actions_layout->addLayout(trackers_primary_top_layout);
 		trackers_primary_actions_panel->setMinimumWidth(320);

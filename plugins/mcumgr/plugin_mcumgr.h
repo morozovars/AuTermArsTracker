@@ -499,6 +499,7 @@ private slots:
     void on_btn_ars_trackers_sessions_refresh_clicked();
     void on_btn_ars_trackers_start_session_clicked();
     void on_btn_ars_trackers_stop_session_clicked();
+    void on_btn_ars_trackers_refresh_info_clicked();
     void on_btn_ars_trackers_reset_all_clicked();
     void on_btn_ars_trackers_cancel_download_clicked();
     void on_btn_ars_trackers_delete_all_sessions_clicked();
@@ -678,6 +679,7 @@ private:
     void start_next_ars_tracker_lightweight_telemetry_command();
     void handle_ars_tracker_lightweight_telemetry_timeout();
     void finish_ars_tracker_lightweight_telemetry_command();
+    void update_ars_trackers_refresh_info_button_state();
     void store_ars_tracker_lightweight_telemetry_response(
             ars_tracker_device_t *device,
             ars_tracker_lightweight_telemetry_command_t command, group_status status,
@@ -1116,6 +1118,7 @@ private:
     QPushButton *btn_ars_trackers_sessions_refresh = nullptr;
     QPushButton *btn_ars_trackers_start_session = nullptr;
     QPushButton *btn_ars_trackers_stop_session = nullptr;
+    QPushButton *btn_ars_trackers_refresh_info = nullptr;
     QPushButton *btn_ars_trackers_reset_all = nullptr;
     QPushButton *btn_ars_trackers_delete_all_sessions = nullptr;
     QPushButton *btn_ars_trackers_download_all_sessions = nullptr;
@@ -1331,6 +1334,7 @@ private:
     QHash<QString, qint64> ars_trackers_route_diag_last_ms_by_port;
     QSet<QString> ars_trackers_active_download_ports;
     QSet<QString> ars_trackers_pending_post_download_telemetry_ports;
+    QSet<QString> ars_trackers_manual_refresh_pending_ports;
     QHash<QString, qint64> ars_mt_tracker_start_ms_by_port;
     QHash<QString, quint64> ars_mt_tracker_bytes_by_port;
     QHash<QString, int> ars_mt_tracker_files_downloaded_by_port;

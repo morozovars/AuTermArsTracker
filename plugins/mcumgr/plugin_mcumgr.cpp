@@ -6564,6 +6564,27 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				"QPushButton:pressed { background-color: #a72f29; }"
 				"QPushButton:disabled { background-color: #d8a6a2; color: #fff1f0; }");
 		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_stop_session);
+		btn_ars_trackers_refresh_info = new QPushButton(trackers_primary_actions_panel);
+		btn_ars_trackers_refresh_info->setObjectName("btn_ars_trackers_refresh_info");
+		btn_ars_trackers_refresh_info->setText("Refresh tracker info");
+		btn_ars_trackers_refresh_info->setEnabled(true);
+		btn_ars_trackers_refresh_info->setMinimumHeight(46);
+		btn_ars_trackers_refresh_info->setMinimumWidth(180);
+		QFont refresh_btn_font = btn_ars_trackers_refresh_info->font();
+		refresh_btn_font.setBold(true);
+		btn_ars_trackers_refresh_info->setFont(refresh_btn_font);
+		btn_ars_trackers_refresh_info->setStyleSheet(
+				"QPushButton {"
+				"  background-color: #e8edf4;"
+				"  color: #1f2937;"
+				"  border: 1px solid #b8c3d1;"
+				"  border-radius: 6px;"
+				"  padding: 8px 14px;"
+				"}"
+				"QPushButton:hover { background-color: #dfe6ef; }"
+				"QPushButton:pressed { background-color: #d1dbe8; }"
+				"QPushButton:disabled { background-color: #edf1f6; color: #8a97a8; }");
+		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_refresh_info);
 		btn_ars_trackers_reset_all->setMinimumHeight(46);
 		btn_ars_trackers_reset_all->setMinimumWidth(150);
 		QFont reset_btn_font = btn_ars_trackers_reset_all->font();
@@ -6669,6 +6690,8 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				btn_ars_trackers_start_session->setEnabled(true);
 		if (btn_ars_trackers_stop_session != nullptr)
 				btn_ars_trackers_stop_session->setEnabled(true);
+		if (btn_ars_trackers_refresh_info != nullptr)
+				btn_ars_trackers_refresh_info->setEnabled(true);
 		if (btn_ars_trackers_download_all_sessions != nullptr)
 				btn_ars_trackers_download_all_sessions->setEnabled(true);
 		if (btn_ars_trackers_delete_all_sessions != nullptr)
@@ -6901,6 +6924,8 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 						&plugin_mcumgr::on_btn_ars_trackers_start_session_clicked);
 		connect(btn_ars_trackers_stop_session, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked);
+		connect(btn_ars_trackers_refresh_info, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_refresh_info_clicked);
 		connect(btn_ars_trackers_reset_all, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_reset_all_clicked);
 		connect(btn_ars_trackers_cancel_download, &QPushButton::clicked, this,
@@ -7950,8 +7975,62 @@ void plugin_mcumgr::finish_ars_tracker_lightweight_telemetry_command()
 		ars_tracker_lightweight_telemetry_active_port.clear();
 		ars_tracker_lightweight_telemetry_active_serial.clear();
 		ars_tracker_lightweight_telemetry_active_command = ARS_TRACKER_LIGHT_TELEMETRY_STATUS;
+		if (ars_trackers_manual_refresh_pending_ports.isEmpty() == false)
+		{
+				QStringList done_ports;
+				for (const QString &port : ars_trackers_manual_refresh_pending_ports)
+				{
+						bool has_pending_for_port = false;
+						if (ars_tracker_lightweight_telemetry_active &&
+								ars_tracker_lightweight_telemetry_active_port.compare(
+										port, Qt::CaseInsensitive) == 0)
+						{
+								has_pending_for_port = true;
+						}
+						if (!has_pending_for_port)
+						{
+								for (const ars_tracker_lightweight_telemetry_request_t &queued :
+										 ars_tracker_lightweight_telemetry_queue)
+								{
+										if (queued.portName.compare(port, Qt::CaseInsensitive) == 0)
+										{
+												has_pending_for_port = true;
+												break;
+										}
+								}
+						}
+						if (!has_pending_for_port)
+						{
+								done_ports.append(port);
+						}
+				}
+				for (const QString &port : done_ports)
+				{
+						ars_trackers_manual_refresh_pending_ports.remove(port);
+				}
+		}
+		update_ars_trackers_refresh_info_button_state();
 		QTimer::singleShot(0, this,
 											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+}
+
+void plugin_mcumgr::update_ars_trackers_refresh_info_button_state()
+{
+		if (btn_ars_trackers_refresh_info == nullptr)
+		{
+				return;
+		}
+		int connected_trackers = 0;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.connected && device.serialPort != nullptr && device.serialPort->isOpen())
+				{
+						connected_trackers++;
+				}
+		}
+		const bool enabled = (connected_trackers > 0) &&
+												 ars_trackers_manual_refresh_pending_ports.isEmpty();
+		btn_ars_trackers_refresh_info->setEnabled(enabled);
 }
 
 void plugin_mcumgr::handle_ars_tracker_lightweight_telemetry_timeout()
@@ -11232,6 +11311,48 @@ void plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked()
 		start_ars_trackers_sessions_refresh();
 }
 
+void plugin_mcumgr::on_btn_ars_trackers_refresh_info_clicked()
+{
+		int connected_trackers = 0;
+		int queued_trackers = 0;
+		for (ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (!device.connected || device.serialPort == nullptr || !device.serialPort->isOpen())
+				{
+						continue;
+				}
+				connected_trackers++;
+				device.telemetryRefreshing = false;
+				ars_trackers_manual_refresh_pending_ports.insert(device.portName);
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device.portName, device.serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_STATUS,
+						"user-trackers-refresh-info");
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device.portName, device.serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO,
+						"user-trackers-refresh-info");
+				enqueue_ars_tracker_lightweight_telemetry_request(
+						device.portName, device.serialNumber, ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO,
+						"user-trackers-refresh-info");
+				queued_trackers++;
+		}
+		if (connected_trackers == 0)
+		{
+				if (lbl_ars_trackers_status != nullptr)
+				{
+						lbl_ars_trackers_status->setText("Refresh tracker info ignored: no connected trackers");
+				}
+				return;
+		}
+		if (lbl_ars_trackers_status != nullptr)
+		{
+				lbl_ars_trackers_status->setText(
+						QString("Refreshing tracker info: %1 tracker(s)").arg(queued_trackers));
+		}
+		update_ars_trackers_refresh_info_button_state();
+		QTimer::singleShot(0, this,
+											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
+}
+
 void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 {
 		normalize_ars_trackers_loading_state("on_btn_ars_trackers_start_session_clicked");
@@ -13836,6 +13957,7 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 				btn_ars_trackers_start_session->setEnabled(ui_output.startSessionEnabled);
 		if (btn_ars_trackers_stop_session != nullptr)
 				btn_ars_trackers_stop_session->setEnabled(ui_output.stopSessionEnabled);
+		update_ars_trackers_refresh_info_button_state();
 		if (btn_ars_trackers_download_all_sessions != nullptr)
 				btn_ars_trackers_download_all_sessions->setEnabled(ui_output.downloadAllSessionsEnabled);
 		if (btn_ars_trackers_delete_all_sessions != nullptr)

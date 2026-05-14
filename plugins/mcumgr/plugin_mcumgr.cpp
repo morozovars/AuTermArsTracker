@@ -8450,11 +8450,16 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 						cell_timer.start();
 				}
 				QWidget *cell = new QWidget(table_ars_trackers);
+				const QString status_background =
+						item.status_color.trimmed().isEmpty() ? QString("#f3f3f3") : item.status_color;
+				cell->setStyleSheet(QString("background-color: %1; border: none;")
+															.arg(status_background));
 				QVBoxLayout *layout = new QVBoxLayout(cell);
 				layout->setContentsMargins(4, 3, 4, 3);
 				layout->setSpacing(2);
 
 				QLabel *name_label = new QLabel(item.display_name, cell);
+				name_label->setStyleSheet("color: #ffffff; background: transparent; border: none;");
 				QFont bold_font = name_label->font();
 				bold_font.setBold(true);
 				name_label->setFont(bold_font);
@@ -8488,12 +8493,15 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 						cell);
 				QLabel *status_label = new QLabel(
 						QString("Status: %1").arg(status_value), cell);
-				status_label->setStyleSheet(QString("color: %1;").arg(item.status_color));
 				QLabel *mem_label = new QLabel(
 						QString("Memory: %1").arg(item.memory_text.isEmpty() ?
 								QString("-") :
 								memory_value),
 						cell);
+				com_label->setStyleSheet("color: #ffffff; background: transparent; border: none;");
+				bat_label->setStyleSheet("color: #ffffff; background: transparent; border: none;");
+				status_label->setStyleSheet("color: #ffffff; background: transparent; border: none;");
+				mem_label->setStyleSheet("color: #ffffff; background: transparent; border: none;");
 
 				grid->addWidget(com_label, 0, 0);
 				grid->addWidget(bat_label, 0, 1);
@@ -8524,13 +8532,14 @@ void plugin_mcumgr::refresh_ars_trackers_table_from_devices()
 		auto make_placeholder_cell_widget =
 				[this](const QString &text) -> QWidget * {
 				QWidget *cell = new QWidget(table_ars_trackers);
+				cell->setStyleSheet("background-color: #f3f3f3; border: none;");
 				QVBoxLayout *layout = new QVBoxLayout(cell);
 				layout->setContentsMargins(4, 3, 4, 3);
 				layout->setSpacing(2);
 				QStringList parts = text.split(':');
 				QString side = parts.size() > 0 ? parts.first().trimmed() : "Side";
 				QLabel *label = new QLabel(QString("%1:\nNot connected").arg(side), cell);
-				label->setStyleSheet("color: #808080;");
+				label->setStyleSheet("color: #1f1f1f; background: transparent; border: none;");
 				layout->addWidget(label);
 				layout->addStretch(1);
 				return cell;

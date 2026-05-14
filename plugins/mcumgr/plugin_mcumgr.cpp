@@ -7668,6 +7668,56 @@ bool plugin_mcumgr::startFirmwareUpdateForTracker(const QString &portName,
 		return true;
 }
 
+bool plugin_mcumgr::requestTrackerFirmwareVersionForPort(const QString &portName,
+																												 QString *errorMessage)
+{
+		if (errorMessage != nullptr)
+		{
+				errorMessage->clear();
+		}
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(portName);
+		if (device == nullptr || !device->connected || device->serialPort == nullptr ||
+				!device->serialPort->isOpen() || device->imgMgmt == nullptr ||
+				device->processor == nullptr || device->transport == nullptr)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Tracker is not connected.";
+				}
+				return false;
+		}
+		if (ars_tracker_firmware_upload_active || ars_tracker_firmware_erase_active)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Firmware operation is in progress.";
+				}
+				return false;
+		}
+		device->processor->set_transport(device->transport);
+		ars_tracker_persistent_info_refresh_port = device->portName;
+		set_group_transport_settings_for_transport(
+				device->imgMgmt, device->transport, ACTION_ARS_TRACKER_FIRMWARE_STATE);
+		bool started = device->imgMgmt->start_image_get(&device->imageStateList);
+		if (!started && errorMessage != nullptr)
+		{
+				*errorMessage = "Failed to start image get request.";
+		}
+		return started;
+}
+
+bool plugin_mcumgr::isTrackerConnectedForBulkFirmwareUpdate(const QString &portName) const
+{
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (device.portName.compare(portName, Qt::CaseInsensitive) == 0)
+				{
+						return device.connected && device.serialPort != nullptr && device.serialPort->isOpen();
+				}
+		}
+		return false;
+}
+
 void plugin_mcumgr::setTrackersBulkFirmwareUpdateActive(bool active)
 {
 		ars_trackers_bulk_firmware_update_running = active;
@@ -14179,6 +14229,8 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 		if (btn_ars_trackers_firmware_update != nullptr)
 				btn_ars_trackers_firmware_update->setEnabled(
 						!ars_trackers_bulk_firmware_update_running && connected_trackers_count > 0);
+		if (btn_ars_trackers_reset_all != nullptr)
+				btn_ars_trackers_reset_all->setEnabled(!ars_trackers_bulk_firmware_update_running);
 		if (btn_ars_trackers_download_all_sessions != nullptr)
 				btn_ars_trackers_download_all_sessions->setEnabled(ui_output.downloadAllSessionsEnabled);
 		if (btn_ars_trackers_delete_all_sessions != nullptr)
@@ -17877,9 +17929,41 @@ void plugin_mcumgr::handle_ars_tracker_persistent_img_status(uint8_t user_data,
 				{
 						log_warning() << "ArsTracker persistent tracker info refresh failed port="
 													<< device->portName << "reason=" << error_string;
+						emit trackersFirmwareVersionResolved(
+								device->portName, false, QString(),
+								error_string.isEmpty() ? QString("Failed to load firmware version") : error_string);
 				}
 				ars_tracker->handle_tracker_firmware_state_response(
 						status, error_string, device->imageStateList);
+				if (status == STATUS_COMPLETE)
+				{
+						QString current_version;
+						for (const image_state_t &img : device->imageStateList)
+						{
+								if (img.image != 0)
+								{
+										continue;
+								}
+								for (const slot_state_t &slot : img.slot_list)
+								{
+										if (slot.slot == 0)
+										{
+												current_version = QString::fromUtf8(slot.version).trimmed();
+												break;
+										}
+								}
+								if (!current_version.isEmpty())
+								{
+										break;
+								}
+						}
+						if (current_version.isEmpty())
+						{
+								current_version = "Unknown";
+						}
+						emit trackersFirmwareVersionResolved(
+								device->portName, true, current_version, QString());
+				}
 				return;
 		}
 

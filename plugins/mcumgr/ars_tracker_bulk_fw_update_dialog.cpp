@@ -11,6 +11,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "ars_tracker_bulk_fw_update_worker.h"
@@ -25,14 +26,15 @@ ArsTrackerBulkFwUpdateDialog::ArsTrackerBulkFwUpdateDialog(plugin_mcumgr *plugin
     QVBoxLayout *main_layout = new QVBoxLayout(this);
 
     table_trackers = new QTableWidget(this);
-    table_trackers->setColumnCount(5);
+    table_trackers->setColumnCount(6);
     table_trackers->setHorizontalHeaderLabels(
-        QStringList() << "Use" << "Tracker" << "Serial" << "Port" << "Status");
+        QStringList() << "Use" << "Tracker" << "Serial" << "Port" << "Current firmware" << "Status");
     table_trackers->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table_trackers->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     table_trackers->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     table_trackers->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    table_trackers->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    table_trackers->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    table_trackers->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
     table_trackers->verticalHeader()->setVisible(false);
     table_trackers->setSelectionMode(QAbstractItemView::NoSelection);
     table_trackers->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -77,8 +79,15 @@ ArsTrackerBulkFwUpdateDialog::ArsTrackerBulkFwUpdateDialog(plugin_mcumgr *plugin
             &ArsTrackerBulkFwUpdateDialog::onCurrentTrackerChanged);
     connect(worker, &ArsTrackerBulkFwUpdateWorker::finishedSummary, this,
             &ArsTrackerBulkFwUpdateDialog::onFinishedSummary);
+    connect(plugin_mcumgr_instance, &plugin_mcumgr::trackersFirmwareVersionResolved, this,
+            &ArsTrackerBulkFwUpdateDialog::onFirmwareVersionResolved);
+    install_reconnect_check_timer = new QTimer(this);
+    install_reconnect_check_timer->setInterval(1000);
+    connect(install_reconnect_check_timer, &QTimer::timeout, this,
+            &ArsTrackerBulkFwUpdateDialog::onInstallReconnectCheckTimer);
 
     populateTrackers();
+    requestNextFirmwareVersion();
 }
 
 void ArsTrackerBulkFwUpdateDialog::populateTrackers()
@@ -104,10 +113,31 @@ void ArsTrackerBulkFwUpdateDialog::populateTrackers()
         table_trackers->setItem(i, 1, new QTableWidgetItem(target.displayName));
         table_trackers->setItem(i, 2, new QTableWidgetItem(target.serialNumber));
         table_trackers->setItem(i, 3, new QTableWidgetItem(target.portName));
+        table_trackers->setItem(i, 4, new QTableWidgetItem("Loading..."));
         table_trackers->setItem(
-            i, 4, new QTableWidgetItem(ars_tracker_bulk_fw_status_text(ARS_TRACKER_BULK_FW_PENDING)));
+            i, 5, new QTableWidgetItem(ars_tracker_bulk_fw_status_text(ARS_TRACKER_BULK_FW_PENDING)));
+        firmware_version_request_queue.append(target.portName);
     }
     table_trackers->resizeRowsToContents();
+}
+
+void ArsTrackerBulkFwUpdateDialog::requestNextFirmwareVersion()
+{
+    if (firmware_version_request_active || plugin_mcumgr_instance == nullptr)
+    {
+        return;
+    }
+    if (firmware_version_request_queue.isEmpty())
+    {
+        return;
+    }
+    firmware_version_request_active = true;
+    const QString port = firmware_version_request_queue.takeFirst();
+    QString error;
+    if (!plugin_mcumgr_instance->requestTrackerFirmwareVersionForPort(port, &error))
+    {
+        onFirmwareVersionResolved(port, false, QString(), error.isEmpty() ? QString("Unknown") : error);
+    }
 }
 
 QVector<ArsTrackerBulkFwTarget> ArsTrackerBulkFwUpdateDialog::selectedTargets() const
@@ -189,9 +219,9 @@ void ArsTrackerBulkFwUpdateDialog::onUpdateClicked()
 
     for (int row = 0; row < table_trackers->rowCount(); ++row)
     {
-        if (table_trackers->item(row, 4) != nullptr)
+        if (table_trackers->item(row, 5) != nullptr)
         {
-            table_trackers->item(row, 4)->setText(
+            table_trackers->item(row, 5)->setText(
                 ars_tracker_bulk_fw_status_text(ARS_TRACKER_BULK_FW_PENDING));
         }
     }
@@ -221,9 +251,19 @@ void ArsTrackerBulkFwUpdateDialog::onTrackerStatusChanged(const QString &portNam
                                                           const QString &message)
 {
     const int row = rowForPort(portName);
-    if (row >= 0 && table_trackers->item(row, 4) != nullptr)
+    if (row >= 0 && table_trackers->item(row, 5) != nullptr)
     {
-        table_trackers->item(row, 4)->setText(message);
+        table_trackers->item(row, 5)->setText(message);
+    }
+    if (status == ARS_TRACKER_BULK_FW_SUCCESS)
+    {
+        ports_installing.insert(portName);
+        ports_reconnected_after_install.remove(portName);
+        ports_waiting_delayed_version_query.remove(portName);
+        if (install_reconnect_check_timer != nullptr && !install_reconnect_check_timer->isActive())
+        {
+            install_reconnect_check_timer->start();
+        }
     }
 }
 
@@ -257,4 +297,86 @@ void ArsTrackerBulkFwUpdateDialog::onFinishedSummary(int successCount, int faile
             .arg(successCount)
             .arg(failedCount)
             .arg(cancelledCount));
+}
+
+void ArsTrackerBulkFwUpdateDialog::onFirmwareVersionResolved(const QString &portName, bool success,
+                                                             const QString &version,
+                                                             const QString &message)
+{
+    const int row = rowForPort(portName);
+    if (row >= 0 && table_trackers->item(row, 4) != nullptr)
+    {
+        if (success)
+        {
+            table_trackers->item(row, 4)->setText(version.trimmed().isEmpty() ? "Unknown" : version);
+        }
+        else
+        {
+            const bool expected_install_reconnect =
+                ports_installing.contains(portName) && !ports_reconnected_after_install.contains(portName);
+            if (!expected_install_reconnect)
+            {
+                table_trackers->item(row, 4)->setText(
+                    message.trimmed().isEmpty() ? "Error: Unknown" : QString("Error: %1").arg(message));
+            }
+        }
+    }
+    if (success && ports_installing.contains(portName))
+    {
+        if (row >= 0 && table_trackers->item(row, 5) != nullptr)
+        {
+            table_trackers->item(row, 5)->setText("Firmware successfully loaded");
+        }
+        ports_installing.remove(portName);
+        ports_waiting_delayed_version_query.remove(portName);
+        ports_reconnected_after_install.remove(portName);
+    }
+    firmware_version_request_active = false;
+    requestNextFirmwareVersion();
+}
+
+void ArsTrackerBulkFwUpdateDialog::onInstallReconnectCheckTimer()
+{
+    if (ports_installing.isEmpty())
+    {
+        if (install_reconnect_check_timer != nullptr)
+        {
+            install_reconnect_check_timer->stop();
+        }
+        return;
+    }
+    if (plugin_mcumgr_instance == nullptr)
+    {
+        return;
+    }
+
+    const QStringList ports = ports_installing.values();
+    for (const QString &port : ports)
+    {
+        if (!plugin_mcumgr_instance->isTrackerConnectedForBulkFirmwareUpdate(port))
+        {
+            continue;
+        }
+        ports_reconnected_after_install.insert(port);
+        if (ports_waiting_delayed_version_query.contains(port))
+        {
+            continue;
+        }
+        ports_waiting_delayed_version_query.insert(port);
+        QTimer::singleShot(3000, this, [this, port]() {
+            if (!ports_installing.contains(port) || plugin_mcumgr_instance == nullptr)
+            {
+                ports_waiting_delayed_version_query.remove(port);
+                return;
+            }
+            QString error;
+            if (!plugin_mcumgr_instance->requestTrackerFirmwareVersionForPort(port, &error))
+            {
+                onFirmwareVersionResolved(port, false, QString(),
+                                          error.isEmpty() ? QString("Failed to load firmware version")
+                                                          : error);
+            }
+            ports_waiting_delayed_version_query.remove(port);
+        });
+    }
 }

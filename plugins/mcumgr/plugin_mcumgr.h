@@ -393,6 +393,8 @@ public:
     bool canStartTrackersBulkFirmwareUpdate() const;
     bool startFirmwareUpdateForTracker(const QString &portName, const QString &firmwareFile,
                                        QString *errorMessage);
+    bool requestTrackerFirmwareVersionForPort(const QString &portName, QString *errorMessage);
+    bool isTrackerConnectedForBulkFirmwareUpdate(const QString &portName) const;
     void setTrackersBulkFirmwareUpdateActive(bool active);
     bool isTrackersBulkFirmwareUpdateActive() const;
 
@@ -410,6 +412,8 @@ signals:
                                         const QString &message);
     void trackersFirmwareUpdateFinished(const QString &portName, bool success,
                                         const QString &message);
+    void trackersFirmwareVersionResolved(const QString &portName, bool success,
+                                         const QString &version, const QString &message);
 
 private slots:
     void serial_receive(QByteArray *data);

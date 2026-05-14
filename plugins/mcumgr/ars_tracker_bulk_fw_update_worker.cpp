@@ -133,9 +133,8 @@ void ArsTrackerBulkFwUpdateWorker::onPluginFirmwareFinished(const QString &portN
     if (success)
     {
         success_count++;
-        emit trackerStatusChanged(portName, ARS_TRACKER_BULK_FW_SUCCESS,
-                                  ars_tracker_bulk_fw_status_text(ARS_TRACKER_BULK_FW_SUCCESS));
-        emit trackerProgressChanged(portName, 100, "Firmware successfully loaded");
+        emit trackerStatusChanged(portName, ARS_TRACKER_BULK_FW_SUCCESS, "Loaded, installing");
+        emit trackerProgressChanged(portName, 100, "Loaded, installing");
     }
     else
     {
@@ -147,4 +146,3 @@ void ArsTrackerBulkFwUpdateWorker::onPluginFirmwareFinished(const QString &portN
 
     QTimer::singleShot(0, this, &ArsTrackerBulkFwUpdateWorker::startNext);
 }
-

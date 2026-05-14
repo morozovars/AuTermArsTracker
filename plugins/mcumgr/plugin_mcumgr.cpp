@@ -38,6 +38,7 @@
 #include <QLocale>
 #include <QStandardPaths>
 #include "plugin_mcumgr.h"
+#include "ars_tracker_bulk_fw_update_dialog.h"
 #include "ars_tracker_parser.h"
 #include "ars_tracker_utils.h"
 #include "ars_trackers_ui_state.h"
@@ -6602,6 +6603,27 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 				"QPushButton:pressed { background-color: #d1dbe8; }"
 				"QPushButton:disabled { background-color: #edf1f6; color: #8a97a8; }");
 		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_reset_all);
+		btn_ars_trackers_firmware_update = new QPushButton(trackers_primary_actions_panel);
+		btn_ars_trackers_firmware_update->setObjectName("btn_ars_trackers_firmware_update");
+		btn_ars_trackers_firmware_update->setText("Firmware update");
+		btn_ars_trackers_firmware_update->setEnabled(true);
+		btn_ars_trackers_firmware_update->setMinimumHeight(46);
+		btn_ars_trackers_firmware_update->setMinimumWidth(170);
+		QFont fw_btn_font = btn_ars_trackers_firmware_update->font();
+		fw_btn_font.setBold(true);
+		btn_ars_trackers_firmware_update->setFont(fw_btn_font);
+		btn_ars_trackers_firmware_update->setStyleSheet(
+				"QPushButton {"
+				"  background-color: #e8edf4;"
+				"  color: #1f2937;"
+				"  border: 1px solid #b8c3d1;"
+				"  border-radius: 6px;"
+				"  padding: 8px 14px;"
+				"}"
+				"QPushButton:hover { background-color: #dfe6ef; }"
+				"QPushButton:pressed { background-color: #d1dbe8; }"
+				"QPushButton:disabled { background-color: #edf1f6; color: #8a97a8; }");
+		trackers_primary_buttons_layout->addWidget(btn_ars_trackers_firmware_update);
 		trackers_primary_top_layout->addLayout(trackers_primary_buttons_layout);
 		trackers_primary_actions_layout->addLayout(trackers_primary_top_layout);
 		trackers_primary_actions_panel->setMinimumWidth(320);
@@ -6928,6 +6950,8 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 						&plugin_mcumgr::on_btn_ars_trackers_refresh_info_clicked);
 		connect(btn_ars_trackers_reset_all, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_reset_all_clicked);
+		connect(btn_ars_trackers_firmware_update, &QPushButton::clicked, this,
+						&plugin_mcumgr::on_btn_ars_trackers_firmware_update_clicked);
 		connect(btn_ars_trackers_cancel_download, &QPushButton::clicked, this,
 						&plugin_mcumgr::on_btn_ars_trackers_cancel_download_clicked);
 		connect(btn_ars_trackers_download_all_sessions, &QPushButton::clicked, this,
@@ -7556,6 +7580,105 @@ QString plugin_mcumgr::ars_tracker_connection_state_text(const ars_tracker_devic
 		return state;
 }
 
+QVector<ArsTrackerBulkFwTarget> plugin_mcumgr::connectedTrackersForBulkFirmwareUpdate() const
+{
+		QVector<ArsTrackerBulkFwTarget> targets;
+		for (const ars_tracker_device_t &device : ars_tracker_devices)
+		{
+				if (!device.connected || device.serialPort == nullptr || !device.serialPort->isOpen())
+				{
+						continue;
+				}
+				ArsTrackerBulkFwTarget t;
+				t.displayName = device.displayName.trimmed().isEmpty() ? device.portName : device.displayName;
+				t.serialNumber = device.serialNumber;
+				t.portName = device.portName;
+				targets.append(t);
+		}
+		return targets;
+}
+
+bool plugin_mcumgr::canStartTrackersBulkFirmwareUpdate() const
+{
+		return !ars_trackers_bulk_firmware_update_running &&
+					 !ars_trackers_sessions_query_running &&
+					 !ars_trackers_sessions_delete_running &&
+					 !ars_trackers_start_session_running &&
+					 !ars_trackers_stop_session_running &&
+					 !ars_trackers_session_download_running &&
+					 ars_trackers_bulk_sessions_operation == ARS_TRACKERS_BULK_SESSIONS_NONE &&
+					 !ars_trackers_reset_running &&
+					 !ars_tracker_firmware_upload_active &&
+					 !ars_tracker_firmware_erase_active;
+}
+
+bool plugin_mcumgr::startFirmwareUpdateForTracker(const QString &portName,
+																									const QString &firmwareFile,
+																									QString *errorMessage)
+{
+		if (errorMessage != nullptr)
+		{
+				errorMessage->clear();
+		}
+		if (ars_trackers_sessions_query_running || ars_trackers_sessions_delete_running ||
+				ars_trackers_start_session_running || ars_trackers_stop_session_running ||
+				ars_trackers_session_download_running ||
+				ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE ||
+				ars_trackers_reset_running || ars_tracker_firmware_upload_active ||
+				ars_tracker_firmware_erase_active)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Conflicting operation is running.";
+				}
+				return false;
+		}
+		ars_tracker_device_t *device = find_ars_tracker_device_by_port(portName);
+		if (device == nullptr || !device->connected || device->serialPort == nullptr ||
+				!device->serialPort->isOpen())
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Tracker is not connected.";
+				}
+				return false;
+		}
+		if (!QFileInfo::exists(firmwareFile))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Firmware file does not exist.";
+				}
+				return false;
+		}
+		set_active_ars_tracker_device(portName, false);
+		if (edit_ars_tracker_firmware_file != nullptr)
+		{
+				edit_ars_tracker_firmware_file->setText(firmwareFile);
+		}
+		QString start_error;
+		if (!start_ars_tracker_firmware_upload(&start_error))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = start_error;
+				}
+				return false;
+		}
+		return true;
+}
+
+void plugin_mcumgr::setTrackersBulkFirmwareUpdateActive(bool active)
+{
+		ars_trackers_bulk_firmware_update_running = active;
+		update_ars_trackers_sessions_aggregate_and_ui();
+}
+
+bool plugin_mcumgr::isTrackersBulkFirmwareUpdateActive() const
+{
+		return ars_trackers_bulk_firmware_update_running;
+}
+
 QString plugin_mcumgr::ars_tracker_lightweight_telemetry_command_to_string(
 		ars_tracker_lightweight_telemetry_command_t command) const
 {
@@ -8029,7 +8152,8 @@ void plugin_mcumgr::update_ars_trackers_refresh_info_button_state()
 				}
 		}
 		const bool enabled = (connected_trackers > 0) &&
-												 ars_trackers_manual_refresh_pending_ports.isEmpty();
+												 ars_trackers_manual_refresh_pending_ports.isEmpty() &&
+												 !ars_trackers_bulk_firmware_update_running;
 		btn_ars_trackers_refresh_info->setEnabled(enabled);
 }
 
@@ -11291,6 +11415,15 @@ void plugin_mcumgr::on_btn_ars_trackers_disconnect_all_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked()
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								"Already loading: firmware update in progress");
+				}
+				return;
+		}
 		int connected_trackers = 0;
 		for (const ars_tracker_device_t &device : ars_tracker_devices)
 		{
@@ -11313,6 +11446,15 @@ void plugin_mcumgr::on_btn_ars_trackers_sessions_refresh_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_refresh_info_clicked()
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_status != nullptr)
+				{
+						lbl_ars_trackers_status->setText(
+								"Refresh tracker info ignored: firmware update in progress");
+				}
+				return;
+		}
 		int connected_trackers = 0;
 		int queued_trackers = 0;
 		for (ars_tracker_device_t &device : ars_tracker_devices)
@@ -11353,8 +11495,31 @@ void plugin_mcumgr::on_btn_ars_trackers_refresh_info_clicked()
 											 &plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command);
 }
 
+void plugin_mcumgr::on_btn_ars_trackers_firmware_update_clicked()
+{
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_status != nullptr)
+				{
+						lbl_ars_trackers_status->setText("Firmware update already running");
+				}
+				return;
+		}
+		ArsTrackerBulkFwUpdateDialog dialog(this, parent_window);
+		dialog.exec();
+}
+
 void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								"Already loading: firmware update in progress");
+				}
+				return;
+		}
 		normalize_ars_trackers_loading_state("on_btn_ars_trackers_start_session_clicked");
 		const ArsTrackersParallelDownloadProgress start_guard_snapshot =
 				(ars_trackers_session_download_coordinator != nullptr)
@@ -11602,6 +11767,15 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								"Already loading: firmware update in progress");
+				}
+				return;
+		}
 		normalize_ars_trackers_loading_state("on_btn_ars_trackers_stop_session_clicked");
 		const bool query_blocks = ars_trackers_sessions_query_running &&
 															!ars_trackers_sessions_query_background_running;
@@ -11757,6 +11931,15 @@ void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked()
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								"Already loading: firmware update in progress");
+				}
+				return;
+		}
 		const ArsTrackersParallelDownloadProgress state_snapshot =
 				(ars_trackers_session_download_coordinator != nullptr)
 						? ars_trackers_session_download_coordinator->currentParallelDownloadProgress()
@@ -11927,6 +12110,15 @@ void plugin_mcumgr::on_btn_ars_trackers_download_all_sessions_clicked()
 
 void plugin_mcumgr::on_btn_ars_trackers_delete_all_sessions_clicked()
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								"Already loading: firmware update in progress");
+				}
+				return;
+		}
 		if (ars_trackers_bulk_sessions_operation != ARS_TRACKERS_BULK_SESSIONS_NONE)
 		{
 				log_warning() << "ARS_MT_BULK ui_block bulk already running"
@@ -12296,6 +12488,15 @@ void plugin_mcumgr::start_ars_trackers_sessions_refresh(bool background, const Q
 
 void plugin_mcumgr::on_ars_trackers_session_delete_clicked(const QString &session_name)
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								"Already loading: firmware update in progress");
+				}
+				return;
+		}
 		QString session = session_name.trimmed();
 		if (session.isEmpty() || ars_trackers_sessions_presence_map.contains(session) == false)
 		{
@@ -12355,6 +12556,15 @@ void plugin_mcumgr::on_ars_trackers_session_delete_clicked(const QString &sessio
 
 void plugin_mcumgr::on_ars_trackers_session_download_clicked(const QString &session_name)
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_sessions_status != nullptr)
+				{
+						lbl_ars_trackers_sessions_status->setText(
+								"Already loading: firmware update in progress");
+				}
+				return;
+		}
 		start_ars_trackers_session_download(session_name);
 }
 
@@ -13342,6 +13552,14 @@ void plugin_mcumgr::start_next_ars_trackers_bulk_sessions_operation()
 
 void plugin_mcumgr::on_btn_ars_trackers_reset_all_clicked()
 {
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (lbl_ars_trackers_status != nullptr)
+				{
+						lbl_ars_trackers_status->setText("Reset all ignored: firmware update in progress");
+				}
+				return;
+		}
 		normalize_ars_trackers_loading_state("on_btn_ars_trackers_reset_all_clicked");
 		if (ars_trackers_reset_running)
 		{
@@ -13958,10 +14176,30 @@ void plugin_mcumgr::update_ars_trackers_sessions_aggregate_and_ui()
 		if (btn_ars_trackers_stop_session != nullptr)
 				btn_ars_trackers_stop_session->setEnabled(ui_output.stopSessionEnabled);
 		update_ars_trackers_refresh_info_button_state();
+		if (btn_ars_trackers_firmware_update != nullptr)
+				btn_ars_trackers_firmware_update->setEnabled(
+						!ars_trackers_bulk_firmware_update_running && connected_trackers_count > 0);
 		if (btn_ars_trackers_download_all_sessions != nullptr)
 				btn_ars_trackers_download_all_sessions->setEnabled(ui_output.downloadAllSessionsEnabled);
 		if (btn_ars_trackers_delete_all_sessions != nullptr)
 				btn_ars_trackers_delete_all_sessions->setEnabled(ui_output.deleteAllSessionsEnabled);
+		if (ars_trackers_bulk_firmware_update_running)
+		{
+				if (btn_ars_trackers_sessions_refresh != nullptr)
+						btn_ars_trackers_sessions_refresh->setEnabled(false);
+				if (btn_ars_trackers_start_session != nullptr)
+						btn_ars_trackers_start_session->setEnabled(false);
+				if (btn_ars_trackers_stop_session != nullptr)
+						btn_ars_trackers_stop_session->setEnabled(false);
+				if (btn_ars_trackers_refresh_info != nullptr)
+						btn_ars_trackers_refresh_info->setEnabled(false);
+				if (btn_ars_trackers_reset_all != nullptr)
+						btn_ars_trackers_reset_all->setEnabled(false);
+				if (btn_ars_trackers_download_all_sessions != nullptr)
+						btn_ars_trackers_download_all_sessions->setEnabled(false);
+				if (btn_ars_trackers_delete_all_sessions != nullptr)
+						btn_ars_trackers_delete_all_sessions->setEnabled(false);
+		}
 		log_debug() << "trackers_sessions_controls_state"
 								<< "connectedTrackers=" << connected_trackers_count
 								<< "hasConnectedTrackers=" << (connected_trackers_count > 0)
@@ -17652,6 +17890,8 @@ void plugin_mcumgr::handle_ars_tracker_persistent_img_status(uint8_t user_data,
 						log_debug() << "ArsTracker firmware upload completed, hash="
 												<< ars_tracker_firmware_upload_hash;
 						lbl_ars_tracker_progress->setText("Firmware upload: 100%");
+						emit trackersFirmwareUpdateProgress(
+								device->portName, 100, QString("Firmware upload: 100%"));
 						mode = ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET;
 						device->processor->set_transport(device->transport);
 						set_group_transport_settings_for_transport(
@@ -17766,6 +18006,11 @@ void plugin_mcumgr::handle_ars_tracker_persistent_img_status(uint8_t user_data,
 		lbl_ars_tracker_status->setText(
 				error_string);
 		log_warning() << "ArsTracker firmware operation failed:" << error_string;
+		if (user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD ||
+				user_data == ACTION_ARS_TRACKER_FIRMWARE_UPLOAD_SET)
+		{
+				emit trackersFirmwareUpdateFinished(device->portName, false, error_string);
+		}
 }
 
 void plugin_mcumgr::handle_ars_tracker_persistent_img_progress(uint8_t user_data, uint8_t percent)
@@ -17798,6 +18043,9 @@ void plugin_mcumgr::handle_ars_tracker_persistent_img_progress(uint8_t user_data
 				lbl_ars_tracker_progress->setText(
 						QString("Firmware upload: %1%").arg(QString::number(percent)));
 				lbl_ars_tracker_status->setText(
+						QString("Firmware upload: %1%").arg(QString::number(percent)));
+				emit trackersFirmwareUpdateProgress(
+						device->portName, int(percent),
 						QString("Firmware upload: %1%").arg(QString::number(percent)));
 		}
 }
@@ -17844,6 +18092,8 @@ void plugin_mcumgr::handle_ars_tracker_persistent_os_status(uint8_t user_data,
 		{
 				log_debug() << "ArsTracker firmware reset command sent";
 				lbl_ars_tracker_status->setText("Reset command sent");
+				emit trackersFirmwareUpdateFinished(
+						device->portName, true, QString("Firmware successfully loaded"));
 				return;
 		}
 
@@ -17865,6 +18115,7 @@ void plugin_mcumgr::handle_ars_tracker_persistent_os_status(uint8_t user_data,
 		}
 		lbl_ars_tracker_status->setText(
 				error_string);
+		emit trackersFirmwareUpdateFinished(device->portName, false, error_string);
 }
 
 void plugin_mcumgr::ars_tracker_request_session_refresh_after_delete()

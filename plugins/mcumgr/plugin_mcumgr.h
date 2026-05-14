@@ -52,6 +52,7 @@
 #include "debug_logger.h"
 #include "smp_json.h"
 #include "ars_tracker_backend.h"
+#include "ars_tracker_bulk_fw_update_models.h"
 #include "ars_trackers_session_download_coordinator.h"
 
 class QSerialPort;
@@ -388,6 +389,12 @@ public:
     void setup_finished() override;
     PluginType plugin_type() override;
     QObject *plugin_object() override;
+    QVector<ArsTrackerBulkFwTarget> connectedTrackersForBulkFirmwareUpdate() const;
+    bool canStartTrackersBulkFirmwareUpdate() const;
+    bool startFirmwareUpdateForTracker(const QString &portName, const QString &firmwareFile,
+                                       QString *errorMessage);
+    void setTrackersBulkFirmwareUpdateActive(bool active);
+    bool isTrackersBulkFirmwareUpdateActive() const;
 
 signals:
     void show_message_box(QString str_message);
@@ -399,6 +406,10 @@ signals:
     void plugin_serial_state(bool *open, bool *opening);
     void plugin_serial_ports(QStringList *ports, QString *selected_port);
     void plugin_serial_select(QString port);
+    void trackersFirmwareUpdateProgress(const QString &portName, int percent,
+                                        const QString &message);
+    void trackersFirmwareUpdateFinished(const QString &portName, bool success,
+                                        const QString &message);
 
 private slots:
     void serial_receive(QByteArray *data);
@@ -500,6 +511,7 @@ private slots:
     void on_btn_ars_trackers_start_session_clicked();
     void on_btn_ars_trackers_stop_session_clicked();
     void on_btn_ars_trackers_refresh_info_clicked();
+    void on_btn_ars_trackers_firmware_update_clicked();
     void on_btn_ars_trackers_reset_all_clicked();
     void on_btn_ars_trackers_cancel_download_clicked();
     void on_btn_ars_trackers_delete_all_sessions_clicked();
@@ -1120,6 +1132,7 @@ private:
     QPushButton *btn_ars_trackers_stop_session = nullptr;
     QPushButton *btn_ars_trackers_refresh_info = nullptr;
     QPushButton *btn_ars_trackers_reset_all = nullptr;
+    QPushButton *btn_ars_trackers_firmware_update = nullptr;
     QPushButton *btn_ars_trackers_delete_all_sessions = nullptr;
     QPushButton *btn_ars_trackers_download_all_sessions = nullptr;
     QPushButton *btn_ars_trackers_cancel_download = nullptr;
@@ -1335,6 +1348,7 @@ private:
     QSet<QString> ars_trackers_active_download_ports;
     QSet<QString> ars_trackers_pending_post_download_telemetry_ports;
     QSet<QString> ars_trackers_manual_refresh_pending_ports;
+    bool ars_trackers_bulk_firmware_update_running = false;
     QHash<QString, qint64> ars_mt_tracker_start_ms_by_port;
     QHash<QString, quint64> ars_mt_tracker_bytes_by_port;
     QHash<QString, int> ars_mt_tracker_files_downloaded_by_port;

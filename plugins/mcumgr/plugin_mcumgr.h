@@ -303,6 +303,7 @@ struct ars_trackers_stop_session_item_t {
 struct ars_trackers_session_download_job_t {
     int generation = 0;
     QString sessionName;
+    QString localSessionId;
     QString port;
     QString serial;
     QString trackerName;

@@ -24,6 +24,15 @@
 #include "crc16.h"
 #include <math.h>
 
+namespace
+{
+bool ars_tracker_verbose_perf_logs_enabled()
+{
+    static const bool enabled = (qEnvironmentVariableIntValue("ARS_TRACKER_VERBOSE_PERF_LOGS") == 1);
+    return enabled;
+}
+}
+
 static uint16_t uart_smp_header_len_host(const smp_hdr *header)
 {
     uint16_t length = header->nh_len;
@@ -139,14 +148,17 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
     int first_frames = uart_count_marker(*rec_data, smp_first_header);
     int continuation_frames = uart_count_marker(*rec_data, smp_continuation_header);
 
-    log_debug() << "UART raw receive"
-                << "read length" << rec_data->length()
-                << "buffer before append" << SerialData.length()
-                << "first frame markers in read" << first_frames
-                << "continuation markers in read" << continuation_frames
-                << "waiting continuation" << SMPWaitingForContinuation
-                << "waiting length" << waiting_packet_length
-                << "assembled length" << SMPBufferActualData.length();
+    if (ars_tracker_verbose_perf_logs_enabled())
+    {
+        log_debug() << "UART raw receive"
+                    << "read length" << rec_data->length()
+                    << "buffer before append" << SerialData.length()
+                    << "first frame markers in read" << first_frames
+                    << "continuation markers in read" << continuation_frames
+                    << "waiting continuation" << SMPWaitingForContinuation
+                    << "waiting length" << waiting_packet_length
+                    << "assembled length" << SMPBufferActualData.length();
+    }
 
     SerialData.append(*rec_data);
 

@@ -7,7 +7,8 @@ TEMPLATE = lib
 CONFIG += plugin
 CONFIG += c++17
 
-INCLUDEPATH    += ../../AuTerm
+INCLUDEPATH    += ../../AuTerm \
+    ../../src
 TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 
 # You can make your code fail to compile if it uses deprecated APIs.
@@ -40,7 +41,12 @@ SOURCES += \
     smp_message.cpp \
     smp_processor.cpp \
     smp_uart_auterm.cpp \
-    smp_group_img_mgmt.cpp
+    smp_group_img_mgmt.cpp \
+    ../../src/ars/workspace/ArsLocalWorkspace.cpp \
+    ../../src/ars/workspace/ArsPlayerRepository.cpp \
+    ../../src/ars/workspace/ArsSessionRepository.cpp \
+    ../../src/ars/workspace/ArsTeamRepository.cpp \
+    ../../src/ars/workspace/ArsTrackerBindingRepository.cpp
 
 HEADERS += \
     ../../AuTerm/AutPlugin.h \
@@ -118,38 +124,38 @@ FORMS += \
 
 contains(DEFINES, PLUGIN_MCUMGR_TRANSPORT_BLUETOOTH) {
     SOURCES += \
-	bluetooth_setup.cpp \
-	smp_bluetooth.cpp
+        bluetooth_setup.cpp \
+        smp_bluetooth.cpp
 
     HEADERS += \
-	bluetooth_setup.h \
-	smp_bluetooth.h
+        bluetooth_setup.h \
+        smp_bluetooth.h
 
     FORMS += \
-	bluetooth_setup.ui
+        bluetooth_setup.ui
 }
 
 contains(DEFINES, PLUGIN_MCUMGR_TRANSPORT_UDP) {
     SOURCES += \
-	udp_setup.cpp \
-	smp_udp.cpp
+        udp_setup.cpp \
+        smp_udp.cpp
 
     HEADERS += \
-	udp_setup.h \
-	smp_udp.h
+        udp_setup.h \
+        smp_udp.h
 
     FORMS += \
-	udp_setup.ui
+        udp_setup.ui
 }
 
 contains(DEFINES, PLUGIN_MCUMGR_TRANSPORT_LORAWAN) {
     SOURCES += \
-	lorawan_setup.cpp \
-	smp_lorawan.cpp
+        lorawan_setup.cpp \
+        smp_lorawan.cpp
 
     HEADERS += \
-	lorawan_setup.h \
-	smp_lorawan.h
+        lorawan_setup.h \
+        smp_lorawan.h
 
     FORMS += \
     lorawan_setup.ui

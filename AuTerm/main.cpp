@@ -26,6 +26,7 @@
 // Include Files
 /******************************************************************************/
 #include "AutMainWindow.h"
+#include "ars/workspace/ArsLocalWorkspace.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDateTime>
@@ -37,6 +38,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QThread>
+#include <QProcessEnvironment>
 #if defined(QT_STATIC) && defined(Q_OS_WIN)
 #include <QtPlugin>
 #endif
@@ -56,6 +58,12 @@ Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin)
 
 static QFile *debug_log_file = nullptr;
 static QMutex debug_log_mutex;
+static bool g_log_flush_every_line = false;
+static bool g_log_stats_enabled = false;
+static qint64 g_log_stats_window_start_ms = 0;
+static quint64 g_log_stats_messages = 0;
+static quint64 g_log_stats_bytes = 0;
+static quint64 g_log_stats_flushes = 0;
 
 static QString debug_level_name(QtMsgType type)
 {
@@ -145,11 +153,58 @@ static void auterm_debug_message_handler(QtMsgType type, const QMessageLogContex
     line.append('\n');
 
     QByteArray line_bytes = line.toUtf8();
+    const bool is_warning_or_worse =
+        (type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg);
+    bool did_flush = false;
 
     if (debug_log_file != nullptr && debug_log_file->isOpen())
     {
         debug_log_file->write(line_bytes);
-        debug_log_file->flush();
+        if (g_log_flush_every_line || is_warning_or_worse)
+        {
+            debug_log_file->flush();
+            did_flush = true;
+        }
+    }
+
+    ++g_log_stats_messages;
+    g_log_stats_bytes += quint64(line_bytes.size());
+    if (did_flush)
+    {
+        ++g_log_stats_flushes;
+    }
+
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    if (g_log_stats_window_start_ms == 0)
+    {
+        g_log_stats_window_start_ms = now_ms;
+    }
+    if (g_log_stats_enabled && (now_ms - g_log_stats_window_start_ms) >= 5000)
+    {
+        const qint64 elapsed_ms = qMax<qint64>(1, now_ms - g_log_stats_window_start_ms);
+        const double msgs_per_sec = (1000.0 * double(g_log_stats_messages)) / double(elapsed_ms);
+        const double bytes_per_sec = (1000.0 * double(g_log_stats_bytes)) / double(elapsed_ms);
+        const double flushes_per_sec = (1000.0 * double(g_log_stats_flushes)) / double(elapsed_ms);
+        const QString stats_line =
+            QString("[AUTERM_LOG_STATS] window_ms=%1 msgs_per_sec=%2 bytes_per_sec=%3 flushes_per_sec=%4\n")
+                .arg(elapsed_ms)
+                .arg(QString::number(msgs_per_sec, 'f', 1))
+                .arg(QString::number(bytes_per_sec, 'f', 1))
+                .arg(QString::number(flushes_per_sec, 'f', 1));
+        const QByteArray stats_bytes = stats_line.toUtf8();
+        if (debug_log_file != nullptr && debug_log_file->isOpen())
+        {
+            debug_log_file->write(stats_bytes);
+            debug_log_file->flush();
+        }
+#if defined(QT_DEBUG)
+        std::fwrite(stats_bytes.constData(), 1, size_t(stats_bytes.size()), stderr);
+        std::fflush(stderr);
+#endif
+        g_log_stats_window_start_ms = now_ms;
+        g_log_stats_messages = 0;
+        g_log_stats_bytes = 0;
+        g_log_stats_flushes = 0;
     }
 
 #if defined(QT_DEBUG)
@@ -166,6 +221,8 @@ static void auterm_debug_message_handler(QtMsgType type, const QMessageLogContex
 
 static void installApplicationMessageHandler()
 {
+    g_log_flush_every_line = qEnvironmentVariableIntValue("AUTERM_LOG_FLUSH_EVERY_LINE") == 1;
+    g_log_stats_enabled = qEnvironmentVariableIntValue("AUTERM_LOG_STATS") == 1;
     QString log_path =
         QFileInfo(QDir(QCoreApplication::applicationDirPath()).filePath("auterm_debug.txt"))
             .absoluteFilePath();
@@ -210,6 +267,13 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     installApplicationMessageHandler();
     qInfo().noquote() << "Application message handler installed";
+
+    ArsLocalWorkspace localWorkspace;
+    if (localWorkspace.initialize() == false)
+    {
+        qWarning() << "ArsLocalWorkspace initialization failed; application will continue running.";
+    }
+
 #if TARGET_OS_MAC
     //Fix for Mac to stop bad styling
     QApplication::setStyle(QStyleFactory::create("Fusion"));

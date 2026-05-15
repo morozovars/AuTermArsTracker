@@ -10,6 +10,7 @@ CONFIG(release, debug|release) {
 }
 
 QT += core gui widgets serialport
+INCLUDEPATH += ../src
 
 !contains(DEFINES, SKIPONLINE) {
     QT += network
@@ -32,14 +33,24 @@ SOURCES += main.cpp\
     AutMainWindow.cpp \
     AutPlugin.cpp \
     AutPopup.cpp \
-    AutScrollEdit.cpp
+    AutScrollEdit.cpp \
+    ../src/ars/workspace/ArsLocalWorkspace.cpp \
+    ../src/ars/workspace/ArsPlayerRepository.cpp \
+    ../src/ars/workspace/ArsSessionRepository.cpp \
+    ../src/ars/workspace/ArsTeamRepository.cpp \
+    ../src/ars/workspace/ArsTrackerBindingRepository.cpp
 
 HEADERS  += \
     AutEscape.h \
     AutLogger.h \
     AutMainWindow.h \
     AutPopup.h \
-    AutScrollEdit.h
+    AutScrollEdit.h \
+    ../src/ars/workspace/ArsLocalWorkspace.h \
+    ../src/ars/workspace/ArsPlayerRepository.h \
+    ../src/ars/workspace/ArsSessionRepository.h \
+    ../src/ars/workspace/ArsTeamRepository.h \
+    ../src/ars/workspace/ArsTrackerBindingRepository.h
 
 FORMS    += \
     AutMainWindow.ui \

@@ -23,6 +23,35 @@
 
 #include "smp_processor.h"
 #include "smp_group.h"
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QThread>
+
+namespace {
+bool ars_tracker_verbose_perf_logs_enabled_local()
+{
+    static const bool enabled = qEnvironmentVariableIsSet("ARS_TRACKER_VERBOSE_PERF_LOGS") &&
+                                (qEnvironmentVariableIntValue("ARS_TRACKER_VERBOSE_PERF_LOGS") == 1);
+    return enabled;
+}
+
+class ProcessorScopeTimer {
+public:
+    explicit ProcessorScopeTimer(const char *name) : name_(name) { timer_.start(); }
+    ~ProcessorScopeTimer() {
+        if (qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_PERF") == 1 &&
+            timer_.elapsed() >= qMax(1, qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_THRESHOLD_MS")))
+        {
+            qDebug() << "perf slow main scope"
+                     << "name=" << name_ << "elapsed=" << timer_.elapsed()
+                     << "thread=" << QThread::currentThreadId();
+        }
+    }
+private:
+    const char *name_;
+    QElapsedTimer timer_;
+};
+}
 
 static uint16_t smp_header_len_host(const smp_hdr *header)
 {
@@ -89,6 +118,12 @@ void smp_processor::set_logger(debug_logger *object)
 
 smp_transport_error_t smp_processor::send(smp_message *message, uint32_t timeout_ms, uint8_t repeats, bool allow_version_check)
 {
+    if (qEnvironmentVariableIntValue("ARS_TRACKER_THREAD_GUARD") == 1 &&
+        QThread::currentThread() == qApp->thread())
+    {
+        qWarning() << "BUG Trackers persistent smp_processor::send in GUI thread";
+    }
+    ProcessorScopeTimer perf_scope("smp_processor::send");
     smp_transport_error_t transport_error = SMP_TRANSPORT_ERROR_OK;
 
     if (busy)
@@ -117,16 +152,19 @@ smp_transport_error_t smp_processor::send(smp_message *message, uint32_t timeout
 
         if (transport_error == SMP_TRANSPORT_ERROR_OK)
         {
-            log_debug() << "SMP request sent"
-                        << "op" << int(last_message_header->nh_op)
-                        << "version" << int(last_message_header->nh_version)
-                        << "group" << smp_header_group_host(last_message_header)
-                        << "seq" << int(last_message_header->nh_seq)
-                        << "command" << int(last_message_header->nh_id)
-                        << "payload length" << smp_header_len_host(last_message_header)
-                        << "message size" << last_message->size()
-                        << "timeout ms" << timeout_ms
-                        << "retries" << int(repeats);
+            if (ars_tracker_verbose_perf_logs_enabled_local())
+            {
+                log_debug() << "SMP request sent"
+                            << "op" << int(last_message_header->nh_op)
+                            << "version" << int(last_message_header->nh_version)
+                            << "group" << smp_header_group_host(last_message_header)
+                            << "seq" << int(last_message_header->nh_seq)
+                            << "command" << int(last_message_header->nh_id)
+                            << "payload length" << smp_header_len_host(last_message_header)
+                            << "message size" << last_message->size()
+                            << "timeout ms" << timeout_ms
+                            << "retries" << int(repeats);
+            }
             repeat_timer.start();
             ++sequence;
 
@@ -268,24 +306,36 @@ void smp_processor::message_timeout()
     //Resend message
     --repeat_times;
     repeat_timer.start();
-    log_warning() << "SMP request retry"
-                  << "op" << int(last_message_header->nh_op)
-                  << "version" << int(last_message_header->nh_version)
-                  << "group" << smp_header_group_host(last_message_header)
-                  << "seq" << int(last_message_header->nh_seq)
-                  << "command" << int(last_message_header->nh_id)
-                  << "payload length" << smp_header_len_host(last_message_header)
-                  << "remaining retries" << int(repeat_times);
+    if (ars_tracker_verbose_perf_logs_enabled_local())
+    {
+        log_warning() << "SMP request retry"
+                      << "op" << int(last_message_header->nh_op)
+                      << "version" << int(last_message_header->nh_version)
+                      << "group" << smp_header_group_host(last_message_header)
+                      << "seq" << int(last_message_header->nh_seq)
+                      << "command" << int(last_message_header->nh_id)
+                      << "payload length" << smp_header_len_host(last_message_header)
+                      << "remaining retries" << int(repeat_times);
+    }
     transport->send(last_message);
 }
 
 void smp_processor::message_received(smp_message *response)
 {
+    if (qEnvironmentVariableIntValue("ARS_TRACKER_THREAD_GUARD") == 1 &&
+        QThread::currentThread() == qApp->thread())
+    {
+        qWarning() << "BUG Trackers persistent smp_processor::message_received in GUI thread";
+    }
+    ProcessorScopeTimer perf_scope("smp_processor::message_received");
     const smp_hdr *response_header = nullptr;
 
-    log_debug() << "SMP response received"
-                << "message size" << response->size()
-                << "payload size" << response->data_size();
+    if (ars_tracker_verbose_perf_logs_enabled_local())
+    {
+        log_debug() << "SMP response received"
+                    << "message size" << response->size()
+                    << "payload size" << response->data_size();
+    }
 
     if (!busy)
     {
@@ -349,13 +399,16 @@ void smp_processor::message_received(smp_message *response)
     }
     else
     {
-        log_debug() << "SMP response accepted"
-                    << "op" << int(response_header->nh_op)
-                    << "version" << int(response_header->nh_version)
-                    << "group" << smp_header_group_host(response_header)
-                    << "seq" << int(response_header->nh_seq)
-                    << "command" << int(response_header->nh_id)
-                    << "payload length" << smp_header_len_host(response_header);
+        if (ars_tracker_verbose_perf_logs_enabled_local())
+        {
+            log_debug() << "SMP response accepted"
+                        << "op" << int(response_header->nh_op)
+                        << "version" << int(response_header->nh_version)
+                        << "group" << smp_header_group_host(response_header)
+                        << "seq" << int(response_header->nh_seq)
+                        << "command" << int(response_header->nh_id)
+                        << "payload length" << smp_header_len_host(response_header);
+        }
 
         //Headers look valid
         uint8_t version = response_header->nh_version;

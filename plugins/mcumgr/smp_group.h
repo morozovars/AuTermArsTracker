@@ -164,8 +164,14 @@ public:
     {
         Q_UNUSED(message);
         QString response = QString("Timeout (Mode: %1)").arg(mode_to_string(mode));
-
-        log_error() << "MCUmgr command timed out";
+        if (name == "shell" && smp_user_data == 0xA5)
+        {
+            log_debug() << "MCUmgr scan probe command timed out";
+        }
+        else
+        {
+            log_error() << "MCUmgr command timed out";
+        }
         cleanup();
         emit status(smp_user_data, STATUS_TIMEOUT, response);
     }

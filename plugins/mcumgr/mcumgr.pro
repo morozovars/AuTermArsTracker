@@ -17,6 +17,8 @@ TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 
 SOURCES += \
     ../../AuTerm/AutScrollEdit.cpp \
+    ars_tracker_device_worker.cpp \
+    ars_tracker_port_scan_worker.cpp \
     ars_trackers_session_download_coordinator.cpp \
     ars_tracker_bulk_fw_update_dialog.cpp \
     ars_tracker_bulk_fw_update_worker.cpp \
@@ -51,6 +53,8 @@ SOURCES += \
 HEADERS += \
     ../../AuTerm/AutPlugin.h \
     ../../AuTerm/AutScrollEdit.h \
+    ars_tracker_device_worker.h \
+    ars_tracker_port_scan_worker.h \
     ars_trackers_session_download_coordinator.h \
     ars_tracker_bulk_fw_update_dialog.h \
     ars_tracker_bulk_fw_update_models.h \

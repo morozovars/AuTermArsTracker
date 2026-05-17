@@ -39,6 +39,9 @@
 #include <QMutexLocker>
 #include <QThread>
 #include <QProcessEnvironment>
+#include <QHash>
+#include <QVector>
+#include <algorithm>
 #if defined(QT_STATIC) && defined(Q_OS_WIN)
 #include <QtPlugin>
 #endif
@@ -60,10 +63,31 @@ static QFile *debug_log_file = nullptr;
 static QMutex debug_log_mutex;
 static bool g_log_flush_every_line = false;
 static bool g_log_stats_enabled = false;
+static bool g_log_top_sources_enabled = false;
 static qint64 g_log_stats_window_start_ms = 0;
+static qint64 g_log_top_sources_window_start_ms = 0;
 static quint64 g_log_stats_messages = 0;
 static quint64 g_log_stats_bytes = 0;
 static quint64 g_log_stats_flushes = 0;
+struct auterm_log_source_stats_t
+{
+    quint64 messages = 0;
+    quint64 bytes = 0;
+};
+static QHash<QString, auterm_log_source_stats_t> g_log_source_stats;
+
+static QString debug_log_source_key(const QMessageLogContext &context)
+{
+    const QString category = (context.category != nullptr) ? QString::fromLatin1(context.category) :
+                                                          QString("default");
+    const QString file_name = (context.file != nullptr) ?
+                                  QFileInfo(QString::fromUtf8(context.file)).fileName() :
+                                  QString("unknown");
+    const QString function_name = (context.function != nullptr) ?
+                                      QString::fromUtf8(context.function) :
+                                      QString("unknown");
+    return QString("%1:%2 | %3 | %4").arg(file_name).arg(context.line).arg(function_name, category);
+}
 
 static QString debug_level_name(QtMsgType type)
 {
@@ -173,11 +197,22 @@ static void auterm_debug_message_handler(QtMsgType type, const QMessageLogContex
     {
         ++g_log_stats_flushes;
     }
+    if (g_log_top_sources_enabled)
+    {
+        const QString source_key = debug_log_source_key(context);
+        auterm_log_source_stats_t &entry = g_log_source_stats[source_key];
+        ++entry.messages;
+        entry.bytes += quint64(line_bytes.size());
+    }
 
     const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
     if (g_log_stats_window_start_ms == 0)
     {
         g_log_stats_window_start_ms = now_ms;
+    }
+    if (g_log_top_sources_window_start_ms == 0)
+    {
+        g_log_top_sources_window_start_ms = now_ms;
     }
     if (g_log_stats_enabled && (now_ms - g_log_stats_window_start_ms) >= 5000)
     {
@@ -206,6 +241,47 @@ static void auterm_debug_message_handler(QtMsgType type, const QMessageLogContex
         g_log_stats_bytes = 0;
         g_log_stats_flushes = 0;
     }
+    if (g_log_top_sources_enabled && (now_ms - g_log_top_sources_window_start_ms) >= 5000)
+    {
+        const qint64 elapsed_ms = qMax<qint64>(1, now_ms - g_log_top_sources_window_start_ms);
+        QVector<QPair<QString, auterm_log_source_stats_t>> ranked;
+        ranked.reserve(g_log_source_stats.size());
+        for (auto it = g_log_source_stats.cbegin(); it != g_log_source_stats.cend(); ++it)
+        {
+            ranked.push_back(qMakePair(it.key(), it.value()));
+        }
+        std::sort(ranked.begin(), ranked.end(), [](const auto &lhs, const auto &rhs) {
+            return lhs.second.messages > rhs.second.messages;
+        });
+
+        QString top_block = QString("[AUTERM_LOG_TOP_SOURCES] window_ms=%1\n").arg(elapsed_ms);
+        const int limit = qMin(10, ranked.size());
+        for (int i = 0; i < limit; ++i)
+        {
+            const double msgs_per_sec =
+                (1000.0 * double(ranked[i].second.messages)) / double(elapsed_ms);
+            const double bytes_per_sec =
+                (1000.0 * double(ranked[i].second.bytes)) / double(elapsed_ms);
+            top_block.append(
+                QString("  %1) %2 | msgs_per_sec=%3 | bytes_per_sec=%4\n")
+                    .arg(i + 1)
+                    .arg(ranked[i].first)
+                    .arg(QString::number(msgs_per_sec, 'f', 1))
+                    .arg(QString::number(bytes_per_sec, 'f', 1)));
+        }
+        const QByteArray top_bytes = top_block.toUtf8();
+        if (debug_log_file != nullptr && debug_log_file->isOpen())
+        {
+            debug_log_file->write(top_bytes);
+            debug_log_file->flush();
+        }
+#if defined(QT_DEBUG)
+        std::fwrite(top_bytes.constData(), 1, size_t(top_bytes.size()), stderr);
+        std::fflush(stderr);
+#endif
+        g_log_source_stats.clear();
+        g_log_top_sources_window_start_ms = now_ms;
+    }
 
 #if defined(QT_DEBUG)
     FILE *stream = (type == QtDebugMsg || type == QtInfoMsg) ? stdout : stderr;
@@ -223,6 +299,7 @@ static void installApplicationMessageHandler()
 {
     g_log_flush_every_line = qEnvironmentVariableIntValue("AUTERM_LOG_FLUSH_EVERY_LINE") == 1;
     g_log_stats_enabled = qEnvironmentVariableIntValue("AUTERM_LOG_STATS") == 1;
+    g_log_top_sources_enabled = qEnvironmentVariableIntValue("AUTERM_LOG_TOP_SOURCES") == 1;
     QString log_path =
         QFileInfo(QDir(QCoreApplication::applicationDirPath()).filePath("auterm_debug.txt"))
             .absoluteFilePath();

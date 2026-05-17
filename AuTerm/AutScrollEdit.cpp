@@ -29,6 +29,8 @@
 #include "AutEscape.h"
 #include <QRegularExpression>
 #include <QTimer>
+#include <QElapsedTimer>
+#include <QThread>
 
 /******************************************************************************/
 // Constants
@@ -897,10 +899,22 @@ void AutScrollEdit::add_display_data(display_buffer_list *buffers)
 
 void AutScrollEdit::add_dat_in_text(QByteArray data)
 {
+    QElapsedTimer perf_timer;
+    perf_timer.start();
     //Adds data to the DatOut buffer
     mstrDatIn += data.replace("\r\n", "\n").replace("\r", "\n");
     had_dat_in_data = true;
     this->update_display();
+    if (qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_PERF") == 1 &&
+        perf_timer.elapsed() >= qMax(1, qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_THRESHOLD_MS")))
+    {
+        qDebug() << "perf slow main scope"
+                 << "name=AutScrollEdit::add_dat_in_text"
+                 << "elapsed=" << perf_timer.elapsed()
+                 << "bytes=" << data.size()
+                 << "blocks=" << this->document()->blockCount()
+                 << "visible=" << this->isVisible();
+    }
 }
 
 void AutScrollEdit::add_dat_out_text(const QString strDat)
@@ -1011,6 +1025,14 @@ void AutScrollEdit::insertFromMimeData(const QMimeData *mdSrc)
 
 void AutScrollEdit::update_display()
 {
+    QElapsedTimer perf_timer;
+    const bool perf_enabled = (qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_PERF") == 1);
+    const int perf_threshold = qMax(1, qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_THRESHOLD_MS"));
+    if (perf_enabled)
+    {
+        perf_timer.start();
+    }
+
     //Updates the receive text buffer, faster
     if (this->verticalScrollBar()->isSliderDown() != true && mbContextMenuOpen == false)
     {
@@ -1287,6 +1309,20 @@ void AutScrollEdit::update_display()
         {
             //Maintain
             this->verticalScrollBar()->setValue(Pos);
+        }
+    }
+
+    if (perf_enabled)
+    {
+        const qint64 elapsed_ms = perf_timer.elapsed();
+        if (elapsed_ms >= perf_threshold)
+        {
+            qDebug() << "perf slow main scope"
+                     << "name=AutScrollEdit::update_display"
+                     << "elapsedMs=" << elapsed_ms
+                     << "thread=" << QThread::currentThreadId()
+                     << "docBlocks=" << this->document()->blockCount()
+                     << "visible=" << this->isVisible();
         }
     }
 }

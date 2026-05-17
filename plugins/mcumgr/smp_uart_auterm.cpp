@@ -23,6 +23,9 @@
 #include "smp_uart_auterm.h"
 #include "crc16.h"
 #include <math.h>
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QThread>
 
 namespace
 {
@@ -94,13 +97,26 @@ smp_uart_auterm::~smp_uart_auterm()
 
 void smp_uart_auterm::emit_non_smp_uart_data(const QByteArray &data)
 {
+    QElapsedTimer perf_timer;
+    perf_timer.start();
     if (data.isEmpty())
     {
         return;
     }
 
-    log_debug() << "smp_uart_auterm emitted non-SMP bytes len=" << data.size();
+    if (ars_tracker_verbose_perf_logs_enabled())
+    {
+        log_debug() << "smp_uart_auterm emitted non-SMP bytes len=" << data.size();
+    }
     emit non_smp_uart_data_received(data);
+    if (qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_PERF") == 1 &&
+        perf_timer.elapsed() >= qMax(1, qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_THRESHOLD_MS")))
+    {
+        log_debug() << "perf slow main scope"
+                    << "name=emit_non_smp_uart_data"
+                    << "elapsed=" << perf_timer.elapsed()
+                    << "thread=" << QThread::currentThreadId();
+    }
 }
 
 void smp_uart_auterm::reset_state()
@@ -114,21 +130,26 @@ void smp_uart_auterm::reset_state()
 
 void smp_uart_auterm::data_received(QByteArray *message)
 {
+    QElapsedTimer perf_timer;
+    perf_timer.start();
     smp_message full_message;
     full_message.append(message);
     smp_hdr *header = full_message.get_header();
 
     if (header != nullptr)
     {
-        log_debug() << "UART SMP complete frame"
-                    << "message length" << full_message.size()
-                    << "payload length" << uart_smp_header_len_host(header)
-                    << "op" << int(header->nh_op)
-                    << "version" << int(header->nh_version)
-                    << "group" << uart_smp_header_group_host(header)
-                    << "seq" << int(header->nh_seq)
-                    << "command" << int(header->nh_id)
-                    << "valid" << full_message.is_valid();
+        if (ars_tracker_verbose_perf_logs_enabled())
+        {
+            log_debug() << "UART SMP complete frame"
+                        << "message length" << full_message.size()
+                        << "payload length" << uart_smp_header_len_host(header)
+                        << "op" << int(header->nh_op)
+                        << "version" << int(header->nh_version)
+                        << "group" << uart_smp_header_group_host(header)
+                        << "seq" << int(header->nh_seq)
+                        << "command" << int(header->nh_id)
+                        << "valid" << full_message.is_valid();
+        }
     }
     else
     {
@@ -141,10 +162,25 @@ void smp_uart_auterm::data_received(QByteArray *message)
         emit receive_waiting(&full_message);
         full_message.clear();
     }
+    if (qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_PERF") == 1 &&
+        perf_timer.elapsed() >= qMax(1, qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_THRESHOLD_MS")))
+    {
+        log_debug() << "perf slow main scope"
+                    << "name=smp_uart_auterm::data_received"
+                    << "elapsed=" << perf_timer.elapsed()
+                    << "thread=" << QThread::currentThreadId();
+    }
 }
 
 void smp_uart_auterm::serial_read(QByteArray *rec_data)
 {
+    if (qEnvironmentVariableIntValue("ARS_TRACKER_THREAD_GUARD") == 1 &&
+        QThread::currentThread() == qApp->thread())
+    {
+        log_warning() << "BUG Trackers persistent serial_read in GUI thread";
+    }
+    QElapsedTimer perf_timer;
+    perf_timer.start();
     int first_frames = uart_count_marker(*rec_data, smp_first_header);
     int continuation_frames = uart_count_marker(*rec_data, smp_continuation_header);
 
@@ -187,8 +223,11 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
 
         if (earliest_marker > 0)
         {
-            log_debug() << "smp_uart_auterm emitted non-SMP prefix before SMP frame len="
-                        << earliest_marker;
+            if (ars_tracker_verbose_perf_logs_enabled())
+            {
+                log_debug() << "smp_uart_auterm emitted non-SMP prefix before SMP frame len="
+                            << earliest_marker;
+            }
             emit_non_smp_uart_data(SerialData.left(earliest_marker));
             SerialData.remove(0, earliest_marker);
             pos = SerialData.indexOf(smp_first_header);
@@ -239,11 +278,14 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                 waiting_packet_length |= ((uint16_t)SMPBuffer[1] & 0xff);
                 SMPBuffer.remove(0, 2);
 
-                log_debug() << "UART SMP first frame decoded"
-                            << "decoded payload plus crc length" << SMPBuffer.length()
-                            << "announced packet length" << waiting_packet_length
-                            << "line bytes" << (posA - pos + 1)
-                            << "serial buffer length" << SerialData.length();
+                if (ars_tracker_verbose_perf_logs_enabled())
+                {
+                    log_debug() << "UART SMP first frame decoded"
+                                << "decoded payload plus crc length" << SMPBuffer.length()
+                                << "announced packet length" << waiting_packet_length
+                                << "line bytes" << (posA - pos + 1)
+                                << "serial buffer length" << SerialData.length();
+                }
 
                 if (SMPBuffer.length() >= (waiting_packet_length))
                 {
@@ -255,9 +297,12 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                     if (crc == message_crc)
                     {
                         //Good to parse message after removing CRC
-                        log_debug() << "UART SMP single-frame packet complete"
-                                    << "assembled length including crc" << SMPBuffer.length()
-                                    << "announced packet length" << waiting_packet_length;
+                        if (ars_tracker_verbose_perf_logs_enabled())
+                        {
+                            log_debug() << "UART SMP single-frame packet complete"
+                                        << "assembled length including crc" << SMPBuffer.length()
+                                        << "announced packet length" << waiting_packet_length;
+                        }
                         SMPBuffer.remove((SMPBuffer.length() - 2), 2);
                         SMPWaitingForContinuation = false;
                         SMPBufferActualData.clear();
@@ -278,9 +323,12 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                     //More data expected in another packet
                     SMPWaitingForContinuation = true;
                     SMPBufferActualData = SMPBuffer;
-                    log_debug() << "UART SMP waiting for continuation"
-                                << "assembled length including crc" << SMPBufferActualData.length()
-                                << "announced packet length" << waiting_packet_length;
+                    if (ars_tracker_verbose_perf_logs_enabled())
+                    {
+                        log_debug() << "UART SMP waiting for continuation"
+                                    << "assembled length including crc" << SMPBufferActualData.length()
+                                    << "announced packet length" << waiting_packet_length;
+                    }
                 }
             }
             else
@@ -319,12 +367,15 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
             {
                 //Check length
                 SMPBufferActualData.append(SMPBuffer);
-                log_debug() << "UART SMP continuation decoded"
-                            << "decoded length" << SMPBuffer.length()
-                            << "assembled length including crc" << SMPBufferActualData.length()
-                            << "announced packet length" << waiting_packet_length
-                            << "line bytes" << (posA_other - pos_other + 1)
-                            << "serial buffer length" << SerialData.length();
+                if (ars_tracker_verbose_perf_logs_enabled())
+                {
+                    log_debug() << "UART SMP continuation decoded"
+                                << "decoded length" << SMPBuffer.length()
+                                << "assembled length including crc" << SMPBufferActualData.length()
+                                << "announced packet length" << waiting_packet_length
+                                << "line bytes" << (posA_other - pos_other + 1)
+                                << "serial buffer length" << SerialData.length();
+                }
 
                 if (SMPBufferActualData.length() >= (waiting_packet_length /*+ 2*/))
                 {
@@ -336,9 +387,12 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
                     if (crc == message_crc)
                     {
                         //Good to parse message after removing CRC
-                        log_debug() << "UART SMP multi-frame packet complete"
-                                    << "assembled length including crc" << SMPBufferActualData.length()
-                                    << "announced packet length" << waiting_packet_length;
+                        if (ars_tracker_verbose_perf_logs_enabled())
+                        {
+                            log_debug() << "UART SMP multi-frame packet complete"
+                                        << "assembled length including crc" << SMPBufferActualData.length()
+                                        << "announced packet length" << waiting_packet_length;
+                        }
                         SMPBufferActualData.remove((SMPBufferActualData.length() - 2), 2);
                         data_received(&SMPBufferActualData);
                     }
@@ -388,9 +442,12 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
         }
         else if (pos_other != -1 && posA_other != -1)
         {
-            log_warning() << "UART SMP stray continuation frame discarded"
-                          << "line bytes" << (posA_other - pos_other + 1)
-                          << "serial buffer length" << SerialData.length();
+            if (ars_tracker_verbose_perf_logs_enabled())
+            {
+                log_debug() << "UART SMP stray continuation frame discarded"
+                            << "line bytes" << (posA_other - pos_other + 1)
+                            << "serial buffer length" << SerialData.length();
+            }
             SerialData.remove(pos_other, (posA_other - pos_other + 1));
 
             pos = SerialData.indexOf(smp_first_header);
@@ -415,10 +472,13 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
         {
             if (SMPWaitingForContinuation == true)
             {
-                log_warning() << "UART SMP waiting state cleared by plain UART bytes"
-                              << "waiting length" << waiting_packet_length
-                              << "assembled length" << SMPBufferActualData.length()
-                              << "plain bytes" << emit_len;
+                if (ars_tracker_verbose_perf_logs_enabled())
+                {
+                    log_debug() << "UART SMP waiting state cleared by plain UART bytes"
+                                << "waiting length" << waiting_packet_length
+                                << "assembled length" << SMPBufferActualData.length()
+                                << "plain bytes" << emit_len;
+                }
                 SMPWaitingForContinuation = false;
                 SMPBufferActualData.clear();
                 waiting_packet_length = 0;
@@ -427,6 +487,15 @@ void smp_uart_auterm::serial_read(QByteArray *rec_data)
             emit_non_smp_uart_data(SerialData.left(emit_len));
             SerialData.remove(0, emit_len);
         }
+    }
+    if (qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_PERF") == 1 &&
+        perf_timer.elapsed() >= qMax(1, qEnvironmentVariableIntValue("ARS_TRACKER_MAIN_SCOPE_THRESHOLD_MS")))
+    {
+        log_debug() << "perf slow main scope"
+                    << "name=smp_uart_auterm::serial_read"
+                    << "elapsed=" << perf_timer.elapsed()
+                    << "thread=" << QThread::currentThreadId()
+                    << "bytes=" << (rec_data != nullptr ? rec_data->size() : 0);
     }
 }
 

@@ -108,7 +108,7 @@ private:
     bool custom_message;
 
 #ifndef SKIPPLUGIN_LOGGER
-    debug_logger *logger;
+    debug_logger *logger = nullptr;
 #endif
 };
 

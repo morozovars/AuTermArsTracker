@@ -153,7 +153,11 @@ bool env_flag_is_set_to_0(const char *name)
 
 bool ars_tracker_scan_worker_enabled_env()
 {
-		return env_flag_is_set_to_1("ARS_TRACKER_SCAN_WORKER");
+		if (env_flag_is_set_to_0("ARS_TRACKER_SCAN_WORKER"))
+		{
+				return false;
+		}
+		return true;
 }
 
 bool ars_tracker_scan_perf_enabled_env()
@@ -164,7 +168,11 @@ bool ars_tracker_scan_perf_enabled_env()
 
 bool ars_tracker_device_workers_enabled_env()
 {
-		return env_flag_is_set_to_1("ARS_TRACKER_DEVICE_WORKERS");
+		if (env_flag_is_set_to_0("ARS_TRACKER_DEVICE_WORKERS"))
+		{
+				return false;
+		}
+		return true;
 }
 
 bool ars_tracker_startup_auto_scan_enabled_env()
@@ -182,11 +190,12 @@ bool ars_tracker_startup_auto_scan_enabled_env()
 
 bool ars_tracker_allow_old_main_thread_trackers_transport_env()
 {
-		if (env_flag_is_set_to_0("ARS_TRACKER_ALLOW_OLD_MAIN_THREAD_TRANSPORT"))
-		{
-				return false;
-		}
-		return true;
+		return env_flag_is_set_to_1("ARS_TRACKER_ALLOW_OLD_MAIN_THREAD_TRANSPORT");
+}
+
+bool ars_tracker_allow_old_main_thread_scan_env()
+{
+		return env_flag_is_set_to_1("ARS_TRACKER_ALLOW_OLD_MAIN_THREAD_SCAN");
 }
 
 ArsTrackerScanContext ars_tracker_startup_scan_context_env()
@@ -3554,6 +3563,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 								<< "autoStartupScan=" << (ars_tracker_startup_auto_scan_enabled_env() ? 1 : 0)
 								<< "scanWorker=" << (ars_tracker_scan_worker_enabled_env() ? 1 : 0)
 								<< "deviceWorkers=" << (ars_tracker_device_workers_enabled_env() ? 1 : 0)
+								<< "allowOldMainThreadScan="
+								<< (ars_tracker_allow_old_main_thread_scan_env() ? 1 : 0)
 								<< "allowOldMainThreadTransport="
 								<< (ars_tracker_allow_old_main_thread_trackers_transport_env() ? 1 : 0)
 								<< "startupContext="
@@ -8535,7 +8546,8 @@ void plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command()
 												<< "command="
 												<< ars_tracker_lightweight_telemetry_command_to_string(request.command)
 												<< "queueRemaining="
-												<< ars_tracker_lightweight_telemetry_queue.size();
+												<< ars_tracker_lightweight_telemetry_queue.size()
+												<< "thread=" << QThread::currentThreadId();
 				}
 				bool started = false;
 				if (worker_mode)
@@ -8553,19 +8565,22 @@ void plugin_mcumgr::start_next_ars_tracker_lightweight_telemetry_command()
 								{
 								case ARS_TRACKER_LIGHT_TELEMETRY_STATUS:
 										log_debug() << "telemetry routed to device worker port="
-																<< device->portName << "command=status";
+																<< device->portName << "command=status"
+																<< "thread=" << QThread::currentThreadId();
 										started = QMetaObject::invokeMethod(worker, "requestStatus",
 																									 Qt::QueuedConnection);
 										break;
 								case ARS_TRACKER_LIGHT_TELEMETRY_BATTERY_INFO:
 										log_debug() << "telemetry routed to device worker port="
-																<< device->portName << "command=bat i";
+																<< device->portName << "command=bat i"
+																<< "thread=" << QThread::currentThreadId();
 										started = QMetaObject::invokeMethod(worker, "requestBattery",
 																									 Qt::QueuedConnection);
 										break;
 								case ARS_TRACKER_LIGHT_TELEMETRY_MEMORY_INFO:
 										log_debug() << "telemetry routed to device worker port="
-																<< device->portName << "command=mem i";
+																<< device->portName << "command=mem i"
+																<< "thread=" << QThread::currentThreadId();
 										started = QMetaObject::invokeMethod(worker, "requestMemory",
 																									 Qt::QueuedConnection);
 										break;
@@ -10513,6 +10528,9 @@ void plugin_mcumgr::start_ars_tracker_port_scan_worker(const QStringList &pendin
 				finish_ars_tracker_port_scan("Scan cancelled");
 		});
 		connect(ars_tracker_scan_worker_thread, &QThread::started, this, [this, pending_ports]() {
+				log_debug() << "ArsTrackerPortScanWorker QThread start requested from guiThread"
+										<< QThread::currentThreadId()
+										<< "ports=" << pending_ports.size();
 				QMetaObject::invokeMethod(ars_tracker_scan_worker, "startScan", Qt::QueuedConnection,
 																	Q_ARG(QStringList, pending_ports));
 		});
@@ -10525,9 +10543,11 @@ void plugin_mcumgr::stop_ars_tracker_port_scan_worker()
 		{
 				QMetaObject::invokeMethod(ars_tracker_scan_worker, "cancel", Qt::QueuedConnection);
 		}
-		if (ars_tracker_scan_worker_thread != nullptr)
-		{
-				ars_tracker_scan_worker_thread->quit();
+	if (ars_tracker_scan_worker_thread != nullptr)
+	{
+			log_debug() << "ArsTrackerPortScanWorker thread stopping"
+									<< "guiThread=" << QThread::currentThreadId();
+			ars_tracker_scan_worker_thread->quit();
 				ars_tracker_scan_worker_thread->wait(2000);
 				ars_tracker_scan_worker_thread->deleteLater();
 				ars_tracker_scan_worker_thread = nullptr;
@@ -11035,6 +11055,7 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 		ars_tracker_scan_param_sn_sent = false;
 		ars_tracker_scan_probe_backoff_current_port = false;
 		ars_tracker_scan_command_started = false;
+		ars_tracker_scan_uses_worker_path = false;
 		ars_tracker_old_scan_path_warning_emitted = false;
 		ars_tracker_scan_selected_port.clear();
 		ars_tracker_scan_pre_identification_log_bytes = 0;
@@ -11207,29 +11228,11 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 																										.arg(ars_tracker_scan_results.length()));
 				return;
 		}
-		if (ars_tracker_scan_context == ArsTrackerScanContext::Inspector ||
-				ars_tracker_scan_context == ArsTrackerScanContext::Startup)
-		{
-				log_debug() << "ArsTracker scan using INSPECTOR old path source="
-										<< ars_tracker_scan_request_source
-										<< "context=" << ars_tracker_scan_context_name(ars_tracker_scan_context)
-										<< "ports=" << ars_tracker_scan_pending_ports.size();
-				if (ars_tracker_scan_shell_mgmt == nullptr || ars_tracker_scan_processor == nullptr ||
-						ars_tracker_scan_transport == nullptr || ars_tracker_scan_serial_port == nullptr)
-				{
-						initialize_ars_tracker_scan_probe_context();
-				}
-				ars_tracker_scan_shell_mgmt->cancel();
-				ars_tracker_scan_processor->cancel();
-				ars_tracker_scan_transport->reset_state();
-				QTimer::singleShot(0, this, &plugin_mcumgr::begin_next_ars_tracker_port_probe);
-				return;
-		}
-
 		const bool worker_enabled = ars_tracker_scan_worker_enabled();
-		const bool old_allowed = ars_tracker_allow_old_main_thread_trackers_transport_env();
+		const bool old_allowed = ars_tracker_allow_old_main_thread_scan_env();
 		if (worker_enabled)
 		{
+				ars_tracker_scan_uses_worker_path = true;
 				log_debug() << "ArsTracker scan using WORKER path source="
 										<< ars_tracker_scan_request_source
 										<< "context=" << ars_tracker_scan_context_name(ars_tracker_scan_context)
@@ -11237,13 +11240,14 @@ void plugin_mcumgr::start_ars_tracker_port_scan()
 				start_ars_tracker_port_scan_worker(ars_tracker_scan_pending_ports);
 				return;
 		}
+		ars_tracker_scan_uses_worker_path = false;
 		if (!old_allowed)
 		{
-				log_warning() << "ArsTracker scan aborted: old main-thread scan path disabled and worker scan disabled/unavailable";
-				finish_ars_tracker_port_scan("Scan aborted: worker scan disabled and old scan disallowed.");
+				log_warning() << "ArsTracker scan aborted: worker path disabled and old scan fallback is not allowed";
+				finish_ars_tracker_port_scan("Scan aborted: worker scan disabled and old scan fallback disallowed.");
 				return;
 		}
-		log_debug() << "ArsTracker scan using OLD main-thread path source="
+		log_warning() << "ArsTracker scan fallback to OLD path: reason=worker_disabled source="
 								<< ars_tracker_scan_request_source
 								<< "context=" << ars_tracker_scan_context_name(ars_tracker_scan_context)
 								<< "ports=" << ars_tracker_scan_pending_ports.size();
@@ -11297,6 +11301,7 @@ void plugin_mcumgr::finish_ars_tracker_port_scan(const QString &status_message)
 		ars_tracker_scan_preferred_ports.clear();
 		ars_tracker_scan_ignore_port_backoff = false;
 		ars_tracker_old_scan_path_warning_emitted = false;
+		ars_tracker_scan_uses_worker_path = false;
 		ars_tracker_scan_or_apply_in_progress = false;
 		ars_tracker_scan_apply_results_running = false;
 
@@ -11362,7 +11367,7 @@ void plugin_mcumgr::begin_next_ars_tracker_port_probe()
 {
 		if (ars_tracker_old_path_disallowed_for_context(ars_tracker_scan_context) &&
 				ars_tracker_scan_worker_enabled() &&
-				!ars_tracker_allow_old_main_thread_trackers_transport_env())
+				!ars_tracker_allow_old_main_thread_scan_env())
 		{
 				if (!ars_tracker_old_scan_path_warning_emitted)
 				{
@@ -11556,7 +11561,7 @@ void plugin_mcumgr::send_ars_tracker_port_probe_command()
 {
 		if (ars_tracker_old_path_disallowed_for_context(ars_tracker_scan_context) &&
 				ars_tracker_scan_worker_enabled() &&
-				!ars_tracker_allow_old_main_thread_trackers_transport_env())
+				!ars_tracker_allow_old_main_thread_scan_env())
 		{
 				if (!ars_tracker_old_scan_path_warning_emitted)
 				{
@@ -11650,7 +11655,7 @@ void plugin_mcumgr::complete_ars_tracker_port_probe(bool matched, const QString 
 {
 		if (ars_tracker_old_path_disallowed_for_context(ars_tracker_scan_context) &&
 				ars_tracker_scan_worker_enabled() &&
-				!ars_tracker_allow_old_main_thread_trackers_transport_env())
+				!ars_tracker_allow_old_main_thread_scan_env())
 		{
 				if (!ars_tracker_old_scan_path_warning_emitted)
 				{
@@ -12212,7 +12217,7 @@ void plugin_mcumgr::handle_ars_tracker_scan_shell_status(uint8_t user_data, grou
 {
 		if (ars_tracker_old_path_disallowed_for_context(ars_tracker_scan_context) &&
 				ars_tracker_scan_worker_enabled() &&
-				!ars_tracker_allow_old_main_thread_trackers_transport_env())
+				!ars_tracker_allow_old_main_thread_scan_env())
 		{
 				if (!ars_tracker_old_scan_path_warning_emitted)
 				{
@@ -16962,6 +16967,9 @@ void plugin_mcumgr::buffer_ars_tracker_device_log(ars_tracker_device_t *device, 
 
 void plugin_mcumgr::handle_ars_tracker_device_worker_started(const QString &port_name)
 {
+		log_debug() << "ArsTrackerDeviceWorker started"
+								<< "port=" << port_name
+								<< "guiThread=" << QThread::currentThreadId();
 		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port_name);
 		if (device == nullptr)
 		{
@@ -16983,6 +16991,9 @@ void plugin_mcumgr::handle_ars_tracker_device_worker_started(const QString &port
 
 void plugin_mcumgr::handle_ars_tracker_device_worker_stopped(const QString &port_name)
 {
+		log_debug() << "ArsTrackerDeviceWorker stopped"
+								<< "port=" << port_name
+								<< "guiThread=" << QThread::currentThreadId();
 		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port_name);
 		if (device != nullptr)
 		{
@@ -17013,6 +17024,14 @@ void plugin_mcumgr::handle_ars_tracker_device_worker_error(const QString &port_n
 void plugin_mcumgr::handle_ars_tracker_device_worker_telemetry_finished(
 		const QString &port_name, const QString &command, bool ok, const QString &response_or_error)
 {
+		if (ars_tracker_verbose_perf_logs_enabled())
+		{
+				log_debug() << "ArsTrackerDeviceWorker telemetry finished"
+										<< "port=" << port_name
+										<< "command=" << command
+										<< "ok=" << ok
+										<< "guiThread=" << QThread::currentThreadId();
+		}
 		ars_tracker_device_t *device = find_ars_tracker_device_by_port(port_name);
 		if (device == nullptr)
 		{

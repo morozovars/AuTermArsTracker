@@ -244,7 +244,7 @@ protected:
     smp_error_define_lookup error_define_lookup;
     uint8_t mode;
 #ifndef SKIPPLUGIN_LOGGER
-    debug_logger *logger;
+    debug_logger *logger = nullptr;
 #endif
 };
 

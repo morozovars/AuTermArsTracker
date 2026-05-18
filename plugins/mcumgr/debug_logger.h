@@ -32,10 +32,10 @@
 #define PLUGIN_NAME "mcumgr"
 #define LOG_OBJECT logger
 
-#define log_error() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_error, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
-#define log_warning() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_warning, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
-#define log_information() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_information, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
-#define log_debug() LOG_OBJECT->set_options(PLUGIN_NAME, log_level_debug, __FILE__, __LINE__, Q_FUNC_INFO); QDebug(LOG_OBJECT)
+#define log_error() ((LOG_OBJECT != nullptr) ? (LOG_OBJECT->set_options(PLUGIN_NAME, log_level_error, __FILE__, __LINE__, Q_FUNC_INFO), QDebug(LOG_OBJECT)) : qDebug())
+#define log_warning() ((LOG_OBJECT != nullptr) ? (LOG_OBJECT->set_options(PLUGIN_NAME, log_level_warning, __FILE__, __LINE__, Q_FUNC_INFO), QDebug(LOG_OBJECT)) : qDebug())
+#define log_information() ((LOG_OBJECT != nullptr) ? (LOG_OBJECT->set_options(PLUGIN_NAME, log_level_information, __FILE__, __LINE__, Q_FUNC_INFO), QDebug(LOG_OBJECT)) : qDebug())
+#define log_debug() ((LOG_OBJECT != nullptr) ? (LOG_OBJECT->set_options(PLUGIN_NAME, log_level_debug, __FILE__, __LINE__, Q_FUNC_INFO), QDebug(LOG_OBJECT)) : qDebug())
 #else
 #define log_error() qDebug()
 #define log_warning() qDebug()

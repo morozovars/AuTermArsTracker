@@ -89,6 +89,84 @@ QString sanitize_workspace_segment(QString value)
 		return value;
 }
 
+QString sanitize_windows_folder_name(QString value)
+{
+		value = value.trimmed();
+		value.replace(QRegularExpression("[<>:\"/\\\\|?*]+"), "_");
+		value.replace(QRegularExpression("[\\x00-\\x1F]+"), "_");
+		value.replace(QRegularExpression("_+"), "_");
+		while (value.endsWith(' ') || value.endsWith('.'))
+		{
+				value.chop(1);
+		}
+		while (value.startsWith(' '))
+		{
+				value.remove(0, 1);
+		}
+		return value;
+}
+
+QString normalize_tracker_type_suffix(const QString &serialNumber, const QString &trackerType)
+{
+		QString t = trackerType.trimmed().toUpper();
+		if (t == "LEFT")
+		{
+				t = "L";
+		}
+		else if (t == "RIGHT")
+		{
+				t = "R";
+		}
+		if (t == "L" || t == "R")
+		{
+				return t;
+		}
+		const ars_tracker_utils::serial_parts_t parts =
+				ars_tracker_utils::parse_serial_parts(serialNumber);
+		if (parts.isLeft)
+		{
+				return "L";
+		}
+		if (parts.isRight)
+		{
+				return "R";
+		}
+		return QString();
+}
+
+QString makeShortTrackerFolderName(const QString &serialNumber, const QString &trackerType)
+{
+		QString serial_suffix;
+		const QString trimmed_serial = serialNumber.trimmed();
+		const QStringList serial_parts = trimmed_serial.split('.');
+		if (serial_parts.size() >= 4)
+		{
+				serial_suffix = serial_parts.at(3).trimmed();
+		}
+		if (serial_suffix.isEmpty())
+		{
+				serial_suffix = sanitize_windows_folder_name(trimmed_serial);
+				if (serial_suffix.isEmpty())
+				{
+						serial_suffix = "tracker";
+				}
+		}
+
+		const QString type_suffix = normalize_tracker_type_suffix(trimmed_serial, trackerType);
+		QString folder = serial_suffix;
+		if (!type_suffix.isEmpty())
+		{
+				folder += type_suffix;
+		}
+
+		folder = sanitize_windows_folder_name(folder);
+		if (folder.isEmpty())
+		{
+				folder = "tracker";
+		}
+		return folder;
+}
+
 QString trackers_workspace_sessions_path()
 {
 		static bool initialized = false;
@@ -12799,37 +12877,29 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 		ars_trackers_session_download_name = session;
 		ars_trackers_session_download_jobs.clear();
 		ars_trackers_session_download_index = -1;
-		const QString session_suffix = sanitize_workspace_segment(session);
-		QString local_session_id = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-		if (session_suffix.isEmpty() == false)
+		QString local_session_name = QFileInfo(session.trimmed()).fileName();
+		if (local_session_name.isEmpty())
 		{
-				local_session_id = QString("%1_%2").arg(local_session_id, session_suffix);
+				local_session_name = sanitize_windows_folder_name(session);
 		}
-		QString local_session_root =
-				QDir(destination_path).filePath(local_session_id);
-		int local_session_try = 1;
-		while (QDir(local_session_root).exists())
+		if (local_session_name.isEmpty())
 		{
-				local_session_root =
-						QDir(destination_path).filePath(
-								QString("%1_%2").arg(local_session_id).arg(local_session_try));
-				local_session_try++;
+				local_session_name = "session";
 		}
-		const QString local_session_raw_root =
-				QDir(local_session_root).filePath("raw");
-		if (!QDir().mkpath(local_session_raw_root))
+		const QString local_session_root = QDir(destination_path).filePath(local_session_name);
+		if (!QDir().mkpath(local_session_root))
 		{
 				QMessageBox::warning(parent_window, "Download session",
-														 "Could not create workspace raw session directory.");
+														 "Could not create workspace session directory.");
 				log_warning() << "TRACKERS_WORKSPACE_CREATE_FAILED"
-											<< "localSessionId=" << local_session_id
-											<< "rawPath=" << local_session_raw_root;
+											<< "sessionName=" << local_session_name
+											<< "sessionPath=" << local_session_root;
 				return;
 		}
 
 		log_information() << "TRACKERS_WORKSPACE_SESSION_DOWNLOAD_BEGIN"
 							 << "workspaceSessionsPath=" << destination_path
-							 << "localSessionId=" << QFileInfo(local_session_root).fileName()
+							 << "sessionName=" << local_session_name
 							 << "session=" << session
 							 << "trackers=" << presence.ports.size();
 		log_debug() << "session_download_begin generation="
@@ -12837,8 +12907,8 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 								<< "session=" << session
 								<< "trackers=" << presence.ports.size()
 								<< "destination=" << destination_path
-								<< "localSessionId=" << QFileInfo(local_session_root).fileName()
-								<< "rawRoot=" << local_session_raw_root;
+								<< "sessionName=" << local_session_name
+								<< "sessionRoot=" << local_session_root;
 		QStringList target_logs;
 
 		for (int i = 0; i < presence.ports.size(); ++i)
@@ -12846,33 +12916,25 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 				ars_trackers_session_download_job_t job;
 				job.generation = ars_trackers_session_download_generation;
 				job.sessionName = session;
-				job.localSessionId = QFileInfo(local_session_root).fileName();
+				job.localSessionId = local_session_name;
 				job.port = presence.ports.at(i);
 				job.serial = i < presence.trackerSerials.size() ? presence.trackerSerials.at(i) : QString();
 				job.trackerName = i < presence.trackerDisplays.size() ?
 						presence.trackerDisplays.at(i) :
 						presence.ports.at(i);
-				QString tracker_name = job.trackerName.trimmed();
-				if (tracker_name.isEmpty())
-				{
-						tracker_name = presence.ports.at(i);
-				}
-				QString tracker_serial_segment = sanitize_workspace_segment(job.serial);
-				if (tracker_serial_segment.isEmpty())
-				{
-						tracker_serial_segment = sanitize_workspace_segment(tracker_name);
-				}
-				if (tracker_serial_segment.isEmpty())
-				{
-						tracker_serial_segment = sanitize_workspace_segment(job.port);
-				}
-				job.destinationDir = QDir(local_session_raw_root).filePath(tracker_serial_segment);
-				log_information() << "TRACKERS_WORKSPACE_TRACKER_TARGET"
-								 << "localSessionId=" << job.localSessionId
-								 << "trackerSerial=" << tracker_serial_segment
-								 << "port=" << job.port
-								 << "rawTrackerPath=" << job.destinationDir;
 				ars_tracker_device_t *candidate_device = find_ars_tracker_device_by_port(job.port);
+				const QString tracker_type_hint =
+						(candidate_device != nullptr) ? candidate_device->side : QString();
+				const QString tracker_folder_name =
+						makeShortTrackerFolderName(job.serial, tracker_type_hint);
+				job.destinationDir = QDir(local_session_root).filePath(tracker_folder_name);
+				log_information() << "TRACKERS_WORKSPACE_TRACKER_TARGET"
+								 << "sessionName=" << local_session_name
+								 << "fullSerial=" << job.serial
+								 << "trackerType=" << tracker_type_hint
+								 << "trackerFolder=" << tracker_folder_name
+								 << "port=" << job.port
+								 << "trackerPath=" << job.destinationDir;
 				bool connected = (candidate_device != nullptr && candidate_device->connected &&
 													candidate_device->serialPort != nullptr && candidate_device->serialPort->isOpen());
 				QString busy_reason;
@@ -12892,7 +12954,7 @@ void plugin_mcumgr::start_ars_trackers_session_download(const QString &session_n
 										<< "accepted=" << true
 										<< "reason=candidate-from-presence-map";
 				ars_trackers_session_download_jobs.append(job);
-				target_logs.append(QString("%1(%2)").arg(tracker_name, job.port));
+				target_logs.append(QString("%1(%2)").arg(tracker_folder_name, job.port));
 		}
 		log_debug() << "TRACKERS_PARALLEL_TARGETS session=" << session
 								<< "targetCount=" << ars_trackers_session_download_jobs.size()

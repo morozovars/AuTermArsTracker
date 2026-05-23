@@ -54,6 +54,7 @@
 #include "ars_tracker_backend.h"
 #include "ars_tracker_bulk_fw_update_models.h"
 #include "ars_trackers_session_download_coordinator.h"
+class ArsTrackerSessionsTab;
 
 class QSerialPort;
 
@@ -579,6 +580,7 @@ private:
     bool ars_tracker_tab_is_active() const;
     bool ars_trackers_tab_is_active() const;
     void setup_ars_trackers_tab(QTabWidget *tabWidget_orig);
+    void setup_ars_sessions_tab(QTabWidget *tabWidget_orig);
     QString ars_trackers_download_destination_path() const;
     void refresh_ars_trackers_table_from_devices();
     void schedule_ars_trackers_table_refresh(const QString &reason,
@@ -1148,6 +1150,7 @@ private:
     QLabel *lbl_ars_trackers_download_progress_detail = nullptr;
     QProgressBar *progress_ars_trackers_download = nullptr;
     QLabel *lbl_ars_trackers_status = nullptr;
+    ArsTrackerSessionsTab *ars_tracker_sessions_tab = nullptr;
     QSpacerItem *verticalSpacer_ars_tracker_status;
     QWidget *tab_2;
     QWidget *verticalLayoutWidget;

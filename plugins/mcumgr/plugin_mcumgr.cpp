@@ -36,6 +36,7 @@
 #include <QScrollBar>
 #include <QFileInfo>
 #include <QLocale>
+#include <QDir>
 #include <QStandardPaths>
 #include "ars/workspace/ArsLocalWorkspace.h"
 #include "plugin_mcumgr.h"
@@ -43,6 +44,7 @@
 #include "ars_tracker_parser.h"
 #include "ars_tracker_utils.h"
 #include "ars_trackers_ui_state.h"
+#include "ars_tracker_sessions_tab.h"
 
 static const uint16_t timeout_erase_ms = 14000;
 static const uint32_t timeout_ars_tracker_metadata_ms = 60000;
@@ -3023,6 +3025,20 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		tabWidget_orig->addTab(tab, QString("MCUmgr"));
 		tabWidget_orig->addTab(tab_ars_tracker, QString("Tracker Inspector"));
 		setup_ars_trackers_tab(tabWidget_orig);
+		setup_ars_sessions_tab(tabWidget_orig);
+		log_debug() << "Final top tabs after plugin_mcumgr setup:";
+		for (int i = 0; i < tabWidget_orig->count(); ++i)
+		{
+				QWidget *page = tabWidget_orig->widget(i);
+				log_debug() << "Top tab final:"
+										<< "index=" << i
+										<< "title=" << tabWidget_orig->tabText(i)
+										<< "widget=" << page
+										<< "objectName="
+										<< (page != nullptr ? page->objectName() : QString("<null>"))
+										<< "visible=" << (page != nullptr ? page->isVisible() : false)
+										<< "enabled=" << tabWidget_orig->isTabEnabled(i);
+		}
 
 		// Signals
 		connect(this, SIGNAL(plugin_set_status(bool, bool, bool*)), parent_window,
@@ -7060,6 +7076,110 @@ void plugin_mcumgr::setup_ars_trackers_tab(QTabWidget *tabWidget_orig)
 						&plugin_mcumgr::on_btn_ars_trackers_delete_all_sessions_clicked);
 }
 
+void plugin_mcumgr::setup_ars_sessions_tab(QTabWidget *tabWidget_orig)
+{
+		if (tabWidget_orig == nullptr)
+		{
+				log_warning() << "Sessions tab setup skipped: tabWidget_orig is null";
+				return;
+		}
+		log_debug() << "Sessions tab setup begin:"
+								<< "tabWidget=" << tabWidget_orig
+								<< "countBefore=" << tabWidget_orig->count();
+		for (int i = 0; i < tabWidget_orig->count(); ++i)
+		{
+				QWidget *w = tabWidget_orig->widget(i);
+				const QString title = tabWidget_orig->tabText(i);
+				log_debug() << "Top tab before Sessions setup:"
+										<< "index=" << i
+										<< "title=" << title
+										<< "widget=" << w
+										<< "objectName="
+										<< (w != nullptr ? w->objectName() : QString("<null>"));
+
+				const bool object_name_match =
+						(w != nullptr &&
+						 (w->objectName() == "ars_tracker_sessions_tab" ||
+							w->objectName() == "tab_ars_sessions"));
+				const bool title_match = (title.compare("Sessions", Qt::CaseInsensitive) == 0);
+				if (object_name_match || title_match)
+				{
+						ArsTrackerSessionsTab *existing = qobject_cast<ArsTrackerSessionsTab *>(w);
+						if (existing != nullptr)
+						{
+								ars_tracker_sessions_tab = existing;
+						}
+						log_debug() << "Sessions tab already present at index" << i
+												<< "objectName="
+												<< (w != nullptr ? w->objectName() : QString("<null>"));
+						return;
+				}
+		}
+
+		if (ars_tracker_sessions_tab == nullptr)
+		{
+				ars_tracker_sessions_tab = new ArsTrackerSessionsTab(tabWidget_orig);
+				ars_tracker_sessions_tab->setObjectName("ars_tracker_sessions_tab");
+				log_debug() << "Sessions tab widget created:" << ars_tracker_sessions_tab;
+		}
+		else
+		{
+				ars_tracker_sessions_tab->setObjectName("ars_tracker_sessions_tab");
+		}
+
+		int trackers_index = -1;
+		int inspector_index = -1;
+		for (int i = 0; i < tabWidget_orig->count(); ++i)
+		{
+				const QString title = tabWidget_orig->tabText(i);
+				if (title.compare("Trackers", Qt::CaseInsensitive) == 0)
+				{
+						trackers_index = i;
+				}
+				else if (title.compare("Tracker Inspector", Qt::CaseInsensitive) == 0)
+				{
+						inspector_index = i;
+				}
+		}
+
+		int inserted_index = -1;
+		if (trackers_index >= 0)
+		{
+				inserted_index = tabWidget_orig->insertTab(trackers_index + 1,
+																									 ars_tracker_sessions_tab,
+																									 QString("Sessions"));
+		}
+		else if (inspector_index >= 0)
+		{
+				log_warning() << "Sessions tab setup: Trackers tab not found, fallback insert after Tracker Inspector";
+				inserted_index = tabWidget_orig->insertTab(inspector_index + 1,
+																									 ars_tracker_sessions_tab,
+																									 QString("Sessions"));
+		}
+		else
+		{
+				log_warning() << "Sessions tab setup: Trackers and Tracker Inspector tabs not found, fallback append";
+				inserted_index = tabWidget_orig->addTab(ars_tracker_sessions_tab, QString("Sessions"));
+		}
+
+		log_debug() << "Sessions tab added:"
+								<< "insertedIndex=" << inserted_index
+								<< "countAfter=" << tabWidget_orig->count()
+								<< "visible=" << ars_tracker_sessions_tab->isVisible()
+								<< "enabled=" << ars_tracker_sessions_tab->isEnabled()
+								<< "widget=" << ars_tracker_sessions_tab;
+		for (int i = 0; i < tabWidget_orig->count(); ++i)
+		{
+				QWidget *w = tabWidget_orig->widget(i);
+				log_debug() << "Top tab after Sessions setup:"
+										<< "index=" << i
+										<< "title=" << tabWidget_orig->tabText(i)
+										<< "widget=" << w
+										<< "objectName="
+										<< (w != nullptr ? w->objectName() : QString("<null>"));
+		}
+}
+
 QString plugin_mcumgr::ars_trackers_download_destination_path() const
 {
 		QString workspace_sessions_path = trackers_workspace_sessions_path();
@@ -7100,6 +7220,10 @@ void plugin_mcumgr::on_selector_tab_currentChanged(int index)
 	if (ars_trackers_tab_is_active())
 	{
 			schedule_ars_trackers_table_refresh("trackers-tab-active", true);
+	}
+	if (selector_tab_root != nullptr && selector_tab_root->currentWidget() == ars_tracker_sessions_tab)
+	{
+			ars_tracker_sessions_tab->reloadSessions("sessions-tab-active");
 	}
 		maybe_auto_refresh_ars_tracker();
 }

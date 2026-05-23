@@ -2630,8 +2630,10 @@ void AutMainWindow::apply_main_tab_filter()
 				QString title = tabs->tabText(i);
 				bool keep_tab = object_name == "tab_ars_tracker" ||
 												object_name == "tab_ars_trackers" ||
+												object_name == "ars_tracker_sessions_tab" ||
 												title == "Tracker Inspector" ||
-												title == "Trackers";
+												title == "Trackers" ||
+												title == "Sessions";
 
 				if (keep_tab)
 				{
@@ -2664,24 +2666,46 @@ void AutMainWindow::apply_main_tab_filter()
 								 << "widget=" << page;
 		}
 
-		int trackers_index = -1;
+		auto move_tab_to_index = [tabs](const QString &object_name_key, const QString &title_key,
+																		int target_index, const QString &log_name) {
+				int current_index = -1;
+				for (int i = 0; i < tabs->count(); ++i)
+				{
+						QWidget *page = tabs->widget(i);
+						const QString object_name = page != nullptr ? page->objectName() : QString();
+						if (object_name == object_name_key || tabs->tabText(i) == title_key)
+						{
+								current_index = i;
+								break;
+						}
+				}
+				if (current_index < 0 || current_index == target_index)
+				{
+						return;
+				}
+				QWidget *page = tabs->widget(current_index);
+				QString title = tabs->tabText(current_index);
+				tabs->removeTab(current_index);
+				const int safe_target = qBound(0, target_index, tabs->count());
+				tabs->insertTab(safe_target, page, title);
+				qDebug() << "Top tab order adjusted:" << log_name << "moved to index" << safe_target;
+		};
+
+		move_tab_to_index("tab_ars_trackers", "Trackers", 0, "Trackers");
+		move_tab_to_index("tab_ars_tracker", "Tracker Inspector", 1, "Tracker Inspector");
+		move_tab_to_index("ars_tracker_sessions_tab", "Sessions", 2, "Sessions");
+
+		qDebug() << "Top-level tabs after order adjust:";
 		for (int i = 0; i < tabs->count(); ++i)
 		{
 				QWidget *page = tabs->widget(i);
-				QString object_name = page != nullptr ? page->objectName() : QString();
-				if (object_name == "tab_ars_trackers" || tabs->tabText(i) == "Trackers")
-				{
-						trackers_index = i;
-						break;
-				}
-		}
-		if (trackers_index > 0)
-		{
-				QWidget *trackers_page = tabs->widget(trackers_index);
-				QString trackers_title = tabs->tabText(trackers_index);
-				tabs->removeTab(trackers_index);
-				tabs->insertTab(0, trackers_page, trackers_title);
-				qDebug() << "Top tab order adjusted: Trackers moved to index 0";
+				QString object_name = page != nullptr ? page->objectName() : QString("<null>");
+				qDebug() << "index=" << i
+								 << "title=" << tabs->tabText(i)
+								 << "objectName=" << object_name
+								 << "visible=" << (page != nullptr ? page->isVisible() : false)
+								 << "enabled=" << tabs->isTabEnabled(i)
+								 << "widget=" << page;
 		}
 
 		for (int i = 0; i < tabs->count(); ++i)

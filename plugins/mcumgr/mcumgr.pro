@@ -21,6 +21,7 @@ SOURCES += \
     ars_tracker_bulk_fw_update_dialog.cpp \
     ars_tracker_bulk_fw_update_worker.cpp \
     ars_trackers_ui_state.cpp \
+    ars_tracker_sessions_tab.cpp \
     ../../AuTerm/AutEscape.cpp \
     ars_tracker_backend.cpp \
     ars_tracker_utils.cpp \
@@ -56,6 +57,7 @@ HEADERS += \
     ars_tracker_bulk_fw_update_models.h \
     ars_tracker_bulk_fw_update_worker.h \
     ars_trackers_ui_state.h \
+    ars_tracker_sessions_tab.h \
     ../../AuTerm/AutEscape.h \
     ars_tracker_backend.h \
     ars_tracker_utils.h \

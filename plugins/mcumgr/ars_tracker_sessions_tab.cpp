@@ -20,6 +20,7 @@
 #include <algorithm>
 
 #include "ars/workspace/ArsLocalWorkspace.h"
+#include "ars_tracker/ars_session_processing_loader.h"
 
 namespace
 {
@@ -442,6 +443,34 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 
 		const QList<SessionTrackerPair> pairs = scanSessionTrackers(sessionPath);
 		fillSessionTrackersTable(pairs);
+
+		QStringList warnings;
+		const QList<ArsPairProcessedData> loadedPairs =
+				ArsSessionProcessingLoader::loadSession(sessionPath, &warnings);
+		qDebug() << "Sessions tab processedStr load"
+						 << "sessionPath=" << sessionPath
+						 << "pairs=" << loadedPairs.size();
+		for (const ArsPairProcessedData &pair : loadedPairs)
+		{
+				const bool hasLeft = pair.left.has_value();
+				const bool hasRight = pair.right.has_value();
+				const int leftIntegral = hasLeft ? static_cast<int>(pair.left->data.integralStates.size()) : 0;
+				const int leftSplash = hasLeft ? static_cast<int>(pair.left->data.splashRecords.size()) : 0;
+				const int rightIntegral = hasRight ? static_cast<int>(pair.right->data.integralStates.size()) : 0;
+				const int rightSplash = hasRight ? static_cast<int>(pair.right->data.splashRecords.size()) : 0;
+				qDebug() << "Sessions tab processed pair"
+								 << "serial=" << pair.pairSerial
+								 << "left=" << hasLeft
+								 << "right=" << hasRight
+								 << "leftIntegralStates=" << leftIntegral
+								 << "leftSplashRecords=" << leftSplash
+								 << "rightIntegralStates=" << rightIntegral
+								 << "rightSplashRecords=" << rightSplash;
+		}
+		for (const QString &warning : warnings)
+		{
+				qWarning() << "Sessions tab processedStr warning:" << warning;
+		}
 
 		qDebug() << "Sessions tab session page opened"
 						 << "session=" << sessionId

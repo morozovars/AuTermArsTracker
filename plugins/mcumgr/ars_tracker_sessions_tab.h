@@ -22,6 +22,7 @@ class QLineEdit;
 class QPlainTextEdit;
 class QDialog;
 class QProgressBar;
+class QGroupBox;
 
 struct SessionTrackerPair
 {
@@ -110,6 +111,10 @@ private:
 		void startSessionProcessingFlow();
 		void processNextSessionPair();
 		void finishSessionProcessingFlow();
+		QTime sessionStartTimeFromSessionName(const QString &sessionName, bool *timestampValid = nullptr) const;
+		QString formatDurationMs(qint64 durationMs) const;
+		void updateSessionTimeSummary();
+		uint32_t maxIntegralTimestamp(const std::vector<IntegralState> &states) const;
 
 		QStackedWidget *pagesStack = nullptr;
 		QWidget *listPage = nullptr;
@@ -121,6 +126,8 @@ private:
 		QTableWidget *sessionsTable = nullptr;
 		QLabel *sessionTitleLabel = nullptr;
 		QLabel *detailsStatusLabel = nullptr;
+		QLabel *sessionTimeSummaryLabel = nullptr;
+		QLabel *sessionDurationSummaryLabel = nullptr;
 		QDoubleSpinBox *spinTargetDistanceKm = nullptr;
 		QSpinBox *spinTargetAccelerationDistanceM = nullptr;
 		QSpinBox *spinTargetFootload10_3g = nullptr;
@@ -135,6 +142,11 @@ private:
 		QLabel *sessionTrackersEmptyLabel = nullptr;
 		QLabel *statusLabel = nullptr;
 		QString currentSessionId;
+		QTime m_currentSessionStartTime;
+		bool m_currentSessionStartTimestampValid = false;
+		bool m_currentSessionFinishKnown = false;
+		QTime m_currentSessionFinishTime;
+		qint64 m_currentSessionDurationMs = -1;
 
 		QDialog *m_processDialog = nullptr;
 		QLabel *m_processStatusLabel = nullptr;
@@ -144,6 +156,8 @@ private:
 		QList<ArsSessionPairInput> m_processPairInputs;
 		int m_processPairIndex = 0;
 		QStringList m_processProblems;
+		uint32_t m_processMaxIntegralTimestamp = 0;
+		bool m_processHasIntegralTimestamp = false;
 };
 
 #endif // ARS_TRACKER_SESSIONS_TAB_H

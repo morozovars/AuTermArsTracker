@@ -81,8 +81,18 @@ bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
 
 bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
 																						 ArsSessionInfo *outInfo,
+																						 bool *outFileExists,
+																						 bool *outHasPlannedSessionPeriod,
 																						 QString *errorMessage)
 {
+		if (outFileExists != nullptr)
+		{
+				*outFileExists = false;
+		}
+		if (outHasPlannedSessionPeriod != nullptr)
+		{
+				*outHasPlannedSessionPeriod = false;
+		}
 		if (outInfo == nullptr)
 		{
 				if (errorMessage != nullptr)
@@ -100,6 +110,10 @@ bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
 						*errorMessage = QString("SessionInfo.json is missing: %1").arg(filePath);
 				}
 				return false;
+		}
+		if (outFileExists != nullptr)
+		{
+				*outFileExists = true;
 		}
 		if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
 		{
@@ -139,6 +153,11 @@ bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
 		if (!endOk)
 		{
 				info.parameters.endTime = QTime();
+		}
+		info.hasPlannedSessionPeriod = startOk && endOk;
+		if (outHasPlannedSessionPeriod != nullptr)
+		{
+				*outHasPlannedSessionPeriod = info.hasPlannedSessionPeriod;
 		}
 
 		const QJsonValue goalsValue = root.value("goals");

@@ -13,6 +13,8 @@ public:
 																		QString *errorMessage = nullptr);
 		static bool loadSessionInfoJson(const QString &sessionPath,
 																		ArsSessionInfo *outInfo,
+																		bool *outFileExists = nullptr,
+																		bool *outHasPlannedSessionPeriod = nullptr,
 																		QString *errorMessage = nullptr);
 };
 

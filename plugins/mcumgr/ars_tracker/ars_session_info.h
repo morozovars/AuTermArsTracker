@@ -41,6 +41,7 @@ struct ArsSessionInfo
 {
 		ArsSessionParameters parameters;
 		ArsSessionPlannedMetrics plannedMetrics;
+		bool hasPlannedSessionPeriod = false;
 		struct ArsSessionActualTime
 		{
 				bool valid = false;

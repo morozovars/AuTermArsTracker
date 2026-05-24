@@ -75,12 +75,25 @@ private:
 		ArsSessionInfo readSessionInfoFromUi() const;
 		void resetSessionInformationFieldsToDefaults();
 		void applySessionInfoToUi(const ArsSessionInfo &info);
-		bool loadSessionInfoJsonIntoUi(const QString &sessionPath, QStringList *warnings = nullptr);
+		bool loadSessionInfoJsonIntoUi(const QString &sessionPath,
+																 ArsSessionInfo *loadedInfo,
+																 bool *fileExists,
+																 bool *hasPlannedSessionPeriod,
+																 QStringList *warnings = nullptr);
+		bool computeRecommendedPlannedSessionPeriod(const QString &sessionPath,
+																								const QString &sessionId,
+																								const ArsSessionInfo *loadedInfo,
+																								QTime *outRecommendedStart,
+																								QTime *outRecommendedFinish,
+																								QString *sourceTag,
+																								QString *errorReason) const;
 		bool validateSessionInfo(const ArsSessionInfo &info, QStringList *problems) const;
 		bool saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const;
 		void updateSessionTimeSummaryFromMaxTimestamp(uint32_t maxTimestamp100ms, bool hasTimestamp);
 		void setSessionTimeSummaryPlaceholder();
 		void setSessionTimeSummary(const QString &startTime, const QString &finishTime, const QString &duration);
+		QTime roundUpToNextHalfHour(const QTime &time) const;
+		QTime roundDownToPreviousHalfHour(const QTime &time) const;
 		void startSessionProcessingFlow();
 		void processNextSessionPair();
 		void finishSessionProcessingFlow();

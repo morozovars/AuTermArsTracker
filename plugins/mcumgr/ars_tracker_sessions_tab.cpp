@@ -34,6 +34,7 @@
 #include <algorithm>
 
 #include "ars/workspace/ArsLocalWorkspace.h"
+#include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_info_json.h"
 
 namespace
@@ -494,18 +495,66 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 		resetSessionInformationFieldsToDefaults();
 		qDebug() << "Sessions tab session info reset defaults"
 						 << "session=" << sessionId;
+		ArsSessionInfo loadedInfo;
+		bool fileExists = false;
+		bool hasPlannedSessionPeriod = false;
 		QStringList loadWarnings;
-		const bool loaded = loadSessionInfoJsonIntoUi(sessionPath, &loadWarnings);
+		const bool loaded = loadSessionInfoJsonIntoUi(sessionPath, &loadedInfo, &fileExists, &hasPlannedSessionPeriod, &loadWarnings);
 		for (const QString &w : loadWarnings)
 		{
 				qWarning() << "Sessions tab SessionInfo.json load warning" << w;
 		}
+		qDebug() << "Sessions tab SessionInfo planned period state"
+						 << "fileExists=" << fileExists
+						 << "hasPlannedSessionPeriod=" << hasPlannedSessionPeriod
+						 << "reason=" << (loaded ? "loaded" : (fileExists ? "load failed" : "missing file"));
 		if (!loaded)
 		{
 				const QString reason = QFileInfo::exists(QDir(sessionPath).filePath("SessionInfo.json"))
 															 ? "actualTime unavailable in SessionInfo.json"
 															 : "no SessionInfo.json";
 				qDebug() << "Sessions tab session actual time placeholder" << "session=" << sessionId << "reason=" << reason;
+		}
+		if (loaded && hasPlannedSessionPeriod)
+		{
+				qDebug() << "Sessions tab planned period loaded from SessionInfo"
+								 << "start=" << timeSessionStart->time().toString("HH:mm:ss")
+								 << "finish=" << timeSessionFinish->time().toString("HH:mm:ss");
+		}
+		else
+		{
+				qDebug() << "Sessions tab planned period recommendation begin" << "session=" << sessionId;
+				QTime recommendedStart;
+				QTime recommendedFinish;
+				QString source;
+				QString reason;
+				if (computeRecommendedPlannedSessionPeriod(sessionPath,
+																							 sessionId,
+																							 loaded ? &loadedInfo : nullptr,
+																							 &recommendedStart,
+																							 &recommendedFinish,
+																							 &source,
+																							 &reason))
+				{
+						timeSessionStart->setTime(recommendedStart);
+						timeSessionFinish->setTime(recommendedFinish);
+						qDebug() << "Sessions tab planned period recommendation actualStart="
+										 << source.section('|', 0, 0)
+										 << "actualFinish="
+										 << source.section('|', 1, 1)
+										 << "source="
+										 << source.section('|', 2, 2);
+						qDebug() << "Sessions tab planned period recommended"
+										 << "start=" << recommendedStart.toString("HH:mm:ss")
+										 << "finish=" << recommendedFinish.toString("HH:mm:ss");
+				}
+				else
+				{
+						qWarning() << "Sessions tab planned period recommendation unavailable" << "reason=" << reason;
+						qDebug() << "Sessions tab planned period default used"
+										 << "start=" << timeSessionStart->time().toString("HH:mm:ss")
+										 << "finish=" << timeSessionFinish->time().toString("HH:mm:ss");
+				}
 		}
 
 		fillSessionTrackersTable(scanSessionTrackers(sessionPath));
@@ -611,19 +660,31 @@ void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
 		spinTargetFootloadPerMin->setValue(info.plannedMetrics.loadIntensityGPerMin);
 }
 
-bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath, QStringList *warnings)
+bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath,
+																											ArsSessionInfo *loadedInfo,
+																											bool *fileExists,
+																											bool *hasPlannedSessionPeriod,
+																											QStringList *warnings)
 {
 		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
 		qDebug() << "Sessions tab SessionInfo.json load" << "path=" << filePath;
 		if (!QFileInfo::exists(filePath))
 		{
+				if (fileExists != nullptr)
+				{
+						*fileExists = false;
+				}
+				if (hasPlannedSessionPeriod != nullptr)
+				{
+						*hasPlannedSessionPeriod = false;
+				}
 				qDebug() << "Sessions tab SessionInfo.json missing" << "path=" << filePath;
 				return false;
 		}
 
 		ArsSessionInfo info;
 		QString error;
-		if (!ArsSessionInfoJson::loadSessionInfoJson(sessionPath, &info, &error))
+		if (!ArsSessionInfoJson::loadSessionInfoJson(sessionPath, &info, fileExists, hasPlannedSessionPeriod, &error))
 		{
 				qWarning() << "Sessions tab SessionInfo.json load failed" << "path=" << filePath << "error=" << error;
 				if (warnings != nullptr)
@@ -633,6 +694,10 @@ bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath
 				return false;
 		}
 		applySessionInfoToUi(info);
+		if (loadedInfo != nullptr)
+		{
+				*loadedInfo = info;
+		}
 		if (info.actualTime.valid)
 		{
 				setSessionTimeSummary(info.actualTime.startTime, info.actualTime.finishTime, info.actualTime.duration);
@@ -649,6 +714,87 @@ bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath
 								 << "reason=actualTime missing in SessionInfo.json";
 		}
 		qDebug() << "Sessions tab SessionInfo.json loaded" << "ok=true";
+		return true;
+}
+
+bool ArsTrackerSessionsTab::computeRecommendedPlannedSessionPeriod(const QString &sessionPath,
+																																	 const QString &sessionId,
+																																	 const ArsSessionInfo *loadedInfo,
+																																	 QTime *outRecommendedStart,
+																																	 QTime *outRecommendedFinish,
+																																	 QString *sourceTag,
+																																	 QString *errorReason) const
+{
+		if (outRecommendedStart == nullptr || outRecommendedFinish == nullptr)
+		{
+				if (errorReason != nullptr)
+				{
+						*errorReason = "output pointers are null";
+				}
+				return false;
+		}
+
+		QTime actualStart(0, 0, 0);
+		QTime actualFinish;
+		bool hasFinish = false;
+		QString source = "sessionNameAndDurationScan";
+
+		if (loadedInfo != nullptr && loadedInfo->actualTime.valid)
+		{
+				const QTime jsonStart = QTime::fromString(loadedInfo->actualTime.startTime, "HH:mm:ss");
+				const QTime jsonFinish = QTime::fromString(loadedInfo->actualTime.finishTime, "HH:mm:ss");
+				if (jsonStart.isValid() && jsonFinish.isValid())
+				{
+						actualStart = jsonStart;
+						actualFinish = jsonFinish;
+						hasFinish = true;
+						source = "actualTimeJson";
+				}
+		}
+
+		if (!hasFinish)
+		{
+				actualStart = sessionStartTimeFromSessionName(sessionId, nullptr);
+				uint32_t maxTimestamp100ms = 0;
+				bool hasTimestamp = false;
+				QStringList warnings;
+				ArsSessionDurationScanner::scanSessionDuration(sessionPath, &maxTimestamp100ms, &hasTimestamp, &warnings);
+				for (const QString &w : warnings)
+				{
+						qWarning() << "Sessions tab planned period recommendation warning" << w;
+				}
+				if (!hasTimestamp)
+				{
+						if (errorReason != nullptr)
+						{
+								*errorReason = "no actual finish time";
+						}
+						return false;
+				}
+				const qint64 durationMs = static_cast<qint64>(maxTimestamp100ms) * 100;
+				actualFinish = QDateTime(QDate(2000, 1, 1), actualStart).addMSecs(durationMs).time();
+		}
+
+		QTime recommendedStart = roundUpToNextHalfHour(actualStart);
+		QTime recommendedFinish = roundDownToPreviousHalfHour(actualFinish);
+		if (recommendedFinish <= recommendedStart)
+		{
+				qWarning() << "Sessions tab planned period recommendation invalid interval"
+									 << "start=" << recommendedStart.toString("HH:mm:ss")
+									 << "finish=" << recommendedFinish.toString("HH:mm:ss")
+									 << ", fallback applied";
+				recommendedFinish = recommendedStart.addSecs(90 * 60);
+		}
+
+		*outRecommendedStart = QTime(recommendedStart.hour(), recommendedStart.minute(), 0);
+		*outRecommendedFinish = QTime(recommendedFinish.hour(), recommendedFinish.minute(), 0);
+		if (sourceTag != nullptr)
+		{
+				*sourceTag = QString("%1|%2|%3")
+											 .arg(actualStart.toString("HH:mm:ss"),
+														actualFinish.toString("HH:mm:ss"),
+														source);
+		}
 		return true;
 }
 
@@ -1040,6 +1186,35 @@ void ArsTrackerSessionsTab::setSessionTimeSummary(const QString &startTime, cons
 {
 		sessionTimeSummaryLabel->setText(QString("Session time: %1 - %2").arg(startTime, finishTime));
 		sessionDurationSummaryLabel->setText(QString("Duration: %1").arg(duration));
+}
+
+QTime ArsTrackerSessionsTab::roundUpToNextHalfHour(const QTime &time) const
+{
+		if (!time.isValid())
+		{
+				return QTime(0, 0, 0);
+		}
+		const int m = time.minute();
+		const int s = time.second();
+		if ((m == 0 || m == 30) && s == 0)
+		{
+				return QTime(time.hour(), m, 0);
+		}
+		if (m < 30)
+		{
+				return QTime(time.hour(), 30, 0);
+		}
+		return time.addSecs((60 - m) * 60 - s);
+}
+
+QTime ArsTrackerSessionsTab::roundDownToPreviousHalfHour(const QTime &time) const
+{
+		if (!time.isValid())
+		{
+				return QTime(0, 0, 0);
+		}
+		const int minute = time.minute() < 30 ? 0 : 30;
+		return QTime(time.hour(), minute, 0);
 }
 
 uint32_t ArsTrackerSessionsTab::maxIntegralTimestamp(const std::vector<IntegralState> &states) const

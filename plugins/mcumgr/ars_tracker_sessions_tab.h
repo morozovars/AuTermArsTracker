@@ -7,6 +7,8 @@
 #include <QTime>
 #include <QStringList>
 
+#include "ars_tracker/ars_session_processing_loader.h"
+
 class QPushButton;
 class QTableWidget;
 class QLabel;
@@ -66,17 +68,10 @@ struct ArsSessionPlannedMetrics
 		int dribbles = 0;
 };
 
-struct ArsSessionFieldInfo
-{
-		int widthM = 40;
-		int lengthM = 60;
-};
-
 struct ArsSessionInfo
 {
 		ArsSessionParameters parameters;
-		ArsSessionPlannedMetrics plannedMetrics;
-		ArsSessionFieldInfo field;
+        ArsSessionPlannedMetrics plannedMetrics;
 };
 
 class ArsTrackerSessionsTab : public QWidget
@@ -112,10 +107,9 @@ private:
 		ArsSessionInfo readSessionInfoFromUi() const;
 		bool validateSessionInfo(const ArsSessionInfo &info, QStringList *problems) const;
 		bool saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const;
-		void runProcessForSession(QLabel *progressTextLabel,
-														QProgressBar *progressBar,
-														QPlainTextEdit *problemsView,
-														QPushButton *closeButton);
+		void startSessionProcessingFlow();
+		void processNextSessionPair();
+		void finishSessionProcessingFlow();
 
 		QStackedWidget *pagesStack = nullptr;
 		QWidget *listPage = nullptr;
@@ -141,6 +135,15 @@ private:
 		QLabel *sessionTrackersEmptyLabel = nullptr;
 		QLabel *statusLabel = nullptr;
 		QString currentSessionId;
+
+		QDialog *m_processDialog = nullptr;
+		QLabel *m_processStatusLabel = nullptr;
+		QProgressBar *m_processProgressBar = nullptr;
+		QPlainTextEdit *m_processResultText = nullptr;
+		QPushButton *m_processCloseButton = nullptr;
+		QList<ArsSessionPairInput> m_processPairInputs;
+		int m_processPairIndex = 0;
+		QStringList m_processProblems;
 };
 
 #endif // ARS_TRACKER_SESSIONS_TAB_H

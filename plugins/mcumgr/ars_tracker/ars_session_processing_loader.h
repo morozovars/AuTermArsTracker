@@ -22,9 +22,24 @@ struct ArsPairProcessedData
 		std::optional<ArsFootProcessedData> right;
 };
 
+struct ArsSessionPairInput
+{
+		QString pairSerial;
+		QString leftTrackerFolderName;
+		QString rightTrackerFolderName;
+		QString leftProcessedStrPath;
+		QString rightProcessedStrPath;
+		bool hasLeft = false;
+		bool hasRight = false;
+};
+
 class ArsSessionProcessingLoader
 {
 public:
+		static QList<ArsSessionPairInput> scanSessionPairs(const QString &sessionPath,
+																									 QStringList *warnings = nullptr);
+		static ArsPairProcessedData loadPair(const ArsSessionPairInput &pairInput,
+																				 QStringList *warnings = nullptr);
 		static QList<ArsPairProcessedData> loadSession(const QString &sessionPath,
 																							 QStringList *warnings = nullptr);
 };

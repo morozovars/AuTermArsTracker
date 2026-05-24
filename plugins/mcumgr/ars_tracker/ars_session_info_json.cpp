@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QChar>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -49,10 +50,20 @@ bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
 		root["plannedMetrics"] = planned;
 		root["startTime"] = info.parameters.startTime.toString("HH:mm:ss");
 		root["endTime"] = info.parameters.endTime.toString("HH:mm:ss");
-		// TODO: separate planned session period and actual processed session time in SessionInfo.json schema.
+		// TODO: rename root startTime/endTime to plannedStartTime/plannedEndTime in a future schema migration.
 		root["type"] = info.parameters.type;
 		root["location"] = info.parameters.location;
 		root["goals"] = goals;
+		if (info.actualTime.valid)
+		{
+				QJsonObject actual;
+				actual["startTime"] = info.actualTime.startTime;
+				actual["finishTime"] = info.actualTime.finishTime;
+				actual["duration"] = info.actualTime.duration;
+				actual["durationMs"] = static_cast<qint64>(info.actualTime.durationMs);
+				actual["maxIntegralTimestamp100ms"] = static_cast<qint64>(info.actualTime.maxIntegralTimestamp100ms);
+				root["actualTime"] = actual;
+		}
 
 		QFile file(filePath);
 		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
@@ -164,6 +175,36 @@ bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
 		info.plannedMetrics.touches = planned.value("touches").toInt(0);
 		info.plannedMetrics.shots = planned.value("shots").toInt(0);
 		info.plannedMetrics.dribbles = planned.value("dribbles").toInt(0);
+
+		const QJsonObject actual = root.value("actualTime").toObject();
+		const QString actualStart = actual.value("startTime").toString().trimmed();
+		const QString actualFinish = actual.value("finishTime").toString().trimmed();
+		QString actualDuration = actual.value("duration").toString().trimmed();
+		const qint64 durationMs = actual.value("durationMs").toVariant().toLongLong();
+		const uint32_t maxTs = static_cast<uint32_t>(actual.value("maxIntegralTimestamp100ms").toVariant().toULongLong());
+		if (!actualStart.isEmpty() && !actualFinish.isEmpty())
+		{
+				if (actualDuration.isEmpty() && durationMs >= 0)
+				{
+						const qint64 totalSeconds = durationMs / 1000;
+						const qint64 hours = totalSeconds / 3600;
+						const qint64 minutes = (totalSeconds % 3600) / 60;
+						const qint64 seconds = totalSeconds % 60;
+						actualDuration = QString("%1:%2:%3")
+								.arg(hours, 2, 10, QChar('0'))
+								.arg(minutes, 2, 10, QChar('0'))
+								.arg(seconds, 2, 10, QChar('0'));
+				}
+				if (!actualDuration.isEmpty())
+				{
+						info.actualTime.valid = true;
+						info.actualTime.startTime = actualStart;
+						info.actualTime.finishTime = actualFinish;
+						info.actualTime.duration = actualDuration;
+						info.actualTime.durationMs = durationMs > 0 ? durationMs : 0;
+						info.actualTime.maxIntegralTimestamp100ms = maxTs;
+				}
+		}
 
 		*outInfo = info;
 		return true;

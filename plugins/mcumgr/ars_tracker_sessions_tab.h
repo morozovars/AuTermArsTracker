@@ -78,9 +78,9 @@ private:
 		bool loadSessionInfoJsonIntoUi(const QString &sessionPath, QStringList *warnings = nullptr);
 		bool validateSessionInfo(const ArsSessionInfo &info, QStringList *problems) const;
 		bool saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const;
-		void startInitialSessionDurationScan(const QString &sessionPath, const QString &sessionId);
-		void scanAndUpdateSessionTime(const QString &sessionPath, const QString &sessionId);
 		void updateSessionTimeSummaryFromMaxTimestamp(uint32_t maxTimestamp100ms, bool hasTimestamp);
+		void setSessionTimeSummaryPlaceholder();
+		void setSessionTimeSummary(const QString &startTime, const QString &finishTime, const QString &duration);
 		void startSessionProcessingFlow();
 		void processNextSessionPair();
 		void finishSessionProcessingFlow();
@@ -122,7 +122,6 @@ private:
 		bool m_currentSessionFinishKnown = false;
 		QTime m_currentSessionFinishTime;
 		qint64 m_currentSessionDurationMs = -1;
-		bool m_currentSessionDurationCalculating = false;
 
 		QDialog *m_processDialog = nullptr;
 		QLabel *m_processStatusLabel = nullptr;
@@ -134,6 +133,8 @@ private:
 		QStringList m_processProblems;
 		uint32_t m_processMaxIntegralTimestamp = 0;
 		bool m_processHasIntegralTimestamp = false;
+		bool m_processValidationOk = true;
+		ArsSessionInfo m_pendingProcessSessionInfo;
 };
 
 #endif // ARS_TRACKER_SESSIONS_TAB_H

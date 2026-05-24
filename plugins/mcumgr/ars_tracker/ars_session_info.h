@@ -4,6 +4,8 @@
 #include <QTime>
 #include <QString>
 #include <QStringList>
+#include <QtGlobal>
+#include <cstdint>
 
 struct ArsSessionTargetSettings
 {
@@ -39,6 +41,15 @@ struct ArsSessionInfo
 {
 		ArsSessionParameters parameters;
 		ArsSessionPlannedMetrics plannedMetrics;
+		struct ArsSessionActualTime
+		{
+				bool valid = false;
+				QString startTime;
+				QString finishTime;
+				QString duration;
+				qint64 durationMs = 0;
+				uint32_t maxIntegralTimestamp100ms = 0;
+		} actualTime;
 };
 
 #endif // ARS_SESSION_INFO_H

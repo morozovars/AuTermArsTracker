@@ -34,7 +34,6 @@
 #include <algorithm>
 
 #include "ars/workspace/ArsLocalWorkspace.h"
-#include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_info_json.h"
 
 namespace
@@ -487,29 +486,31 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 		}
 		currentSessionId = sessionId;
 		sessionTitleLabel->setText(formatSessionDisplayName(sessionId));
-		m_currentSessionStartTime = sessionStartTimeFromSessionName(sessionId, &m_currentSessionStartTimestampValid);
+		m_currentSessionStartTime = QTime(0, 0, 0);
+		m_currentSessionStartTimestampValid = false;
 		m_currentSessionFinishKnown = false;
 		m_currentSessionDurationMs = -1;
-		m_currentSessionDurationCalculating = true;
-		updateSessionTimeSummary();
+		setSessionTimeSummaryPlaceholder();
 		resetSessionInformationFieldsToDefaults();
 		qDebug() << "Sessions tab session info reset defaults"
 						 << "session=" << sessionId;
 		QStringList loadWarnings;
-		loadSessionInfoJsonIntoUi(sessionPath, &loadWarnings);
+		const bool loaded = loadSessionInfoJsonIntoUi(sessionPath, &loadWarnings);
 		for (const QString &w : loadWarnings)
 		{
 				qWarning() << "Sessions tab SessionInfo.json load warning" << w;
 		}
-		qDebug() << "Sessions tab session time initial"
-						 << "sessionName=" << sessionId
-						 << "startTime=" << m_currentSessionStartTime.toString("HH:mm:ss")
-						 << "timestampValid=" << m_currentSessionStartTimestampValid;
+		if (!loaded)
+		{
+				const QString reason = QFileInfo::exists(QDir(sessionPath).filePath("SessionInfo.json"))
+															 ? "actualTime unavailable in SessionInfo.json"
+															 : "no SessionInfo.json";
+				qDebug() << "Sessions tab session actual time placeholder" << "session=" << sessionId << "reason=" << reason;
+		}
 
 		fillSessionTrackersTable(scanSessionTrackers(sessionPath));
 		detailsStatusLabel->setText("Ready to process");
 		pagesStack->setCurrentWidget(detailsPage);
-		startInitialSessionDurationScan(sessionPath, sessionId);
 }
 
 ArsSessionTargetSettings ArsTrackerSessionsTab::readTargetSettingsFromUi() const
@@ -632,6 +633,21 @@ bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath
 				return false;
 		}
 		applySessionInfoToUi(info);
+		if (info.actualTime.valid)
+		{
+				setSessionTimeSummary(info.actualTime.startTime, info.actualTime.finishTime, info.actualTime.duration);
+				qDebug() << "Sessions tab session actual time loaded"
+								 << "start=" << info.actualTime.startTime
+								 << "finish=" << info.actualTime.finishTime
+								 << "duration=" << info.actualTime.duration;
+		}
+		else
+		{
+				setSessionTimeSummaryPlaceholder();
+				qDebug() << "Sessions tab session actual time placeholder"
+								 << "session=" << currentSessionId
+								 << "reason=actualTime missing in SessionInfo.json";
+		}
 		qDebug() << "Sessions tab SessionInfo.json loaded" << "ok=true";
 		return true;
 }
@@ -641,60 +657,26 @@ bool ArsTrackerSessionsTab::saveSessionInfoJson(const QString &sessionPath, cons
 		return ArsSessionInfoJson::saveSessionInfoJson(sessionPath, info, errorMessage);
 }
 
-void ArsTrackerSessionsTab::startInitialSessionDurationScan(const QString &sessionPath, const QString &sessionId)
-{
-		qDebug() << "Sessions tab session duration scan begin" << "path=" << sessionPath;
-		QTimer::singleShot(0, this, [this, sessionPath, sessionId]() {
-				scanAndUpdateSessionTime(sessionPath, sessionId);
-		});
-}
-
-void ArsTrackerSessionsTab::scanAndUpdateSessionTime(const QString &sessionPath, const QString &sessionId)
-{
-		if (currentSessionId != sessionId)
-		{
-				return;
-		}
-		uint32_t maxTimestamp100ms = 0;
-		bool hasTimestamp = false;
-		QStringList warnings;
-		// TODO: move initial session duration scan to worker thread if opening large sessions becomes slow.
-		ArsSessionDurationScanner::scanSessionDuration(sessionPath, &maxTimestamp100ms, &hasTimestamp, &warnings);
-		for (const QString &w : warnings)
-		{
-				qWarning() << "Sessions tab session duration scan warning" << w;
-		}
-		updateSessionTimeSummaryFromMaxTimestamp(maxTimestamp100ms, hasTimestamp);
-}
-
 void ArsTrackerSessionsTab::updateSessionTimeSummaryFromMaxTimestamp(uint32_t maxTimestamp100ms, bool hasTimestamp)
 {
-		m_currentSessionDurationCalculating = false;
 		if (hasTimestamp)
 		{
 				m_currentSessionDurationMs = static_cast<qint64>(maxTimestamp100ms) * 100;
-				const QDateTime finish = QDateTime(QDate(2000, 1, 1), m_currentSessionStartTime).addMSecs(m_currentSessionDurationMs);
+				const QTime actualStart = sessionStartTimeFromSessionName(currentSessionId, nullptr);
+				const QDateTime finish = QDateTime(QDate(2000, 1, 1), actualStart).addMSecs(m_currentSessionDurationMs);
 				m_currentSessionFinishTime = finish.time();
 				m_currentSessionFinishKnown = true;
-				qDebug() << "Sessions tab session duration scan done"
-								 << "hasTimestamp=" << hasTimestamp
-								 << "maxTimestamp100ms=" << maxTimestamp100ms
-								 << "durationMs=" << m_currentSessionDurationMs
-								 << "finishTime=" << m_currentSessionFinishTime.toString("HH:mm:ss")
-								 << "duration=" << formatDurationMs(m_currentSessionDurationMs);
+				m_currentSessionStartTime = actualStart;
+				setSessionTimeSummary(actualStart.toString("HH:mm:ss"),
+															m_currentSessionFinishTime.toString("HH:mm:ss"),
+															formatDurationMs(m_currentSessionDurationMs));
 		}
 		else
 		{
-				m_currentSessionFinishKnown = false;
 				m_currentSessionDurationMs = -1;
-				qWarning() << "Sessions tab session duration scan done"
-									 << "hasTimestamp=false"
-									 << "maxTimestamp100ms=0"
-									 << "durationMs=-1"
-									 << "finishTime=--:--:--"
-									 << "duration=--:--:--";
+				m_currentSessionFinishKnown = false;
+				setSessionTimeSummaryPlaceholder();
 		}
-		updateSessionTimeSummary();
 }
 
 void ArsTrackerSessionsTab::onProcessSessionClicked()
@@ -716,6 +698,7 @@ void ArsTrackerSessionsTab::onProcessSessionClicked()
 		m_processPairIndex = 0;
 		m_processMaxIntegralTimestamp = 0;
 		m_processHasIntegralTimestamp = false;
+		m_processValidationOk = true;
 
 		m_processDialog = new QDialog(this);
 		m_processDialog->setWindowTitle("Processing session");
@@ -755,19 +738,13 @@ void ArsTrackerSessionsTab::startSessionProcessingFlow()
 		QApplication::setOverrideCursor(Qt::WaitCursor);
 		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
 		qDebug() << "Sessions tab process begin" << "sessionPath=" << sessionPath;
+		qDebug() << "Sessions tab actual time calculation begin" << "session=" << currentSessionId;
 
-		const ArsSessionInfo info = readSessionInfoFromUi();
-		if (!validateSessionInfo(info, &m_processProblems))
+		m_pendingProcessSessionInfo = readSessionInfoFromUi();
+		if (!validateSessionInfo(m_pendingProcessSessionInfo, &m_processProblems))
 		{
+				m_processValidationOk = false;
 				qWarning() << "Sessions tab process validation failed";
-		}
-		else
-		{
-				QString saveError;
-				if (!saveSessionInfoJson(sessionPath, info, &saveError))
-				{
-						m_processProblems.append(QString("SessionInfo.json save failed: %1").arg(saveError));
-				}
 		}
 
 		if (m_processProblems.isEmpty())
@@ -842,10 +819,9 @@ void ArsTrackerSessionsTab::processNextSessionPair()
 		}
 		if (m_processHasIntegralTimestamp)
 		{
-				qDebug() << "Sessions tab process duration update"
-								 << "pair=" << pairInput.pairSerial
-								 << "maxTimestamp100ms=" << m_processMaxIntegralTimestamp
-								 << "durationMs=" << (static_cast<qint64>(m_processMaxIntegralTimestamp) * 100);
+				qDebug() << "Sessions tab actual time update pair="
+								 << pairInput.pairSerial
+								 << "maxTimestamp100ms=" << m_processMaxIntegralTimestamp;
 		}
 
 		if (!pairInput.hasLeft)
@@ -925,11 +901,26 @@ void ArsTrackerSessionsTab::processNextSessionPair()
 
 void ArsTrackerSessionsTab::finishSessionProcessingFlow()
 {
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
 		const int totalPairs = m_processPairInputs.size();
 		const int processedPairs = m_processPairIndex;
+		bool hasActualTime = false;
 		if (m_processHasIntegralTimestamp)
 		{
 				updateSessionTimeSummaryFromMaxTimestamp(m_processMaxIntegralTimestamp, true);
+				hasActualTime = true;
+				m_pendingProcessSessionInfo.actualTime.valid = true;
+				m_pendingProcessSessionInfo.actualTime.startTime = m_currentSessionStartTime.toString("HH:mm:ss");
+				m_pendingProcessSessionInfo.actualTime.finishTime = m_currentSessionFinishTime.toString("HH:mm:ss");
+				m_pendingProcessSessionInfo.actualTime.duration = formatDurationMs(m_currentSessionDurationMs);
+				m_pendingProcessSessionInfo.actualTime.durationMs = m_currentSessionDurationMs;
+				m_pendingProcessSessionInfo.actualTime.maxIntegralTimestamp100ms = m_processMaxIntegralTimestamp;
+				qDebug() << "Sessions tab actual time calculated"
+								 << "start=" << m_pendingProcessSessionInfo.actualTime.startTime
+								 << "finish=" << m_pendingProcessSessionInfo.actualTime.finishTime
+								 << "duration=" << m_pendingProcessSessionInfo.actualTime.duration
+								 << "durationMs=" << m_pendingProcessSessionInfo.actualTime.durationMs
+								 << "maxTimestamp100ms=" << m_pendingProcessSessionInfo.actualTime.maxIntegralTimestamp100ms;
 				qDebug() << "Sessions tab process duration final"
 								 << "maxTimestamp100ms=" << m_processMaxIntegralTimestamp
 								 << "durationMs=" << m_currentSessionDurationMs
@@ -939,8 +930,32 @@ void ArsTrackerSessionsTab::finishSessionProcessingFlow()
 		else
 		{
 				updateSessionTimeSummaryFromMaxTimestamp(0, false);
-				m_processProblems.append("Unable to calculate session duration: no integral state timestamps found.");
-				qWarning() << "Sessions tab process duration unavailable: no integral states";
+				m_pendingProcessSessionInfo.actualTime.valid = false;
+				m_processProblems.append("Unable to calculate actual session time: no integral state timestamps found.");
+				qWarning() << "Sessions tab actual time unavailable: no integral states";
+		}
+
+		if (m_processValidationOk)
+		{
+				QString saveError;
+				if (!saveSessionInfoJson(sessionPath, m_pendingProcessSessionInfo, &saveError))
+				{
+						m_processProblems.append(QString("SessionInfo.json save failed: %1").arg(saveError));
+						qWarning() << "Sessions tab SessionInfo.json save failed" << "path=" << QDir(sessionPath).filePath("SessionInfo.json") << "error=" << saveError;
+				}
+				else
+				{
+						if (hasActualTime)
+						{
+								qDebug() << "Sessions tab SessionInfo.json saved with actualTime" << "path=" << QDir(sessionPath).filePath("SessionInfo.json");
+						}
+						else
+						{
+								qDebug() << "Sessions tab SessionInfo.json saved without actualTime"
+												 << "path=" << QDir(sessionPath).filePath("SessionInfo.json")
+												 << "reason=no integral state timestamps";
+						}
+				}
 		}
 
 		const bool ok = m_processProblems.isEmpty();
@@ -1006,14 +1021,24 @@ QString ArsTrackerSessionsTab::formatDurationMs(qint64 durationMs) const
 
 void ArsTrackerSessionsTab::updateSessionTimeSummary()
 {
-		const QString start = m_currentSessionStartTime.toString("HH:mm:ss");
-		const QString finish = m_currentSessionDurationCalculating
-																 ? "calculating..."
-																 : (m_currentSessionFinishKnown ? m_currentSessionFinishTime.toString("HH:mm:ss") : "--:--:--");
-		const QString duration = m_currentSessionDurationCalculating
-																	 ? "calculating..."
-																	 : (m_currentSessionDurationMs >= 0 ? formatDurationMs(m_currentSessionDurationMs) : "--:--:--");
-		sessionTimeSummaryLabel->setText(QString("Session time: %1 - %2").arg(start, finish));
+		if (m_currentSessionFinishKnown && m_currentSessionDurationMs >= 0)
+		{
+				setSessionTimeSummary(m_currentSessionStartTime.toString("HH:mm:ss"),
+															m_currentSessionFinishTime.toString("HH:mm:ss"),
+															formatDurationMs(m_currentSessionDurationMs));
+				return;
+		}
+		setSessionTimeSummaryPlaceholder();
+}
+
+void ArsTrackerSessionsTab::setSessionTimeSummaryPlaceholder()
+{
+		setSessionTimeSummary("--:--:--", "--:--:--", "--:--:--");
+}
+
+void ArsTrackerSessionsTab::setSessionTimeSummary(const QString &startTime, const QString &finishTime, const QString &duration)
+{
+		sessionTimeSummaryLabel->setText(QString("Session time: %1 - %2").arg(startTime, finishTime));
 		sessionDurationSummaryLabel->setText(QString("Duration: %1").arg(duration));
 }
 

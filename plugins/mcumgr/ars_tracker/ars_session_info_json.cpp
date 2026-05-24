@@ -1,0 +1,170 @@
+#include "ars_session_info_json.h"
+
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+namespace
+{
+QTime parse_time_value(const QJsonValue &value, bool *ok = nullptr)
+{
+		const QString raw = value.toString().trimmed();
+		QTime t = QTime::fromString(raw, "HH:mm:ss");
+		if (!t.isValid())
+		{
+				t = QTime::fromString(raw, "HH:mm");
+		}
+		if (ok != nullptr)
+		{
+				*ok = t.isValid();
+		}
+		return t;
+}
+}
+
+bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
+																						 const ArsSessionInfo &info,
+																						 QString *errorMessage)
+{
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QJsonObject planned;
+		planned["distanceKm"] = info.plannedMetrics.distanceKm;
+		planned["accelerationDistanceM"] = info.plannedMetrics.accelerationDistanceM;
+		planned["footloadPerLeg"] = info.plannedMetrics.footloadPerLeg;
+		planned["loadIntensityGPerMin"] = info.plannedMetrics.loadIntensityGPerMin;
+		planned["maxSpeedMps"] = info.plannedMetrics.maxSpeedMps;
+		planned["touches"] = info.plannedMetrics.touches;
+		planned["shots"] = info.plannedMetrics.shots;
+		planned["dribbles"] = info.plannedMetrics.dribbles;
+
+		QJsonArray goals;
+		for (const QString &goal : info.parameters.goals)
+		{
+				goals.append(goal);
+		}
+
+		QJsonObject root;
+		root["plannedMetrics"] = planned;
+		root["startTime"] = info.parameters.startTime.toString("HH:mm:ss");
+		root["endTime"] = info.parameters.endTime.toString("HH:mm:ss");
+		// TODO: separate planned session period and actual processed session time in SessionInfo.json schema.
+		root["type"] = info.parameters.type;
+		root["location"] = info.parameters.location;
+		root["goals"] = goals;
+
+		QFile file(filePath);
+		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Failed to open file for write: %1").arg(filePath);
+				}
+				return false;
+		}
+		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+		file.close();
+		return true;
+}
+
+bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
+																						 ArsSessionInfo *outInfo,
+																						 QString *errorMessage)
+{
+		if (outInfo == nullptr)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Output session info pointer is null";
+				}
+				return false;
+		}
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QFile file(filePath);
+		if (!file.exists())
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("SessionInfo.json is missing: %1").arg(filePath);
+				}
+				return false;
+		}
+		if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Failed to open file for read: %1").arg(filePath);
+				}
+				return false;
+		}
+		const QByteArray bytes = file.readAll();
+		file.close();
+
+		QJsonParseError parseError;
+		const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseError);
+		if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Invalid JSON in %1: %2").arg(filePath, parseError.errorString());
+				}
+				return false;
+		}
+
+		const QJsonObject root = doc.object();
+		ArsSessionInfo info;
+		info.parameters.type = root.value("type").toString().trimmed();
+		info.parameters.location = root.value("location").toString();
+
+		bool startOk = false;
+		bool endOk = false;
+		info.parameters.startTime = parse_time_value(root.value("startTime"), &startOk);
+		info.parameters.endTime = parse_time_value(root.value("endTime"), &endOk);
+		if (!startOk)
+		{
+				info.parameters.startTime = QTime();
+		}
+		if (!endOk)
+		{
+				info.parameters.endTime = QTime();
+		}
+
+		const QJsonValue goalsValue = root.value("goals");
+		if (goalsValue.isArray())
+		{
+				for (const QJsonValue &v : goalsValue.toArray())
+				{
+						const QString s = v.toString().trimmed();
+						if (!s.isEmpty())
+						{
+								info.parameters.goals.append(s);
+						}
+				}
+		}
+		else if (goalsValue.isString())
+		{
+				const QStringList lines = goalsValue.toString().split('\n');
+				for (const QString &line : lines)
+				{
+						const QString trimmed = line.trimmed();
+						if (!trimmed.isEmpty())
+						{
+								info.parameters.goals.append(trimmed);
+						}
+				}
+		}
+
+		const QJsonObject planned = root.value("plannedMetrics").toObject();
+		info.plannedMetrics.distanceKm = planned.value("distanceKm").toDouble(0.0);
+		info.plannedMetrics.accelerationDistanceM = planned.value("accelerationDistanceM").toInt(0);
+		info.plannedMetrics.footloadPerLeg = planned.value("footloadPerLeg").toInt(0);
+		info.plannedMetrics.loadIntensityGPerMin = planned.value("loadIntensityGPerMin").toDouble(0.0);
+		info.plannedMetrics.maxSpeedMps = planned.value("maxSpeedMps").toDouble(0.0);
+		info.plannedMetrics.touches = planned.value("touches").toInt(0);
+		info.plannedMetrics.shots = planned.value("shots").toInt(0);
+		info.plannedMetrics.dribbles = planned.value("dribbles").toInt(0);
+
+		*outInfo = info;
+		return true;
+}

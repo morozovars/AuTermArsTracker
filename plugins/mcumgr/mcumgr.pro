@@ -18,6 +18,8 @@ TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 SOURCES += \
     ../../AuTerm/AutScrollEdit.cpp \
     ars_tracker/ars_processed_str_parser.cpp \
+    ars_tracker/ars_session_duration_scanner.cpp \
+    ars_tracker/ars_session_info_json.cpp \
     ars_tracker/ars_session_processing_loader.cpp \
     ars_trackers_session_download_coordinator.cpp \
     ars_tracker_bulk_fw_update_dialog.cpp \
@@ -55,6 +57,9 @@ HEADERS += \
     ../../AuTerm/AutPlugin.h \
     ../../AuTerm/AutScrollEdit.h \
     ars_tracker/ars_processed_str_parser.h \
+    ars_tracker/ars_session_duration_scanner.h \
+    ars_tracker/ars_session_info.h \
+    ars_tracker/ars_session_info_json.h \
     ars_tracker/ars_session_processing_loader.h \
     ars_trackers_session_download_coordinator.h \
     ars_tracker_bulk_fw_update_dialog.h \

@@ -9,16 +9,12 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
-#include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
@@ -26,6 +22,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTableWidget>
@@ -37,10 +34,14 @@
 #include <algorithm>
 
 #include "ars/workspace/ArsLocalWorkspace.h"
+#include "ars_tracker/ars_session_duration_scanner.h"
+#include "ars_tracker/ars_session_info_json.h"
 
 namespace
 {
 constexpr int kMaxMalformedLinesToLog = 10;
+const QTime kDefaultPlannedStart(10, 0, 0);
+const QTime kDefaultPlannedFinish(11, 30, 0);
 
 QString normalize_pair_serial(const QString &serial)
 {
@@ -65,6 +66,16 @@ bool parse_unix_timestamp_session_name(const QString &name, QDateTime *out)
 				*out = dt;
 		}
 		return true;
+}
+
+qint64 session_sort_key_seconds(const QFileInfo &sessionInfo)
+{
+		QDateTime ts;
+		if (parse_unix_timestamp_session_name(sessionInfo.fileName(), &ts))
+		{
+				return ts.toSecsSinceEpoch();
+		}
+		return sessionInfo.lastModified().toSecsSinceEpoch();
 }
 }
 
@@ -110,7 +121,7 @@ void ArsTrackerSessionsTab::buildListPage()
 		sessionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		sessionsTable->verticalHeader()->setVisible(false);
 		sessionsTable->horizontalHeader()->setStretchLastSection(true);
-		sessionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+		sessionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
 		sessionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
 		layout->addWidget(sessionsTable, 1, 0, 1, 1);
 
@@ -121,6 +132,7 @@ void ArsTrackerSessionsTab::buildListPage()
 		connect(reloadButton, &QPushButton::clicked, this, [this]() { reloadSessions("reload"); });
 
 		pagesStack->addWidget(listPage);
+		scheduleSessionsListColumnResize();
 }
 
 void ArsTrackerSessionsTab::buildDetailsPage()
@@ -160,11 +172,11 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		timeSessionStart = new QTimeEdit(parametersBox);
 		timeSessionStart->setObjectName("time_session_start");
 		timeSessionStart->setDisplayFormat("HH:mm");
-		timeSessionStart->setTime(QTime(10, 0));
+		timeSessionStart->setTime(kDefaultPlannedStart);
 		timeSessionFinish = new QTimeEdit(parametersBox);
 		timeSessionFinish->setObjectName("time_session_finish");
 		timeSessionFinish->setDisplayFormat("HH:mm");
-		timeSessionFinish->setTime(QTime(11, 30));
+		timeSessionFinish->setTime(kDefaultPlannedFinish);
 		periodLayout->addWidget(timeSessionStart);
 		periodLayout->addWidget(new QLabel("-", parametersBox));
 		periodLayout->addWidget(timeSessionFinish);
@@ -357,6 +369,9 @@ QList<LocalSessionInfo> ArsTrackerSessionsTab::scanLocalSessions(const QString &
 				return out;
 		}
 		const QFileInfoList sessionDirs = sessionsDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
+		QFileInfo newestInfo;
+		QFileInfo oldestInfo;
+		bool hasAny = false;
 		for (const QFileInfo &sessionInfo : sessionDirs)
 		{
 				LocalSessionInfo local;
@@ -365,10 +380,31 @@ QList<LocalSessionInfo> ArsTrackerSessionsTab::scanLocalSessions(const QString &
 				local.absolutePath = sessionInfo.absoluteFilePath();
 				local.trackersDisplayText = buildTrackersDisplayText(scanSessionTrackers(local.absolutePath));
 				out.append(local);
+				if (!hasAny || session_sort_key_seconds(sessionInfo) > session_sort_key_seconds(newestInfo))
+				{
+						newestInfo = sessionInfo;
+				}
+				if (!hasAny || session_sort_key_seconds(sessionInfo) < session_sort_key_seconds(oldestInfo))
+				{
+						oldestInfo = sessionInfo;
+				}
+				hasAny = true;
 		}
 		std::sort(out.begin(), out.end(), [](const LocalSessionInfo &a, const LocalSessionInfo &b) {
+				const QFileInfo aInfo(a.absolutePath);
+				const QFileInfo bInfo(b.absolutePath);
+				const qint64 aKey = session_sort_key_seconds(aInfo);
+				const qint64 bKey = session_sort_key_seconds(bInfo);
+				if (aKey != bKey)
+				{
+						return aKey > bKey;
+				}
 				return a.folderName.compare(b.folderName, Qt::CaseInsensitive) > 0;
 		});
+		qDebug() << "Sessions tab list sorted"
+						 << "count=" << out.size()
+						 << "newest=" << (hasAny ? newestInfo.fileName() : QString())
+						 << "oldest=" << (hasAny ? oldestInfo.fileName() : QString());
 		return out;
 }
 
@@ -425,6 +461,7 @@ void ArsTrackerSessionsTab::reloadSessions(const QString &reason)
 		}
 		const QList<LocalSessionInfo> sessions = scanLocalSessions(sessions_path);
 		fillSessionsTable(sessions);
+		scheduleSessionsListColumnResize();
 		statusLabel->setText(sessions.isEmpty() ? "No local sessions found" : QString("Local sessions: %1").arg(sessions.size()));
 		qDebug() << "Sessions tab list loaded" << "reason=" << reason << "path=" << sessions_path << "count=" << sessions.size();
 }
@@ -436,6 +473,7 @@ void ArsTrackerSessionsTab::showSessionsListPage(bool forceReload)
 				reloadSessions("back-to-list");
 		}
 		pagesStack->setCurrentWidget(listPage);
+		scheduleSessionsListColumnResize();
 }
 
 void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
@@ -452,7 +490,17 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 		m_currentSessionStartTime = sessionStartTimeFromSessionName(sessionId, &m_currentSessionStartTimestampValid);
 		m_currentSessionFinishKnown = false;
 		m_currentSessionDurationMs = -1;
+		m_currentSessionDurationCalculating = true;
 		updateSessionTimeSummary();
+		resetSessionInformationFieldsToDefaults();
+		qDebug() << "Sessions tab session info reset defaults"
+						 << "session=" << sessionId;
+		QStringList loadWarnings;
+		loadSessionInfoJsonIntoUi(sessionPath, &loadWarnings);
+		for (const QString &w : loadWarnings)
+		{
+				qWarning() << "Sessions tab SessionInfo.json load warning" << w;
+		}
 		qDebug() << "Sessions tab session time initial"
 						 << "sessionName=" << sessionId
 						 << "startTime=" << m_currentSessionStartTime.toString("HH:mm:ss")
@@ -461,6 +509,7 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 		fillSessionTrackersTable(scanSessionTrackers(sessionPath));
 		detailsStatusLabel->setText("Ready to process");
 		pagesStack->setCurrentWidget(detailsPage);
+		startInitialSessionDurationScan(sessionPath, sessionId);
 }
 
 ArsSessionTargetSettings ArsTrackerSessionsTab::readTargetSettingsFromUi() const
@@ -514,44 +563,138 @@ bool ArsTrackerSessionsTab::validateSessionInfo(const ArsSessionInfo &info, QStr
 		return true;
 }
 
-bool ArsTrackerSessionsTab::saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const
+void ArsTrackerSessionsTab::resetSessionInformationFieldsToDefaults()
+{
+		comboSessionType->setCurrentIndex(0);
+		timeSessionStart->setTime(kDefaultPlannedStart);
+		timeSessionFinish->setTime(kDefaultPlannedFinish);
+		editSessionLocation->clear();
+		editSessionGoals->clear();
+		spinTargetDistanceKm->setValue(0.0);
+		spinTargetAccelerationDistanceM->setValue(0);
+		spinTargetFootload10_3g->setValue(0);
+		spinTargetTouchesCount->setValue(0);
+		spinTargetFootloadPerMin->setValue(0.0);
+}
+
+void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
+{
+		const QString type = info.parameters.type.trimmed().toLower();
+		if (type == "match")
+		{
+				comboSessionType->setCurrentIndex(1);
+		}
+		else
+		{
+				if (!type.isEmpty() && type != "training")
+				{
+						qWarning() << "Sessions tab SessionInfo.json unknown type value, defaulting to training:" << info.parameters.type;
+				}
+				comboSessionType->setCurrentIndex(0);
+		}
+		if (info.parameters.startTime.isValid())
+		{
+				timeSessionStart->setTime(info.parameters.startTime);
+		}
+		if (info.parameters.endTime.isValid())
+		{
+				timeSessionFinish->setTime(info.parameters.endTime);
+		}
+		editSessionLocation->setText(info.parameters.location);
+		editSessionGoals->setPlainText(info.parameters.goals.join("\n"));
+
+		spinTargetDistanceKm->setValue(info.plannedMetrics.distanceKm);
+		spinTargetAccelerationDistanceM->setValue(info.plannedMetrics.accelerationDistanceM);
+		spinTargetFootload10_3g->setValue(info.plannedMetrics.footloadPerLeg);
+		spinTargetTouchesCount->setValue(info.plannedMetrics.touches);
+		spinTargetFootloadPerMin->setValue(info.plannedMetrics.loadIntensityGPerMin);
+}
+
+bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath, QStringList *warnings)
 {
 		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
-		QJsonObject planned;
-		planned["distanceKm"] = info.plannedMetrics.distanceKm;
-		planned["accelerationDistanceM"] = info.plannedMetrics.accelerationDistanceM;
-		planned["footloadPerLeg"] = info.plannedMetrics.footloadPerLeg;
-		planned["loadIntensityGPerMin"] = info.plannedMetrics.loadIntensityGPerMin;
-		planned["maxSpeedMps"] = info.plannedMetrics.maxSpeedMps;
-		planned["touches"] = info.plannedMetrics.touches;
-		planned["shots"] = info.plannedMetrics.shots;
-		planned["dribbles"] = info.plannedMetrics.dribbles;
-		QJsonArray goals;
-		for (const QString &goal : info.parameters.goals)
+		qDebug() << "Sessions tab SessionInfo.json load" << "path=" << filePath;
+		if (!QFileInfo::exists(filePath))
 		{
-				goals.append(goal);
+				qDebug() << "Sessions tab SessionInfo.json missing" << "path=" << filePath;
+				return false;
 		}
-		QJsonObject root;
-		root["plannedMetrics"] = planned;
-		root["startTime"] = info.parameters.startTime.toString("HH:mm:ss");
-		root["endTime"] = info.parameters.endTime.toString("HH:mm:ss");
-		// TODO: split planned session period and actual processed session time in SessionInfo.json.
-		root["type"] = info.parameters.type;
-		root["location"] = info.parameters.location;
-		root["goals"] = goals;
 
-		QFile file(filePath);
-		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+		ArsSessionInfo info;
+		QString error;
+		if (!ArsSessionInfoJson::loadSessionInfoJson(sessionPath, &info, &error))
 		{
-				if (errorMessage != nullptr)
+				qWarning() << "Sessions tab SessionInfo.json load failed" << "path=" << filePath << "error=" << error;
+				if (warnings != nullptr)
 				{
-						*errorMessage = QString("Failed to open file for write: %1").arg(filePath);
+						warnings->append(error);
 				}
 				return false;
 		}
-		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-		file.close();
+		applySessionInfoToUi(info);
+		qDebug() << "Sessions tab SessionInfo.json loaded" << "ok=true";
 		return true;
+}
+
+bool ArsTrackerSessionsTab::saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const
+{
+		return ArsSessionInfoJson::saveSessionInfoJson(sessionPath, info, errorMessage);
+}
+
+void ArsTrackerSessionsTab::startInitialSessionDurationScan(const QString &sessionPath, const QString &sessionId)
+{
+		qDebug() << "Sessions tab session duration scan begin" << "path=" << sessionPath;
+		QTimer::singleShot(0, this, [this, sessionPath, sessionId]() {
+				scanAndUpdateSessionTime(sessionPath, sessionId);
+		});
+}
+
+void ArsTrackerSessionsTab::scanAndUpdateSessionTime(const QString &sessionPath, const QString &sessionId)
+{
+		if (currentSessionId != sessionId)
+		{
+				return;
+		}
+		uint32_t maxTimestamp100ms = 0;
+		bool hasTimestamp = false;
+		QStringList warnings;
+		// TODO: move initial session duration scan to worker thread if opening large sessions becomes slow.
+		ArsSessionDurationScanner::scanSessionDuration(sessionPath, &maxTimestamp100ms, &hasTimestamp, &warnings);
+		for (const QString &w : warnings)
+		{
+				qWarning() << "Sessions tab session duration scan warning" << w;
+		}
+		updateSessionTimeSummaryFromMaxTimestamp(maxTimestamp100ms, hasTimestamp);
+}
+
+void ArsTrackerSessionsTab::updateSessionTimeSummaryFromMaxTimestamp(uint32_t maxTimestamp100ms, bool hasTimestamp)
+{
+		m_currentSessionDurationCalculating = false;
+		if (hasTimestamp)
+		{
+				m_currentSessionDurationMs = static_cast<qint64>(maxTimestamp100ms) * 100;
+				const QDateTime finish = QDateTime(QDate(2000, 1, 1), m_currentSessionStartTime).addMSecs(m_currentSessionDurationMs);
+				m_currentSessionFinishTime = finish.time();
+				m_currentSessionFinishKnown = true;
+				qDebug() << "Sessions tab session duration scan done"
+								 << "hasTimestamp=" << hasTimestamp
+								 << "maxTimestamp100ms=" << maxTimestamp100ms
+								 << "durationMs=" << m_currentSessionDurationMs
+								 << "finishTime=" << m_currentSessionFinishTime.toString("HH:mm:ss")
+								 << "duration=" << formatDurationMs(m_currentSessionDurationMs);
+		}
+		else
+		{
+				m_currentSessionFinishKnown = false;
+				m_currentSessionDurationMs = -1;
+				qWarning() << "Sessions tab session duration scan done"
+									 << "hasTimestamp=false"
+									 << "maxTimestamp100ms=0"
+									 << "durationMs=-1"
+									 << "finishTime=--:--:--"
+									 << "duration=--:--:--";
+		}
+		updateSessionTimeSummary();
 }
 
 void ArsTrackerSessionsTab::onProcessSessionClicked()
@@ -786,10 +929,7 @@ void ArsTrackerSessionsTab::finishSessionProcessingFlow()
 		const int processedPairs = m_processPairIndex;
 		if (m_processHasIntegralTimestamp)
 		{
-				m_currentSessionDurationMs = static_cast<qint64>(m_processMaxIntegralTimestamp) * 100;
-				const QDateTime finish = QDateTime(QDate(2000, 1, 1), m_currentSessionStartTime).addMSecs(m_currentSessionDurationMs);
-				m_currentSessionFinishTime = finish.time();
-				m_currentSessionFinishKnown = true;
+				updateSessionTimeSummaryFromMaxTimestamp(m_processMaxIntegralTimestamp, true);
 				qDebug() << "Sessions tab process duration final"
 								 << "maxTimestamp100ms=" << m_processMaxIntegralTimestamp
 								 << "durationMs=" << m_currentSessionDurationMs
@@ -798,12 +938,10 @@ void ArsTrackerSessionsTab::finishSessionProcessingFlow()
 		}
 		else
 		{
-				m_currentSessionFinishKnown = false;
-				m_currentSessionDurationMs = -1;
+				updateSessionTimeSummaryFromMaxTimestamp(0, false);
 				m_processProblems.append("Unable to calculate session duration: no integral state timestamps found.");
 				qWarning() << "Sessions tab process duration unavailable: no integral states";
 		}
-		updateSessionTimeSummary();
 
 		const bool ok = m_processProblems.isEmpty();
 		m_processProgressBar->setMaximum(totalPairs > 0 ? totalPairs : 1);
@@ -869,8 +1007,12 @@ QString ArsTrackerSessionsTab::formatDurationMs(qint64 durationMs) const
 void ArsTrackerSessionsTab::updateSessionTimeSummary()
 {
 		const QString start = m_currentSessionStartTime.toString("HH:mm:ss");
-		const QString finish = m_currentSessionFinishKnown ? m_currentSessionFinishTime.toString("HH:mm:ss") : "--:--:--";
-		const QString duration = m_currentSessionDurationMs >= 0 ? formatDurationMs(m_currentSessionDurationMs) : "--:--:--";
+		const QString finish = m_currentSessionDurationCalculating
+																 ? "calculating..."
+																 : (m_currentSessionFinishKnown ? m_currentSessionFinishTime.toString("HH:mm:ss") : "--:--:--");
+		const QString duration = m_currentSessionDurationCalculating
+																	 ? "calculating..."
+																	 : (m_currentSessionDurationMs >= 0 ? formatDurationMs(m_currentSessionDurationMs) : "--:--:--");
 		sessionTimeSummaryLabel->setText(QString("Session time: %1 - %2").arg(start, finish));
 		sessionDurationSummaryLabel->setText(QString("Duration: %1").arg(duration));
 }
@@ -905,4 +1047,55 @@ void ArsTrackerSessionsTab::onSessionNameClicked()
 void ArsTrackerSessionsTab::onBackFromSessionDetails()
 {
 		showSessionsListPage(true);
+}
+
+void ArsTrackerSessionsTab::resizeEvent(QResizeEvent *event)
+{
+		QWidget::resizeEvent(event);
+		if (pagesStack != nullptr && pagesStack->currentWidget() == listPage)
+		{
+				scheduleSessionsListColumnResize();
+		}
+}
+
+void ArsTrackerSessionsTab::scheduleSessionsListColumnResize()
+{
+		QTimer::singleShot(0, this, &ArsTrackerSessionsTab::resizeSessionsListColumnsToContent);
+		QTimer::singleShot(50, this, &ArsTrackerSessionsTab::resizeSessionsListColumnsToContent);
+}
+
+void ArsTrackerSessionsTab::resizeSessionsListColumnsToContent()
+{
+		if (sessionsTable == nullptr || pagesStack == nullptr || pagesStack->currentWidget() != listPage)
+		{
+				return;
+		}
+
+		const int sessionColumn = 0;
+		const int viewportWidth = sessionsTable->viewport() != nullptr ? sessionsTable->viewport()->width() : sessionsTable->width();
+		if (viewportWidth <= 0)
+		{
+				qDebug() << "Sessions tab session name column resize deferred: viewport not ready";
+				return;
+		}
+
+		int contentWidth = 0;
+		for (int row = 0; row < sessionsTable->rowCount(); ++row)
+		{
+				if (QWidget *w = sessionsTable->cellWidget(row, sessionColumn))
+				{
+						contentWidth = std::max(contentWidth, w->sizeHint().width() + 16);
+				}
+		}
+		sessionsTable->resizeColumnToContents(sessionColumn);
+		contentWidth = std::max(contentWidth, sessionsTable->columnWidth(sessionColumn));
+
+		const int maxWidth = std::max(120, viewportWidth / 2);
+		const int finalWidth = std::max(120, std::min(contentWidth, maxWidth));
+		sessionsTable->setColumnWidth(sessionColumn, finalWidth);
+		qDebug() << "Sessions tab session name column resized"
+						 << "viewportWidth=" << viewportWidth
+						 << "contentWidth=" << contentWidth
+						 << "maxWidth=" << maxWidth
+						 << "finalWidth=" << finalWidth;
 }

@@ -7,6 +7,7 @@
 #include <QTime>
 #include <QStringList>
 
+#include "ars_tracker/ars_session_info.h"
 #include "ars_tracker/ars_session_processing_loader.h"
 
 class QPushButton;
@@ -23,6 +24,7 @@ class QPlainTextEdit;
 class QDialog;
 class QProgressBar;
 class QGroupBox;
+class QResizeEvent;
 
 struct SessionTrackerPair
 {
@@ -37,42 +39,6 @@ struct LocalSessionInfo
 		QString displayName;
 		QString absolutePath;
 		QString trackersDisplayText;
-};
-
-struct ArsSessionTargetSettings
-{
-		double targetDistanceKm = 0.0;
-		int targetAccelerationDistanceM = 0;
-		int targetFootload10_3g = 0;
-		int targetTouchesCount = 0;
-		double targetFootloadPerMin = 0.0;
-};
-
-struct ArsSessionParameters
-{
-		QString type;
-		QTime startTime;
-		QTime endTime;
-		QString location;
-		QStringList goals;
-};
-
-struct ArsSessionPlannedMetrics
-{
-		double distanceKm = 0.0;
-		int accelerationDistanceM = 0;
-		int footloadPerLeg = 0;
-		double loadIntensityGPerMin = 0.0;
-		double maxSpeedMps = 0.0;
-		int touches = 0;
-		int shots = 0;
-		int dribbles = 0;
-};
-
-struct ArsSessionInfo
-{
-		ArsSessionParameters parameters;
-        ArsSessionPlannedMetrics plannedMetrics;
 };
 
 class ArsTrackerSessionsTab : public QWidget
@@ -92,6 +58,7 @@ private slots:
 		void onProcessSessionClicked();
 
 private:
+		void resizeEvent(QResizeEvent *event) override;
 		void buildUi();
 		void buildListPage();
 		void buildDetailsPage();
@@ -106,8 +73,14 @@ private:
 		void fillSessionTrackersTable(const QList<SessionTrackerPair> &pairs);
 		ArsSessionTargetSettings readTargetSettingsFromUi() const;
 		ArsSessionInfo readSessionInfoFromUi() const;
+		void resetSessionInformationFieldsToDefaults();
+		void applySessionInfoToUi(const ArsSessionInfo &info);
+		bool loadSessionInfoJsonIntoUi(const QString &sessionPath, QStringList *warnings = nullptr);
 		bool validateSessionInfo(const ArsSessionInfo &info, QStringList *problems) const;
 		bool saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const;
+		void startInitialSessionDurationScan(const QString &sessionPath, const QString &sessionId);
+		void scanAndUpdateSessionTime(const QString &sessionPath, const QString &sessionId);
+		void updateSessionTimeSummaryFromMaxTimestamp(uint32_t maxTimestamp100ms, bool hasTimestamp);
 		void startSessionProcessingFlow();
 		void processNextSessionPair();
 		void finishSessionProcessingFlow();
@@ -115,6 +88,8 @@ private:
 		QString formatDurationMs(qint64 durationMs) const;
 		void updateSessionTimeSummary();
 		uint32_t maxIntegralTimestamp(const std::vector<IntegralState> &states) const;
+		void scheduleSessionsListColumnResize();
+		void resizeSessionsListColumnsToContent();
 
 		QStackedWidget *pagesStack = nullptr;
 		QWidget *listPage = nullptr;
@@ -147,6 +122,7 @@ private:
 		bool m_currentSessionFinishKnown = false;
 		QTime m_currentSessionFinishTime;
 		qint64 m_currentSessionDurationMs = -1;
+		bool m_currentSessionDurationCalculating = false;
 
 		QDialog *m_processDialog = nullptr;
 		QLabel *m_processStatusLabel = nullptr;

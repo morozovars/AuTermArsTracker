@@ -2,6 +2,7 @@
 #define ARS_PROCESSED_STR_PARSER_H
 
 #include <QString>
+#include <QList>
 #include <vector>
 #include <cstdint>
 
@@ -40,12 +41,21 @@ struct SplashData
 		uint8_t shotType = 0;
 };
 
+struct ArsMalformedProcessedStrLine
+{
+		int lineNumber = 0;
+		QString prefix;
+		QString reason;
+		QString text;
+};
+
 struct ArsProcessedStrData
 {
 		std::vector<IntegralState> integralStates;
 		std::vector<SplashData> splashRecords;
 		int ignoredLines = 0;
 		int malformedLines = 0;
+		QList<ArsMalformedProcessedStrLine> malformedLineDetails;
 };
 
 class ArsProcessedStrParser

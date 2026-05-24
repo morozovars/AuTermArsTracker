@@ -7,7 +7,33 @@
 
 namespace
 {
-bool parse_uint(const QString &text, uint32_t *out)
+constexpr int kMaxMalformedLineTextLength = 300;
+
+QString clipped_line_text(const QString &line)
+{
+		if (line.size() <= kMaxMalformedLineTextLength)
+		{
+				return line;
+		}
+		return line.left(kMaxMalformedLineTextLength);
+}
+
+void append_malformed(ArsProcessedStrData *out,
+											int lineNumber,
+											const QString &prefix,
+											const QString &reason,
+											const QString &lineText)
+{
+		out->malformedLines++;
+		ArsMalformedProcessedStrLine detail;
+		detail.lineNumber = lineNumber;
+		detail.prefix = prefix;
+		detail.reason = reason;
+		detail.text = clipped_line_text(lineText);
+		out->malformedLineDetails.append(detail);
+}
+
+bool parseUIntField(const QString &text, uint32_t *out)
 {
 		bool ok = false;
 		const quint64 value = text.toULongLong(&ok, 10);
@@ -19,7 +45,7 @@ bool parse_uint(const QString &text, uint32_t *out)
 		return true;
 }
 
-bool parse_double_c_locale(const QString &text, double *out)
+bool parseDoubleField(const QString &text, double *out)
 {
 		bool ok = false;
 		const double value = QLocale::c().toDouble(text, &ok);
@@ -31,7 +57,7 @@ bool parse_double_c_locale(const QString &text, double *out)
 		return true;
 }
 
-QStringList split_csv_preserve_empty(const QString &body)
+QStringList splitCsvPayload(const QString &body)
 {
 		return body.split(',', Qt::KeepEmptyParts);
 }
@@ -63,8 +89,10 @@ bool ArsProcessedStrParser::parseFile(const QString &filePath,
 		}
 
 		QTextStream stream(&file);
+		int lineNumber = 0;
 		while (!stream.atEnd())
 		{
+				lineNumber++;
 				const QString line = stream.readLine().trimmed();
 				if (line.isEmpty())
 				{
@@ -73,26 +101,34 @@ bool ArsProcessedStrParser::parseFile(const QString &filePath,
 
 				if (line.startsWith("i:"))
 				{
-						const QStringList fields = split_csv_preserve_empty(line.mid(2));
+						const QStringList fields = splitCsvPayload(line.mid(2));
 						if (fields.size() < 10)
 						{
-								out->malformedLines++;
+								append_malformed(out, lineNumber, "i", "invalid field count", line);
 								continue;
 						}
 
 						IntegralState state;
-						if (!parse_uint(fields.at(0), &state.timestamp) ||
-								!parse_double_c_locale(fields.at(1), &state.distance) ||
-								!parse_double_c_locale(fields.at(2), &state.ax) ||
-								!parse_double_c_locale(fields.at(3), &state.ay) ||
-								!parse_double_c_locale(fields.at(4), &state.az) ||
-								!parse_double_c_locale(fields.at(5), &state.yaw) ||
-								!parse_double_c_locale(fields.at(6), &state.pitch) ||
-								!parse_double_c_locale(fields.at(7), &state.roll) ||
-								!parse_uint(fields.at(8), &state.step) ||
-								!parse_uint(fields.at(9), &state.load))
+						if (!parseUIntField(fields.at(0), &state.timestamp))
 						{
-								out->malformedLines++;
+								append_malformed(out, lineNumber, "i", "invalid integer field", line);
+								continue;
+						}
+						if (!parseDoubleField(fields.at(1), &state.distance) ||
+								!parseDoubleField(fields.at(2), &state.ax) ||
+								!parseDoubleField(fields.at(3), &state.ay) ||
+								!parseDoubleField(fields.at(4), &state.az) ||
+								!parseDoubleField(fields.at(5), &state.yaw) ||
+								!parseDoubleField(fields.at(6), &state.pitch) ||
+								!parseDoubleField(fields.at(7), &state.roll))
+						{
+								append_malformed(out, lineNumber, "i", "invalid double field", line);
+								continue;
+						}
+						if (!parseUIntField(fields.at(8), &state.step) ||
+								!parseUIntField(fields.at(9), &state.load))
+						{
+								append_malformed(out, lineNumber, "i", "invalid integer field", line);
 								continue;
 						}
 
@@ -102,33 +138,37 @@ bool ArsProcessedStrParser::parseFile(const QString &filePath,
 
 				if (line.startsWith("sp:"))
 				{
-						const QStringList fields = split_csv_preserve_empty(line.mid(3));
+						const QStringList fields = splitCsvPayload(line.mid(3));
 						if (fields.size() < 15)
 						{
-								out->malformedLines++;
+								append_malformed(out, lineNumber, "sp", "invalid field count", line);
 								continue;
 						}
 
 						SplashData splash;
 						uint32_t tPeak = 0;
 						uint32_t shotType = 0;
-						if (!parse_uint(fields.at(0), &tPeak) ||
-								!parse_double_c_locale(fields.at(1), &splash.maxAccel) ||
-								!parse_uint(fields.at(2), &splash.tStart) ||
-								!parse_uint(fields.at(3), &splash.tFootStart) ||
-								!parse_uint(fields.at(4), &splash.tTouch) ||
-								!parse_double_c_locale(fields.at(5), &splash.postAmp) ||
-								!parse_double_c_locale(fields.at(6), &splash.integral) ||
-								!parse_uint(fields.at(7), &splash.duration) ||
-								!parse_double_c_locale(fields.at(8), &splash.x) ||
-								!parse_double_c_locale(fields.at(9), &splash.y) ||
-								!parse_double_c_locale(fields.at(10), &splash.z) ||
-								!parse_uint(fields.at(11), &shotType) ||
-								!parse_double_c_locale(fields.at(12), &splash.energy) ||
-								!parse_double_c_locale(fields.at(13), &splash.delta) ||
-								!parse_double_c_locale(fields.at(14), &splash.abp))
+						if (!parseUIntField(fields.at(0), &tPeak) ||
+								!parseUIntField(fields.at(2), &splash.tStart) ||
+								!parseUIntField(fields.at(3), &splash.tFootStart) ||
+								!parseUIntField(fields.at(4), &splash.tTouch) ||
+								!parseUIntField(fields.at(7), &splash.duration) ||
+								!parseUIntField(fields.at(11), &shotType))
 						{
-								out->malformedLines++;
+								append_malformed(out, lineNumber, "sp", "invalid integer field", line);
+								continue;
+						}
+						if (!parseDoubleField(fields.at(1), &splash.maxAccel) ||
+								!parseDoubleField(fields.at(5), &splash.postAmp) ||
+								!parseDoubleField(fields.at(6), &splash.integral) ||
+								!parseDoubleField(fields.at(8), &splash.x) ||
+								!parseDoubleField(fields.at(9), &splash.y) ||
+								!parseDoubleField(fields.at(10), &splash.z) ||
+								!parseDoubleField(fields.at(12), &splash.energy) ||
+								!parseDoubleField(fields.at(13), &splash.delta) ||
+								!parseDoubleField(fields.at(14), &splash.abp))
+						{
+								append_malformed(out, lineNumber, "sp", "invalid double field", line);
 								continue;
 						}
 
@@ -138,7 +178,7 @@ bool ArsProcessedStrParser::parseFile(const QString &filePath,
 						splash.timestamp = tPeak;
 						if (shotType > UINT8_MAX)
 						{
-								out->malformedLines++;
+								append_malformed(out, lineNumber, "sp", "invalid integer field", line);
 								continue;
 						}
 						splash.shotType = static_cast<uint8_t>(shotType);

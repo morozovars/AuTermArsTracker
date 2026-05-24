@@ -4,6 +4,8 @@
 #include <QWidget>
 #include <QString>
 #include <QList>
+#include <QTime>
+#include <QStringList>
 
 class QPushButton;
 class QTableWidget;
@@ -12,6 +14,12 @@ class QStackedWidget;
 class QTableWidgetItem;
 class QSpinBox;
 class QDoubleSpinBox;
+class QComboBox;
+class QTimeEdit;
+class QLineEdit;
+class QPlainTextEdit;
+class QDialog;
+class QProgressBar;
 
 struct SessionTrackerPair
 {
@@ -35,6 +43,40 @@ struct ArsSessionTargetSettings
 		int targetFootload10_3g = 0;
 		int targetTouchesCount = 0;
 		double targetFootloadPerMin = 0.0;
+};
+
+struct ArsSessionParameters
+{
+		QString type;
+		QTime startTime;
+		QTime endTime;
+		QString location;
+		QStringList goals;
+};
+
+struct ArsSessionPlannedMetrics
+{
+		double distanceKm = 0.0;
+		int accelerationDistanceM = 0;
+		int footloadPerLeg = 0;
+		double loadIntensityGPerMin = 0.0;
+		double maxSpeedMps = 0.0;
+		int touches = 0;
+		int shots = 0;
+		int dribbles = 0;
+};
+
+struct ArsSessionFieldInfo
+{
+		int widthM = 40;
+		int lengthM = 60;
+};
+
+struct ArsSessionInfo
+{
+		ArsSessionParameters parameters;
+		ArsSessionPlannedMetrics plannedMetrics;
+		ArsSessionFieldInfo field;
 };
 
 class ArsTrackerSessionsTab : public QWidget
@@ -67,6 +109,13 @@ private:
 		void fillSessionsTable(const QList<LocalSessionInfo> &sessions);
 		void fillSessionTrackersTable(const QList<SessionTrackerPair> &pairs);
 		ArsSessionTargetSettings readTargetSettingsFromUi() const;
+		ArsSessionInfo readSessionInfoFromUi() const;
+		bool validateSessionInfo(const ArsSessionInfo &info, QStringList *problems) const;
+		bool saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const;
+		void runProcessForSession(QLabel *progressTextLabel,
+														QProgressBar *progressBar,
+														QPlainTextEdit *problemsView,
+														QPushButton *closeButton);
 
 		QStackedWidget *pagesStack = nullptr;
 		QWidget *listPage = nullptr;
@@ -83,6 +132,11 @@ private:
 		QSpinBox *spinTargetFootload10_3g = nullptr;
 		QSpinBox *spinTargetTouchesCount = nullptr;
 		QDoubleSpinBox *spinTargetFootloadPerMin = nullptr;
+		QComboBox *comboSessionType = nullptr;
+		QTimeEdit *timeSessionStart = nullptr;
+		QTimeEdit *timeSessionFinish = nullptr;
+		QLineEdit *editSessionLocation = nullptr;
+		QPlainTextEdit *editSessionGoals = nullptr;
 		QTableWidget *sessionTrackersTable = nullptr;
 		QLabel *sessionTrackersEmptyLabel = nullptr;
 		QLabel *statusLabel = nullptr;

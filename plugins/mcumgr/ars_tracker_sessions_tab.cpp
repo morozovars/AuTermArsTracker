@@ -5,22 +5,35 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMap>
+#include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTimeEdit>
 #include <QUrl>
 #include <QDoubleSpinBox>
 #include <QApplication>
+#include <QTimer>
+#include <QComboBox>
+#include <QVBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QFile>
 #include <QStringList>
 #include <algorithm>
 
@@ -138,25 +151,60 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		header->addWidget(sessionTitleLabel, 1);
 		layout->addLayout(header, 0, 0, 1, 1);
 
-		QGroupBox *targetsBox = new QGroupBox("Session targets", detailsPage);
+		QGroupBox *sessionInfoBox = new QGroupBox("Session Information", detailsPage);
+		QHBoxLayout *sessionInfoLayout = new QHBoxLayout(sessionInfoBox);
+		QGroupBox *parametersBox = new QGroupBox("Parameters", sessionInfoBox);
+		QFormLayout *parametersLayout = new QFormLayout(parametersBox);
+
+		comboSessionType = new QComboBox(parametersBox);
+		comboSessionType->setObjectName("combo_session_type");
+		comboSessionType->addItem("Training session", "training");
+		comboSessionType->addItem("Match", "match");
+		parametersLayout->addRow("Type", comboSessionType);
+
+		QHBoxLayout *periodLayout = new QHBoxLayout();
+		timeSessionStart = new QTimeEdit(parametersBox);
+		timeSessionStart->setObjectName("time_session_start");
+		timeSessionStart->setDisplayFormat("HH:mm");
+		timeSessionStart->setTime(QTime(10, 0));
+		timeSessionFinish = new QTimeEdit(parametersBox);
+		timeSessionFinish->setObjectName("time_session_finish");
+		timeSessionFinish->setDisplayFormat("HH:mm");
+		timeSessionFinish->setTime(QTime(11, 30));
+		periodLayout->addWidget(timeSessionStart);
+		periodLayout->addWidget(new QLabel("-", parametersBox));
+		periodLayout->addWidget(timeSessionFinish);
+		parametersLayout->addRow("Planned session period", periodLayout);
+
+		editSessionLocation = new QLineEdit(parametersBox);
+		editSessionLocation->setObjectName("edit_session_location");
+		editSessionLocation->setPlaceholderText("Казань, манеж");
+		parametersLayout->addRow("Location", editSessionLocation);
+
+		editSessionGoals = new QPlainTextEdit(parametersBox);
+		editSessionGoals->setObjectName("edit_session_goals");
+		editSessionGoals->setPlaceholderText(
+				"Развитие скоростной выносливости\nРабота с мячом под нагрузкой");
+		editSessionGoals->setFixedHeight(110);
+		parametersLayout->addRow("Goals", editSessionGoals);
+		sessionInfoLayout->addWidget(parametersBox, 1);
+
+		QGroupBox *targetsBox = new QGroupBox("Target", sessionInfoBox);
 		QFormLayout *targetsLayout = new QFormLayout(targetsBox);
 		spinTargetDistanceKm = new QDoubleSpinBox(targetsBox);
 		spinTargetDistanceKm->setObjectName("spin_session_target_distance_km");
 		spinTargetDistanceKm->setDecimals(3);
 		spinTargetDistanceKm->setRange(0.0, 1000.0);
-		spinTargetDistanceKm->setSuffix(" km");
 		targetsLayout->addRow("Target distance, km", spinTargetDistanceKm);
 
 		spinTargetAccelerationDistanceM = new QSpinBox(targetsBox);
 		spinTargetAccelerationDistanceM->setObjectName("spin_session_target_acceleration_distance_m");
 		spinTargetAccelerationDistanceM->setRange(0, 100000);
-		spinTargetAccelerationDistanceM->setSuffix(" m");
 		targetsLayout->addRow("Target acceleration distance, m", spinTargetAccelerationDistanceM);
 
 		spinTargetFootload10_3g = new QSpinBox(targetsBox);
 		spinTargetFootload10_3g->setObjectName("spin_session_target_footload_10_3g");
 		spinTargetFootload10_3g->setRange(0, 1000000);
-		spinTargetFootload10_3g->setSuffix(" 10^3g");
 		targetsLayout->addRow("Target footload, 10^3g", spinTargetFootload10_3g);
 
 		spinTargetTouchesCount = new QSpinBox(targetsBox);
@@ -168,9 +216,9 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		spinTargetFootloadPerMin->setObjectName("spin_session_target_footload_per_min");
 		spinTargetFootloadPerMin->setDecimals(2);
 		spinTargetFootloadPerMin->setRange(0.0, 100000.0);
-		spinTargetFootloadPerMin->setSuffix(" /min");
-		targetsLayout->addRow("Target footload/min", spinTargetFootloadPerMin);
-		layout->addWidget(targetsBox, 1, 0, 1, 1);
+		targetsLayout->addRow("Target footload intensity footload/min", spinTargetFootloadPerMin);
+		sessionInfoLayout->addWidget(targetsBox, 1);
+		layout->addWidget(sessionInfoBox, 1, 0, 1, 1);
 
 		sessionTrackersTable = new QTableWidget(detailsPage);
 		sessionTrackersTable->setColumnCount(3);
@@ -529,121 +577,322 @@ void ArsTrackerSessionsTab::onProcessSessionClicked()
 		}
 
 		processButton->setEnabled(false);
-		// TODO: move session processing load to worker thread if CSV files become large enough to block UI.
-		QApplication::setOverrideCursor(Qt::WaitCursor);
+
+		QDialog *progressDialog = new QDialog(this);
+		progressDialog->setWindowTitle("Processing session");
+		progressDialog->setModal(true);
+		QVBoxLayout *dialogLayout = new QVBoxLayout(progressDialog);
+		QLabel *progressTextLabel = new QLabel("Processing session data...", progressDialog);
+		dialogLayout->addWidget(progressTextLabel);
+		QProgressBar *progressBar = new QProgressBar(progressDialog);
+		progressBar->setMinimum(0);
+		progressBar->setMaximum(0);
+		dialogLayout->addWidget(progressBar);
+		QPlainTextEdit *problemsView = new QPlainTextEdit(progressDialog);
+		problemsView->setReadOnly(true);
+		problemsView->setVisible(false);
+		dialogLayout->addWidget(problemsView);
+		QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close, progressDialog);
+		QPushButton *closeButton = buttons->button(QDialogButtonBox::Close);
+		closeButton->setVisible(false);
+		closeButton->setEnabled(false);
+		connect(closeButton, &QPushButton::clicked, progressDialog, &QDialog::accept);
+		dialogLayout->addWidget(buttons);
+
+		QTimer::singleShot(0, this, [this, progressTextLabel, progressBar, problemsView, closeButton]() {
+				runProcessForSession(progressTextLabel, progressBar, problemsView, closeButton);
+		});
+
+		progressDialog->exec();
+		progressDialog->deleteLater();
+		processButton->setEnabled(true);
+}
+
+ArsSessionInfo ArsTrackerSessionsTab::readSessionInfoFromUi() const
+{
+		ArsSessionInfo info;
+		info.parameters.type = comboSessionType->currentData().toString();
+		info.parameters.startTime = timeSessionStart->time();
+		info.parameters.endTime = timeSessionFinish->time();
+		info.parameters.location = editSessionLocation->text().trimmed();
+
+		const QStringList lines = editSessionGoals->toPlainText().split('\n');
+		for (const QString &line : lines)
+		{
+				const QString trimmed = line.trimmed();
+				if (!trimmed.isEmpty())
+				{
+						info.parameters.goals.append(trimmed);
+				}
+		}
 
 		const ArsSessionTargetSettings targets = readTargetSettingsFromUi();
-		qDebug() << "Sessions tab process targets"
-						 << "session=" << currentSessionId
-						 << "targetDistanceKm=" << targets.targetDistanceKm
-						 << "targetAccelerationDistanceM=" << targets.targetAccelerationDistanceM
-						 << "targetFootload10_3g=" << targets.targetFootload10_3g
-						 << "targetTouchesCount=" << targets.targetTouchesCount
-						 << "targetFootloadPerMin=" << targets.targetFootloadPerMin;
+		info.plannedMetrics.distanceKm = targets.targetDistanceKm;
+		info.plannedMetrics.accelerationDistanceM = targets.targetAccelerationDistanceM;
+		info.plannedMetrics.footloadPerLeg = targets.targetFootload10_3g;
+		info.plannedMetrics.loadIntensityGPerMin = targets.targetFootloadPerMin;
+		info.plannedMetrics.touches = targets.targetTouchesCount;
+		// TODO: add UI fields for maxSpeedMps, shots, dribbles and field size.
+		info.plannedMetrics.maxSpeedMps = 0.0;
+		info.plannedMetrics.shots = 0;
+		info.plannedMetrics.dribbles = 0;
+		info.field.widthM = 40;
+		info.field.lengthM = 60;
+		return info;
+}
 
-		QStringList warnings;
-		const QList<ArsPairProcessedData> loadedPairs =
-				ArsSessionProcessingLoader::loadSession(sessionPath, &warnings);
-		qDebug() << "Sessions tab processedStr load"
-						 << "sessionPath=" << sessionPath
-						 << "pairs=" << loadedPairs.size();
-
-		bool hasWarningsOrMalformed = !warnings.isEmpty();
-		for (const ArsPairProcessedData &pair : loadedPairs)
+bool ArsTrackerSessionsTab::validateSessionInfo(const ArsSessionInfo &info, QStringList *problems) const
+{
+		if (info.parameters.endTime <= info.parameters.startTime)
 		{
-				const bool hasLeft = pair.left.has_value();
-				const bool hasRight = pair.right.has_value();
-				const int leftIntegral = hasLeft ? static_cast<int>(pair.left->data.integralStates.size()) : 0;
-				const int leftSplash = hasLeft ? static_cast<int>(pair.left->data.splashRecords.size()) : 0;
-				const int rightIntegral = hasRight ? static_cast<int>(pair.right->data.integralStates.size()) : 0;
-				const int rightSplash = hasRight ? static_cast<int>(pair.right->data.splashRecords.size()) : 0;
-				const int leftIgnored = hasLeft ? pair.left->data.ignoredLines : 0;
-				const int leftMalformed = hasLeft ? pair.left->data.malformedLines : 0;
-				const int rightIgnored = hasRight ? pair.right->data.ignoredLines : 0;
-				const int rightMalformed = hasRight ? pair.right->data.malformedLines : 0;
-				hasWarningsOrMalformed = hasWarningsOrMalformed || leftMalformed > 0 || rightMalformed > 0;
-
-				qDebug() << "Sessions tab processed pair"
-								 << "serial=" << pair.pairSerial
-								 << "left=" << hasLeft
-								 << "right=" << hasRight
-								 << "leftIntegralStates=" << leftIntegral
-								 << "leftSplashRecords=" << leftSplash
-								 << "leftIgnoredLines=" << leftIgnored
-								 << "leftMalformedLines=" << leftMalformed
-								 << "rightIntegralStates=" << rightIntegral
-								 << "rightSplashRecords=" << rightSplash
-								 << "rightIgnoredLines=" << rightIgnored
-								 << "rightMalformedLines=" << rightMalformed;
-
-				if (hasLeft && leftMalformed > 0)
+				if (problems != nullptr)
 				{
-						const QList<ArsMalformedProcessedStrLine> details = pair.left->data.malformedLineDetails;
-						const int countToLog = std::min(static_cast<int>(details.size()), kMaxMalformedLinesToLog);
-						for (int i = 0; i < countToLog; ++i)
-						{
-								const ArsMalformedProcessedStrLine &d = details.at(i);
-								qWarning() << "Sessions tab malformed line"
-													 << "pair=" << pair.pairSerial
-													 << "foot=L"
-													 << "file=" << pair.left->processedStrPath
-													 << "line=" << d.lineNumber
-													 << "prefix=" << d.prefix
-													 << "reason=" << d.reason
-													 << "text=" << d.text;
-						}
-						if (details.size() > countToLog)
-						{
-								qWarning() << "Sessions tab malformed line"
-													 << "pair=" << pair.pairSerial
-													 << "foot=L"
-													 << "... and" << (details.size() - countToLog) << "more malformed lines";
-						}
+						problems->append("Planned session finish time must be later than start time.");
 				}
+				return false;
+		}
+		return true;
+}
 
-				if (hasRight && rightMalformed > 0)
-				{
-						const QList<ArsMalformedProcessedStrLine> details = pair.right->data.malformedLineDetails;
-						const int countToLog = std::min(static_cast<int>(details.size()), kMaxMalformedLinesToLog);
-						for (int i = 0; i < countToLog; ++i)
-						{
-								const ArsMalformedProcessedStrLine &d = details.at(i);
-								qWarning() << "Sessions tab malformed line"
-													 << "pair=" << pair.pairSerial
-													 << "foot=R"
-													 << "file=" << pair.right->processedStrPath
-													 << "line=" << d.lineNumber
-													 << "prefix=" << d.prefix
-													 << "reason=" << d.reason
-													 << "text=" << d.text;
-						}
-						if (details.size() > countToLog)
-						{
-								qWarning() << "Sessions tab malformed line"
-													 << "pair=" << pair.pairSerial
-													 << "foot=R"
-													 << "... and" << (details.size() - countToLog) << "more malformed lines";
-						}
-				}
+bool ArsTrackerSessionsTab::saveSessionInfoJson(const QString &sessionPath,
+																								const ArsSessionInfo &info,
+																								QString *errorMessage) const
+{
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QJsonObject planned;
+		planned["distanceKm"] = info.plannedMetrics.distanceKm;
+		planned["accelerationDistanceM"] = info.plannedMetrics.accelerationDistanceM;
+		planned["footloadPerLeg"] = info.plannedMetrics.footloadPerLeg;
+		planned["loadIntensityGPerMin"] = info.plannedMetrics.loadIntensityGPerMin;
+		planned["maxSpeedMps"] = info.plannedMetrics.maxSpeedMps;
+		planned["touches"] = info.plannedMetrics.touches;
+		planned["shots"] = info.plannedMetrics.shots;
+		planned["dribbles"] = info.plannedMetrics.dribbles;
+
+		QJsonObject field;
+		field["widthM"] = info.field.widthM;
+		field["lengthM"] = info.field.lengthM;
+
+		QJsonArray goals;
+		for (const QString &goal : info.parameters.goals)
+		{
+				goals.append(goal);
 		}
 
-		for (const QString &warning : warnings)
-		{
-				qWarning() << "Sessions tab processedStr warning:" << warning;
-		}
+		QJsonObject root;
+		root["plannedMetrics"] = planned;
+		root["startTime"] = info.parameters.startTime.toString("HH:mm:ss");
+		root["endTime"] = info.parameters.endTime.toString("HH:mm:ss");
+		root["type"] = info.parameters.type;
+		root["location"] = info.parameters.location;
+		root["field"] = field;
+		root["goals"] = goals;
 
-		if (hasWarningsOrMalformed)
+		QFile file(filePath);
+		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
 		{
-				detailsStatusLabel->setText(
-						QString("Processing input loaded with warnings. See logs. Pairs=%1").arg(loadedPairs.size()));
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Failed to open file for write: %1").arg(filePath);
+				}
+				return false;
+		}
+		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+		file.close();
+		return true;
+}
+
+void ArsTrackerSessionsTab::runProcessForSession(QLabel *progressTextLabel,
+																								 QProgressBar *progressBar,
+																								 QPlainTextEdit *problemsView,
+																								 QPushButton *closeButton)
+{
+		QApplication::setOverrideCursor(Qt::WaitCursor);
+		QStringList problems;
+
+		const QString baseSessionsPath = sessionsPath();
+		const QString sessionPath = QDir(baseSessionsPath).filePath(currentSessionId);
+		qDebug() << "Sessions tab process begin"
+						 << "sessionPath=" << sessionPath;
+
+		const ArsSessionInfo info = readSessionInfoFromUi();
+		qDebug() << "Sessions tab session info"
+						 << "type=" << info.parameters.type
+						 << "startTime=" << info.parameters.startTime.toString("HH:mm:ss")
+						 << "endTime=" << info.parameters.endTime.toString("HH:mm:ss")
+						 << "location=" << info.parameters.location;
+		qDebug() << "Sessions tab planned metrics"
+						 << "distanceKm=" << info.plannedMetrics.distanceKm
+						 << "accelerationDistanceM=" << info.plannedMetrics.accelerationDistanceM
+						 << "footloadPerLeg=" << info.plannedMetrics.footloadPerLeg
+						 << "loadIntensityGPerMin=" << info.plannedMetrics.loadIntensityGPerMin
+						 << "touches=" << info.plannedMetrics.touches;
+
+		if (!validateSessionInfo(info, &problems))
+		{
+				qWarning() << "Sessions tab process validation failed";
 		}
 		else
 		{
-				detailsStatusLabel->setText(QString("Processing input loaded: pairs=%1").arg(loadedPairs.size()));
+				QString saveError;
+				if (!saveSessionInfoJson(sessionPath, info, &saveError))
+				{
+						qWarning() << "Sessions tab SessionInfo.json save failed"
+											 << "path=" << QDir(sessionPath).filePath("SessionInfo.json")
+											 << "error=" << saveError;
+						problems.append(QString("SessionInfo.json save failed: %1").arg(saveError));
+				}
+				else
+				{
+						qDebug() << "Sessions tab SessionInfo.json saved"
+										 << "path=" << QDir(sessionPath).filePath("SessionInfo.json");
+				}
 		}
 
+		int pairCount = 0;
+		if (problems.isEmpty())
+		{
+				// TODO: move session processing to worker thread.
+				QStringList warnings;
+				const QList<ArsPairProcessedData> loadedPairs =
+						ArsSessionProcessingLoader::loadSession(sessionPath, &warnings);
+				pairCount = loadedPairs.size();
+				qDebug() << "Sessions tab processedStr load"
+								 << "sessionPath=" << sessionPath
+								 << "pairs=" << pairCount;
+
+				for (const ArsPairProcessedData &pair : loadedPairs)
+				{
+						const bool hasLeft = pair.left.has_value();
+						const bool hasRight = pair.right.has_value();
+						const int leftIntegral = hasLeft ? static_cast<int>(pair.left->data.integralStates.size()) : 0;
+						const int leftSplash = hasLeft ? static_cast<int>(pair.left->data.splashRecords.size()) : 0;
+						const int rightIntegral = hasRight ? static_cast<int>(pair.right->data.integralStates.size()) : 0;
+						const int rightSplash = hasRight ? static_cast<int>(pair.right->data.splashRecords.size()) : 0;
+						const int leftIgnored = hasLeft ? pair.left->data.ignoredLines : 0;
+						const int leftMalformed = hasLeft ? pair.left->data.malformedLines : 0;
+						const int rightIgnored = hasRight ? pair.right->data.ignoredLines : 0;
+						const int rightMalformed = hasRight ? pair.right->data.malformedLines : 0;
+
+						qDebug() << "Sessions tab processed pair"
+										 << "serial=" << pair.pairSerial
+										 << "left=" << hasLeft
+										 << "right=" << hasRight
+										 << "leftIntegralStates=" << leftIntegral
+										 << "leftSplashRecords=" << leftSplash
+										 << "leftIgnoredLines=" << leftIgnored
+										 << "leftMalformedLines=" << leftMalformed
+										 << "rightIntegralStates=" << rightIntegral
+										 << "rightSplashRecords=" << rightSplash
+										 << "rightIgnoredLines=" << rightIgnored
+										 << "rightMalformedLines=" << rightMalformed;
+
+						if (!hasLeft)
+						{
+								problems.append(QString("pair %1: left tracker data is missing").arg(pair.pairSerial));
+						}
+						if (!hasRight)
+						{
+								problems.append(QString("pair %1: right tracker data is missing").arg(pair.pairSerial));
+						}
+						if (hasLeft && leftMalformed > 0)
+						{
+								problems.append(QString("pair %1 L: malformed lines: %2").arg(pair.pairSerial).arg(leftMalformed));
+						}
+						if (hasRight && rightMalformed > 0)
+						{
+								problems.append(QString("pair %1 R: malformed lines: %2").arg(pair.pairSerial).arg(rightMalformed));
+						}
+
+						if (hasLeft && leftMalformed > 0)
+						{
+								const QList<ArsMalformedProcessedStrLine> details = pair.left->data.malformedLineDetails;
+								const int countToLog = std::min(static_cast<int>(details.size()), kMaxMalformedLinesToLog);
+								for (int i = 0; i < countToLog; ++i)
+								{
+										const ArsMalformedProcessedStrLine &d = details.at(i);
+										qWarning() << "Sessions tab malformed line"
+																 << "pair=" << pair.pairSerial
+																 << "foot=L"
+																 << "file=" << pair.left->processedStrPath
+																 << "line=" << d.lineNumber
+																 << "prefix=" << d.prefix
+																 << "reason=" << d.reason
+																 << "text=" << d.text;
+								}
+								if (details.size() > countToLog)
+								{
+										qWarning() << "Sessions tab malformed line"
+																 << "pair=" << pair.pairSerial
+																 << "foot=L"
+																 << "... and" << (details.size() - countToLog) << "more malformed lines";
+								}
+						}
+
+						if (hasRight && rightMalformed > 0)
+						{
+								const QList<ArsMalformedProcessedStrLine> details = pair.right->data.malformedLineDetails;
+								const int countToLog = std::min(static_cast<int>(details.size()), kMaxMalformedLinesToLog);
+								for (int i = 0; i < countToLog; ++i)
+								{
+										const ArsMalformedProcessedStrLine &d = details.at(i);
+										qWarning() << "Sessions tab malformed line"
+																 << "pair=" << pair.pairSerial
+																 << "foot=R"
+																 << "file=" << pair.right->processedStrPath
+																 << "line=" << d.lineNumber
+																 << "prefix=" << d.prefix
+																 << "reason=" << d.reason
+																 << "text=" << d.text;
+								}
+								if (details.size() > countToLog)
+								{
+										qWarning() << "Sessions tab malformed line"
+																 << "pair=" << pair.pairSerial
+																 << "foot=R"
+																 << "... and" << (details.size() - countToLog) << "more malformed lines";
+								}
+						}
+				}
+
+				for (const QString &warning : warnings)
+				{
+						qWarning() << "Sessions tab processedStr warning:" << warning;
+						problems.append(warning);
+				}
+		}
+
+		const bool ok = problems.isEmpty();
+		progressBar->setMaximum(1);
+		progressBar->setValue(1);
+		progressBar->setVisible(false);
+		closeButton->setVisible(true);
+		closeButton->setEnabled(true);
+		problemsView->setVisible(!ok);
+
+		if (ok)
+		{
+				progressTextLabel->setText(
+						QString("Processing completed successfully.\nPairs loaded: %1").arg(pairCount));
+				detailsStatusLabel->setText(QString("Processing completed successfully. Pairs=%1").arg(pairCount));
+		}
+		else
+		{
+				progressTextLabel->setText(
+						QString("Processing completed with errors.\nPairs loaded: %1").arg(pairCount));
+				QString text = "Problems:\n";
+				for (const QString &p : problems)
+				{
+						text += QString("- %1\n").arg(p);
+				}
+				problemsView->setPlainText(text.trimmed());
+				detailsStatusLabel->setText("Processing completed with errors. See dialog/logs.");
+		}
+
+		qDebug() << "Sessions tab process done"
+						 << "ok=" << ok
+						 << "problems=" << problems.size();
 		QApplication::restoreOverrideCursor();
-		processButton->setEnabled(true);
 }
 
 void ArsTrackerSessionsTab::onSessionNameClicked()

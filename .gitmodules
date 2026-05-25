@@ -1,0 +1,3 @@
+[submodule "src/ars_tracker_alga"]
+	path = src/ars_tracker_alga
+	url = https://github.com/morozovars/ars_tracker_alga

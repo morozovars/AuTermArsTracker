@@ -7,8 +7,12 @@ TEMPLATE = lib
 CONFIG += plugin
 CONFIG += c++17
 
+ARS_TRACKER_ALGA_ROOT = $$PWD/../../src/ars_tracker_alga
+
 INCLUDEPATH    += ../../AuTerm \
-    ../../src
+    ../../src \
+    $$ARS_TRACKER_ALGA_ROOT \
+    $$ARS_TRACKER_ALGA_ROOT/sources/soccer_insole
 TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 
 # You can make your code fail to compile if it uses deprecated APIs.
@@ -47,6 +51,7 @@ SOURCES += \
     smp_processor.cpp \
     smp_uart_auterm.cpp \
     smp_group_img_mgmt.cpp \
+    $$ARS_TRACKER_ALGA_ROOT/sources/soccer_insole/PostProcessing.cpp \
     ../../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../../src/ars/workspace/ArsPlayerRepository.cpp \
     ../../src/ars/workspace/ArsSessionRepository.cpp \
@@ -90,7 +95,9 @@ HEADERS += \
     smp_transport.h \
     smp_uart_auterm.h \
     smp_group.h \
-    smp_group_img_mgmt.h
+    smp_group_img_mgmt.h \
+    $$ARS_TRACKER_ALGA_ROOT/Algorithms.h \
+    $$ARS_TRACKER_ALGA_ROOT/sources/soccer_insole/PostProcessing.h
 
 DISTFILES += plugin_mcumgr.json
 

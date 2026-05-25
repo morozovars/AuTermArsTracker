@@ -43,11 +43,42 @@ bool ArsSessionDurationScanner::scanSessionDuration(const QString &sessionPath,
 		*outMaxTimestamp100ms = 0;
 		*outHasTimestamp = false;
 
+		QStringList inputWarnings;
+		const QList<ArsDurationScanFileInput> inputs = scanDurationInputs(sessionPath, &inputWarnings);
+		for (const QString &w : inputWarnings)
+		{
+				append_warning(warnings, w);
+		}
+		for (const ArsDurationScanFileInput &input : inputs)
+		{
+				const ArsDurationScanFileResult result = scanDurationFile(input);
+				for (const QString &w : result.warnings)
+				{
+						append_warning(warnings, w);
+				}
+				if (!result.ok || !result.hasTimestamp)
+				{
+						continue;
+				}
+				if (!*outHasTimestamp || result.maxTimestamp100ms > *outMaxTimestamp100ms)
+				{
+						*outMaxTimestamp100ms = result.maxTimestamp100ms;
+				}
+				*outHasTimestamp = true;
+		}
+
+		return true;
+}
+
+QList<ArsDurationScanFileInput> ArsSessionDurationScanner::scanDurationInputs(const QString &sessionPath,
+																																			 QStringList *warnings)
+{
+		QList<ArsDurationScanFileInput> out;
 		const QDir sessionDir(sessionPath);
 		if (!sessionDir.exists())
 		{
 				append_warning(warnings, QString("Session path is not found: %1").arg(sessionPath));
-				return false;
+				return out;
 		}
 
 		const QRegularExpression trackerRx("^.+[LlRr]$");
@@ -59,55 +90,77 @@ bool ArsSessionDurationScanner::scanSessionDuration(const QString &sessionPath,
 				{
 						continue;
 				}
-
 				const QString processedPath = QDir(trackerDir.absoluteFilePath()).filePath("processedStr.csv");
-				QFile file(processedPath);
-				if (!file.exists())
+				if (!QFileInfo::exists(processedPath))
 				{
-						append_warning(warnings, QString("processedStr.csv is missing: %1").arg(processedPath));
+						append_warning(warnings, QString("processedStr.csv missing for %1").arg(folderName));
 						continue;
 				}
-				if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-				{
-						append_warning(warnings, QString("Failed to open processedStr.csv: %1").arg(processedPath));
-						continue;
-				}
+				ArsDurationScanFileInput input;
+				input.trackerFolderName = folderName;
+				input.processedStrPath = processedPath;
+				out.append(input);
+		}
+		return out;
+}
 
-				QTextStream stream(&file);
-				int lineNumber = 0;
-				while (!stream.atEnd())
-				{
-						lineNumber++;
-						const QString line = stream.readLine().trimmed();
-						if (line.isEmpty() || !line.startsWith("i:"))
-						{
-								continue;
-						}
-						const QString payload = line.mid(2);
-						const QStringList parts = payload.split(',', Qt::KeepEmptyParts);
-						if (parts.isEmpty())
-						{
-								append_warning(warnings, QString("Malformed integral line (empty payload) file=%1 line=%2")
-																								 .arg(processedPath)
-																								 .arg(lineNumber));
-								continue;
-						}
-						uint32_t ts = 0;
-						if (!parse_uint_field(parts.first(), &ts))
-						{
-								append_warning(warnings, QString("Malformed integral timestamp file=%1 line=%2")
-																								 .arg(processedPath)
-																								 .arg(lineNumber));
-								continue;
-						}
-						if (!*outHasTimestamp || ts > *outMaxTimestamp100ms)
-						{
-								*outMaxTimestamp100ms = ts;
-						}
-						*outHasTimestamp = true;
-				}
-				file.close();
+ArsDurationScanFileResult ArsSessionDurationScanner::scanDurationFile(const ArsDurationScanFileInput &input)
+{
+		ArsDurationScanFileResult out;
+		out.trackerFolderName = input.trackerFolderName;
+		out.processedStrPath = input.processedStrPath;
+
+		QFile file(input.processedStrPath);
+		if (!file.exists())
+		{
+				out.warnings.append(QString("processedStr.csv missing for %1").arg(input.trackerFolderName));
+				return out;
+		}
+		if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+		{
+				out.warnings.append(QString("failed to open processedStr.csv for %1").arg(input.trackerFolderName));
+				return out;
 		}
 
-		return true;
+		uint32_t maxTs = 0;
+		bool hasTs = false;
+		QTextStream stream(&file);
+		int lineNumber = 0;
+		while (!stream.atEnd())
+		{
+				lineNumber++;
+				const QString line = stream.readLine().trimmed();
+				if (line.isEmpty() || !line.startsWith("i:"))
+				{
+						continue;
+				}
+				const QString payload = line.mid(2);
+				const QStringList parts = payload.split(',', Qt::KeepEmptyParts);
+				if (parts.isEmpty())
+				{
+						out.warnings.append(QString("malformed i: line in %1 at line %2").arg(input.trackerFolderName).arg(lineNumber));
+						continue;
+				}
+				uint32_t ts = 0;
+				if (!parse_uint_field(parts.first(), &ts))
+				{
+						out.warnings.append(QString("invalid i: timestamp in %1 at line %2").arg(input.trackerFolderName).arg(lineNumber));
+						continue;
+				}
+				if (!hasTs || ts > maxTs)
+				{
+						maxTs = ts;
+				}
+				hasTs = true;
+		}
+		file.close();
+
+		out.ok = true;
+		out.hasTimestamp = hasTs;
+		out.maxTimestamp100ms = maxTs;
+		if (!hasTs)
+		{
+				out.warnings.append(QString("no IntegralState timestamps found in %1").arg(input.trackerFolderName));
+		}
+		return out;
 }

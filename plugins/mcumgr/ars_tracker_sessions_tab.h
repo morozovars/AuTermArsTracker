@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include "ars_tracker/ars_session_info.h"
+#include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_processing_loader.h"
 
 class QPushButton;
@@ -55,6 +56,7 @@ private slots:
 		void openSessionsFolder();
 		void onSessionNameClicked();
 		void onBackFromSessionDetails();
+		void onRescanSessionClicked();
 		void onProcessSessionClicked();
 
 private:
@@ -80,13 +82,6 @@ private:
 																 bool *fileExists,
 																 bool *hasPlannedSessionPeriod,
 																 QStringList *warnings = nullptr);
-		bool computeRecommendedPlannedSessionPeriod(const QString &sessionPath,
-																								const QString &sessionId,
-																								const ArsSessionInfo *loadedInfo,
-																								QTime *outRecommendedStart,
-																								QTime *outRecommendedFinish,
-																								QString *sourceTag,
-																								QString *errorReason) const;
 		bool validateSessionInfo(const ArsSessionInfo &info, QStringList *problems) const;
 		bool saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const;
 		void updateSessionTimeSummaryFromMaxTimestamp(uint32_t maxTimestamp100ms, bool hasTimestamp);
@@ -94,6 +89,9 @@ private:
 		void setSessionTimeSummary(const QString &startTime, const QString &finishTime, const QString &duration);
 		QTime roundUpToNextHalfHour(const QTime &time) const;
 		QTime roundDownToPreviousHalfHour(const QTime &time) const;
+		void startSessionDurationScan(bool isInitial, bool saveJsonAfterScan, bool shouldRecommendPlannedPeriod, bool forceRecommendation);
+		void processNextDurationScanFile();
+		void finishSessionDurationScan();
 		void startSessionProcessingFlow();
 		void processNextSessionPair();
 		void finishSessionProcessingFlow();
@@ -110,6 +108,7 @@ private:
 		QPushButton *openFolderButton = nullptr;
 		QPushButton *reloadButton = nullptr;
 		QPushButton *backButton = nullptr;
+		QPushButton *rescanButton = nullptr;
 		QPushButton *processButton = nullptr;
 		QTableWidget *sessionsTable = nullptr;
 		QLabel *sessionTitleLabel = nullptr;
@@ -148,6 +147,21 @@ private:
 		bool m_processHasIntegralTimestamp = false;
 		bool m_processValidationOk = true;
 		ArsSessionInfo m_pendingProcessSessionInfo;
+
+		QDialog *m_scanDialog = nullptr;
+		QLabel *m_scanStatusLabel = nullptr;
+		QProgressBar *m_scanProgressBar = nullptr;
+		QPlainTextEdit *m_scanResultText = nullptr;
+		QPushButton *m_scanCloseButton = nullptr;
+		QList<ArsDurationScanFileInput> m_scanInputs;
+		int m_scanIndex = 0;
+		uint32_t m_scanMaxTimestamp100ms = 0;
+		bool m_scanHasTimestamp = false;
+		QStringList m_scanProblems;
+		bool m_scanShouldSaveJson = false;
+		bool m_scanIsInitial = false;
+		bool m_scanShouldRecommendPlannedPeriod = false;
+		bool m_scanForceRecommendation = false;
 };
 
 #endif // ARS_TRACKER_SESSIONS_TAB_H

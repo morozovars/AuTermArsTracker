@@ -143,9 +143,12 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 
 		QHBoxLayout *header = new QHBoxLayout();
 		backButton = new QPushButton("Back", detailsPage);
+		rescanButton = new QPushButton("Rescan", detailsPage);
+		rescanButton->setObjectName("button_session_rescan");
 		processButton = new QPushButton("Process", detailsPage);
 		sessionTitleLabel = new QLabel(detailsPage);
 		header->addWidget(backButton);
+		header->addWidget(rescanButton);
 		header->addWidget(processButton);
 		header->addWidget(sessionTitleLabel, 1);
 		layout->addLayout(header, 0, 0, 1, 1);
@@ -243,6 +246,7 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		layout->addWidget(detailsStatusLabel, 4, 0, 1, 1);
 
 		connect(backButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onBackFromSessionDetails);
+		connect(rescanButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onRescanSessionClicked);
 		connect(processButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onProcessSessionClicked);
 
 		pagesStack->addWidget(detailsPage);
@@ -521,45 +525,44 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 								 << "start=" << timeSessionStart->time().toString("HH:mm:ss")
 								 << "finish=" << timeSessionFinish->time().toString("HH:mm:ss");
 		}
-		else
+		else if (loaded && loadedInfo.actualTime.valid)
 		{
-				qDebug() << "Sessions tab planned period recommendation begin" << "session=" << sessionId;
-				QTime recommendedStart;
-				QTime recommendedFinish;
-				QString source;
-				QString reason;
-				if (computeRecommendedPlannedSessionPeriod(sessionPath,
-																							 sessionId,
-																							 loaded ? &loadedInfo : nullptr,
-																							 &recommendedStart,
-																							 &recommendedFinish,
-																							 &source,
-																							 &reason))
+				const QTime actualStart = QTime::fromString(loadedInfo.actualTime.startTime, "HH:mm:ss");
+				const QTime actualFinish = QTime::fromString(loadedInfo.actualTime.finishTime, "HH:mm:ss");
+				if (actualStart.isValid() && actualFinish.isValid())
 				{
-						timeSessionStart->setTime(recommendedStart);
-						timeSessionFinish->setTime(recommendedFinish);
-						qDebug() << "Sessions tab planned period recommendation actualStart="
-										 << source.section('|', 0, 0)
-										 << "actualFinish="
-										 << source.section('|', 1, 1)
-										 << "source="
-										 << source.section('|', 2, 2);
+						QTime recommendedStart = roundUpToNextHalfHour(actualStart);
+						QTime recommendedFinish = roundDownToPreviousHalfHour(actualFinish);
+						if (recommendedFinish <= recommendedStart)
+						{
+								qWarning() << "Sessions tab planned period recommendation invalid interval"
+													 << "start=" << recommendedStart.toString("HH:mm:ss")
+													 << "finish=" << recommendedFinish.toString("HH:mm:ss")
+													 << ", fallback applied";
+								recommendedFinish = recommendedStart.addSecs(90 * 60);
+						}
+						timeSessionStart->setTime(QTime(recommendedStart.hour(), recommendedStart.minute(), 0));
+						timeSessionFinish->setTime(QTime(recommendedFinish.hour(), recommendedFinish.minute(), 0));
 						qDebug() << "Sessions tab planned period recommended"
-										 << "start=" << recommendedStart.toString("HH:mm:ss")
-										 << "finish=" << recommendedFinish.toString("HH:mm:ss");
-				}
-				else
-				{
-						qWarning() << "Sessions tab planned period recommendation unavailable" << "reason=" << reason;
-						qDebug() << "Sessions tab planned period default used"
 										 << "start=" << timeSessionStart->time().toString("HH:mm:ss")
-										 << "finish=" << timeSessionFinish->time().toString("HH:mm:ss");
+										 << "finish=" << timeSessionFinish->time().toString("HH:mm:ss")
+										 << "actualStart=" << actualStart.toString("HH:mm:ss")
+										 << "actualFinish=" << actualFinish.toString("HH:mm:ss");
 				}
 		}
 
 		fillSessionTrackersTable(scanSessionTrackers(sessionPath));
 		detailsStatusLabel->setText("Ready to process");
 		pagesStack->setCurrentWidget(detailsPage);
+
+		const bool needsActualTimeScan = !loaded || !loadedInfo.actualTime.valid;
+		const bool needsRecommendationScan = (!loaded || !hasPlannedSessionPeriod) && !loadedInfo.actualTime.valid;
+		if (needsActualTimeScan || needsRecommendationScan)
+		{
+				const QString reason = !loaded ? "missingSessionInfo" : (!loadedInfo.actualTime.valid ? "missingActualTime" : "missingPlannedPeriod");
+				qDebug() << "Sessions tab initial duration scan requested" << "sessionPath=" << sessionPath << "reason=" << reason;
+				startSessionDurationScan(true, true, needsRecommendationScan, false);
+		}
 }
 
 ArsSessionTargetSettings ArsTrackerSessionsTab::readTargetSettingsFromUi() const
@@ -717,87 +720,6 @@ bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath
 		return true;
 }
 
-bool ArsTrackerSessionsTab::computeRecommendedPlannedSessionPeriod(const QString &sessionPath,
-																																	 const QString &sessionId,
-																																	 const ArsSessionInfo *loadedInfo,
-																																	 QTime *outRecommendedStart,
-																																	 QTime *outRecommendedFinish,
-																																	 QString *sourceTag,
-																																	 QString *errorReason) const
-{
-		if (outRecommendedStart == nullptr || outRecommendedFinish == nullptr)
-		{
-				if (errorReason != nullptr)
-				{
-						*errorReason = "output pointers are null";
-				}
-				return false;
-		}
-
-		QTime actualStart(0, 0, 0);
-		QTime actualFinish;
-		bool hasFinish = false;
-		QString source = "sessionNameAndDurationScan";
-
-		if (loadedInfo != nullptr && loadedInfo->actualTime.valid)
-		{
-				const QTime jsonStart = QTime::fromString(loadedInfo->actualTime.startTime, "HH:mm:ss");
-				const QTime jsonFinish = QTime::fromString(loadedInfo->actualTime.finishTime, "HH:mm:ss");
-				if (jsonStart.isValid() && jsonFinish.isValid())
-				{
-						actualStart = jsonStart;
-						actualFinish = jsonFinish;
-						hasFinish = true;
-						source = "actualTimeJson";
-				}
-		}
-
-		if (!hasFinish)
-		{
-				actualStart = sessionStartTimeFromSessionName(sessionId, nullptr);
-				uint32_t maxTimestamp100ms = 0;
-				bool hasTimestamp = false;
-				QStringList warnings;
-				ArsSessionDurationScanner::scanSessionDuration(sessionPath, &maxTimestamp100ms, &hasTimestamp, &warnings);
-				for (const QString &w : warnings)
-				{
-						qWarning() << "Sessions tab planned period recommendation warning" << w;
-				}
-				if (!hasTimestamp)
-				{
-						if (errorReason != nullptr)
-						{
-								*errorReason = "no actual finish time";
-						}
-						return false;
-				}
-				const qint64 durationMs = static_cast<qint64>(maxTimestamp100ms) * 100;
-				actualFinish = QDateTime(QDate(2000, 1, 1), actualStart).addMSecs(durationMs).time();
-		}
-
-		QTime recommendedStart = roundUpToNextHalfHour(actualStart);
-		QTime recommendedFinish = roundDownToPreviousHalfHour(actualFinish);
-		if (recommendedFinish <= recommendedStart)
-		{
-				qWarning() << "Sessions tab planned period recommendation invalid interval"
-									 << "start=" << recommendedStart.toString("HH:mm:ss")
-									 << "finish=" << recommendedFinish.toString("HH:mm:ss")
-									 << ", fallback applied";
-				recommendedFinish = recommendedStart.addSecs(90 * 60);
-		}
-
-		*outRecommendedStart = QTime(recommendedStart.hour(), recommendedStart.minute(), 0);
-		*outRecommendedFinish = QTime(recommendedFinish.hour(), recommendedFinish.minute(), 0);
-		if (sourceTag != nullptr)
-		{
-				*sourceTag = QString("%1|%2|%3")
-											 .arg(actualStart.toString("HH:mm:ss"),
-														actualFinish.toString("HH:mm:ss"),
-														source);
-		}
-		return true;
-}
-
 bool ArsTrackerSessionsTab::saveSessionInfoJson(const QString &sessionPath, const ArsSessionInfo &info, QString *errorMessage) const
 {
 		return ArsSessionInfoJson::saveSessionInfoJson(sessionPath, info, errorMessage);
@@ -839,6 +761,10 @@ void ArsTrackerSessionsTab::onProcessSessionClicked()
 		}
 
 		processButton->setEnabled(false);
+		if (rescanButton != nullptr)
+		{
+				rescanButton->setEnabled(false);
+		}
 		m_processProblems.clear();
 		m_processPairInputs.clear();
 		m_processPairIndex = 0;
@@ -877,6 +803,254 @@ void ArsTrackerSessionsTab::onProcessSessionClicked()
 		m_processResultText = nullptr;
 		m_processCloseButton = nullptr;
 		processButton->setEnabled(true);
+		if (rescanButton != nullptr)
+		{
+				rescanButton->setEnabled(true);
+		}
+}
+
+void ArsTrackerSessionsTab::onRescanSessionClicked()
+{
+		if (currentSessionId.trimmed().isEmpty())
+		{
+				return;
+		}
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
+		if (sessionsPath().trimmed().isEmpty() || !QDir(sessionPath).exists())
+		{
+				detailsStatusLabel->setText("Session path is unavailable");
+				return;
+		}
+		qDebug() << "Sessions tab rescan requested" << "sessionPath=" << sessionPath;
+		startSessionDurationScan(false, true, true, true);
+}
+
+void ArsTrackerSessionsTab::startSessionDurationScan(bool isInitial,
+																										 bool saveJsonAfterScan,
+																										 bool shouldRecommendPlannedPeriod,
+																										 bool forceRecommendation)
+{
+		if (m_scanDialog != nullptr)
+		{
+				return;
+		}
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
+		if (sessionPath.trimmed().isEmpty() || !QDir(sessionPath).exists())
+		{
+				return;
+		}
+
+		m_scanIsInitial = isInitial;
+		m_scanShouldSaveJson = saveJsonAfterScan;
+		m_scanShouldRecommendPlannedPeriod = shouldRecommendPlannedPeriod;
+		m_scanForceRecommendation = forceRecommendation;
+		m_scanIndex = 0;
+		m_scanMaxTimestamp100ms = 0;
+		m_scanHasTimestamp = false;
+		m_scanProblems.clear();
+		QStringList inputWarnings;
+		m_scanInputs = ArsSessionDurationScanner::scanDurationInputs(sessionPath, &inputWarnings);
+		m_scanProblems.append(inputWarnings);
+		qDebug() << "Sessions tab duration scan inputs count=" << m_scanInputs.size();
+
+		processButton->setEnabled(false);
+		if (rescanButton != nullptr)
+		{
+				rescanButton->setEnabled(false);
+		}
+
+		m_scanDialog = new QDialog(this);
+		m_scanDialog->setWindowTitle("Scanning session");
+		m_scanDialog->setModal(true);
+		QVBoxLayout *layout = new QVBoxLayout(m_scanDialog);
+		m_scanStatusLabel = new QLabel("Scanning session data...", m_scanDialog);
+		layout->addWidget(m_scanStatusLabel);
+		m_scanProgressBar = new QProgressBar(m_scanDialog);
+		m_scanProgressBar->setMinimum(0);
+		m_scanProgressBar->setMaximum(m_scanInputs.isEmpty() ? 1 : m_scanInputs.size());
+		m_scanProgressBar->setValue(0);
+		layout->addWidget(m_scanProgressBar);
+		m_scanResultText = new QPlainTextEdit(m_scanDialog);
+		m_scanResultText->setReadOnly(true);
+		m_scanResultText->setVisible(false);
+		layout->addWidget(m_scanResultText);
+		QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close, m_scanDialog);
+		m_scanCloseButton = buttons->button(QDialogButtonBox::Close);
+		m_scanCloseButton->setVisible(false);
+		m_scanCloseButton->setEnabled(false);
+		connect(m_scanCloseButton, &QPushButton::clicked, m_scanDialog, &QDialog::accept);
+		layout->addWidget(buttons);
+
+		QTimer::singleShot(0, this, &ArsTrackerSessionsTab::processNextDurationScanFile);
+		m_scanDialog->exec();
+		m_scanDialog->deleteLater();
+		m_scanDialog = nullptr;
+		m_scanStatusLabel = nullptr;
+		m_scanProgressBar = nullptr;
+		m_scanResultText = nullptr;
+		m_scanCloseButton = nullptr;
+
+		processButton->setEnabled(true);
+		if (rescanButton != nullptr)
+		{
+				rescanButton->setEnabled(true);
+		}
+}
+
+void ArsTrackerSessionsTab::processNextDurationScanFile()
+{
+		if (m_scanDialog == nullptr || m_scanProgressBar == nullptr)
+		{
+				return;
+		}
+		const int total = m_scanInputs.size();
+		if (m_scanIndex >= total)
+		{
+				finishSessionDurationScan();
+				return;
+		}
+
+		const ArsDurationScanFileInput input = m_scanInputs.at(m_scanIndex);
+		const int index = m_scanIndex + 1;
+		m_scanStatusLabel->setText(QString("Scanning tracker %1 of %2: %3").arg(index).arg(total).arg(input.trackerFolderName));
+		qDebug() << "Sessions tab duration scan file begin"
+						 << "index=" << index
+						 << "total=" << total
+						 << "tracker=" << input.trackerFolderName
+						 << "path=" << input.processedStrPath;
+
+		const ArsDurationScanFileResult result = ArsSessionDurationScanner::scanDurationFile(input);
+		for (const QString &w : result.warnings)
+		{
+				m_scanProblems.append(w);
+		}
+		if (result.ok && result.hasTimestamp)
+		{
+				if (!m_scanHasTimestamp || result.maxTimestamp100ms > m_scanMaxTimestamp100ms)
+				{
+						m_scanMaxTimestamp100ms = result.maxTimestamp100ms;
+				}
+				m_scanHasTimestamp = true;
+		}
+		qDebug() << "Sessions tab duration scan file done"
+						 << "tracker=" << input.trackerFolderName
+						 << "hasTimestamp=" << result.hasTimestamp
+						 << "maxTimestamp100ms=" << result.maxTimestamp100ms;
+
+		m_scanIndex++;
+		m_scanProgressBar->setValue(m_scanIndex);
+		qDebug() << "Sessions tab duration scan progress" << "value=" << m_scanIndex << "total=" << total;
+		QTimer::singleShot(0, this, &ArsTrackerSessionsTab::processNextDurationScanFile);
+}
+
+void ArsTrackerSessionsTab::finishSessionDurationScan()
+{
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
+		if (m_scanProgressBar != nullptr)
+		{
+				m_scanProgressBar->setMaximum(m_scanInputs.isEmpty() ? 1 : m_scanInputs.size());
+				m_scanProgressBar->setValue(m_scanInputs.isEmpty() ? 1 : m_scanInputs.size());
+		}
+
+		if (m_scanHasTimestamp)
+		{
+				updateSessionTimeSummaryFromMaxTimestamp(m_scanMaxTimestamp100ms, true);
+				const QTime actualStart = m_currentSessionStartTime;
+				const QTime actualFinish = m_currentSessionFinishTime;
+				qDebug() << "Sessions tab duration scan done"
+								 << "hasTimestamp=" << true
+								 << "maxTimestamp100ms=" << m_scanMaxTimestamp100ms
+								 << "durationMs=" << m_currentSessionDurationMs
+								 << "saveJson=" << m_scanShouldSaveJson;
+				const bool shouldApplyRecommendation = m_scanForceRecommendation || m_scanShouldRecommendPlannedPeriod;
+				if (shouldApplyRecommendation)
+				{
+						QTime recommendedStart = roundUpToNextHalfHour(actualStart);
+						QTime recommendedFinish = roundDownToPreviousHalfHour(actualFinish);
+						if (recommendedFinish <= recommendedStart)
+						{
+								qWarning() << "Sessions tab planned period recommendation invalid interval"
+													 << "start=" << recommendedStart.toString("HH:mm:ss")
+													 << "finish=" << recommendedFinish.toString("HH:mm:ss")
+													 << ", fallback applied";
+								recommendedFinish = recommendedStart.addSecs(90 * 60);
+						}
+						timeSessionStart->setTime(QTime(recommendedStart.hour(), recommendedStart.minute(), 0));
+						timeSessionFinish->setTime(QTime(recommendedFinish.hour(), recommendedFinish.minute(), 0));
+						qDebug() << "Sessions tab planned period recommended"
+										 << "start=" << timeSessionStart->time().toString("HH:mm:ss")
+										 << "finish=" << timeSessionFinish->time().toString("HH:mm:ss")
+										 << "actualStart=" << actualStart.toString("HH:mm:ss")
+										 << "actualFinish=" << actualFinish.toString("HH:mm:ss");
+				}
+
+				if (m_scanShouldSaveJson)
+				{
+						ArsSessionInfo::ArsSessionActualTime actualTime;
+						actualTime.valid = true;
+						actualTime.startTime = actualStart.toString("HH:mm:ss");
+						actualTime.finishTime = actualFinish.toString("HH:mm:ss");
+						actualTime.duration = formatDurationMs(m_currentSessionDurationMs);
+						actualTime.durationMs = m_currentSessionDurationMs;
+						actualTime.maxIntegralTimestamp100ms = m_scanMaxTimestamp100ms;
+						qDebug() << "Sessions tab duration scan actualTime calculated"
+										 << "start=" << actualTime.startTime
+										 << "finish=" << actualTime.finishTime
+										 << "duration=" << actualTime.duration
+										 << "durationMs=" << actualTime.durationMs
+										 << "maxTimestamp100ms=" << actualTime.maxIntegralTimestamp100ms;
+						QString saveError;
+						if (!ArsSessionInfoJson::updateSessionInfoActualTimeJson(sessionPath, actualTime, &saveError))
+						{
+								m_scanProblems.append(QString("SessionInfo.json actualTime update failed: %1").arg(saveError));
+								qWarning() << "Sessions tab SessionInfo actualTime update failed"
+													 << "path=" << QDir(sessionPath).filePath("SessionInfo.json")
+													 << "error=" << saveError;
+						}
+						else
+						{
+								qDebug() << "Sessions tab rescan saved SessionInfo.json path=" << QDir(sessionPath).filePath("SessionInfo.json");
+						}
+				}
+		}
+		else
+		{
+			setSessionTimeSummaryPlaceholder();
+			m_scanProblems.append("Unable to calculate actual session time: no integral state timestamps found.");
+			qWarning() << "Sessions tab duration scan done"
+								 << "hasTimestamp=" << false
+								 << "maxTimestamp100ms=0"
+								 << "durationMs=-1"
+								 << "saveJson=" << m_scanShouldSaveJson;
+			if (m_scanShouldSaveJson)
+			{
+					m_scanProblems.append("SessionInfo.json actualTime was not updated: no integral state timestamps found.");
+					qWarning() << "Sessions tab SessionInfo actualTime update skipped reason=no integral timestamps";
+			}
+		}
+
+		const bool ok = m_scanProblems.isEmpty();
+		if (ok)
+		{
+				m_scanStatusLabel->setText(QString("Session scan completed successfully.\nSessionInfo.json actual time updated.\nDuration: %1\nFinish time: %2")
+																	 .arg(formatDurationMs(m_currentSessionDurationMs),
+																			 m_currentSessionFinishKnown ? m_currentSessionFinishTime.toString("HH:mm:ss") : "--:--:--"));
+				detailsStatusLabel->setText("Session scan completed successfully.");
+		}
+		else
+		{
+				m_scanStatusLabel->setText("Session scan completed with warnings.");
+				m_scanResultText->setVisible(true);
+				QString text = "Problems:\n";
+				for (const QString &p : m_scanProblems)
+				{
+						text += QString("- %1\n").arg(p);
+				}
+				m_scanResultText->setPlainText(text.trimmed());
+				detailsStatusLabel->setText("Session scan completed with warnings.");
+		}
+		m_scanCloseButton->setVisible(true);
+		m_scanCloseButton->setEnabled(true);
 }
 
 void ArsTrackerSessionsTab::startSessionProcessingFlow()

@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDebug>
 
 namespace
 {
@@ -226,5 +227,74 @@ bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
 		}
 
 		*outInfo = info;
+		return true;
+}
+
+bool ArsSessionInfoJson::updateSessionInfoActualTimeJson(const QString &sessionPath,
+																												 const ArsSessionInfo::ArsSessionActualTime &actualTime,
+																												 QString *errorMessage)
+{
+		if (!actualTime.valid)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "actualTime is invalid";
+				}
+				return false;
+		}
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		qDebug() << "Sessions tab SessionInfo actualTime update begin" << "path=" << filePath;
+		QJsonObject root;
+		QFile file(filePath);
+		if (file.exists())
+		{
+				qDebug() << "Sessions tab SessionInfo actualTime update merge existing" << "path=" << filePath;
+				if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+				{
+						if (errorMessage != nullptr)
+						{
+								*errorMessage = QString("Failed to open JSON for read: %1").arg(filePath);
+						}
+						return false;
+				}
+				const QByteArray bytes = file.readAll();
+				file.close();
+				QJsonParseError parseError;
+				const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseError);
+				if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+				{
+						if (errorMessage != nullptr)
+						{
+								*errorMessage = QString("Invalid JSON in %1: %2").arg(filePath, parseError.errorString());
+						}
+						return false;
+				}
+				root = doc.object();
+		}
+		else
+		{
+				qDebug() << "Sessions tab SessionInfo actualTime update create new" << "path=" << filePath;
+		}
+
+		// TODO: keep planned session period separate from actual processed session time.
+		QJsonObject actual;
+		actual["startTime"] = actualTime.startTime;
+		actual["finishTime"] = actualTime.finishTime;
+		actual["duration"] = actualTime.duration;
+		actual["durationMs"] = static_cast<qint64>(actualTime.durationMs);
+		actual["maxIntegralTimestamp100ms"] = static_cast<qint64>(actualTime.maxIntegralTimestamp100ms);
+		root["actualTime"] = actual;
+
+		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Failed to open JSON for write: %1").arg(filePath);
+				}
+				return false;
+		}
+		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+		file.close();
+		qDebug() << "Sessions tab SessionInfo actualTime updated" << "path=" << filePath;
 		return true;
 }

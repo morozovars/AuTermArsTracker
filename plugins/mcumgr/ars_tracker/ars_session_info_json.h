@@ -16,6 +16,9 @@ public:
 																		bool *outFileExists = nullptr,
 																		bool *outHasPlannedSessionPeriod = nullptr,
 																		QString *errorMessage = nullptr);
+		static bool updateSessionInfoActualTimeJson(const QString &sessionPath,
+																								const ArsSessionInfo::ArsSessionActualTime &actualTime,
+																								QString *errorMessage = nullptr);
 };
 
 #endif // ARS_SESSION_INFO_JSON_H

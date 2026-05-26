@@ -1,19 +1,18 @@
-#include "ArsTeamRepository.h"
+#include "ars_team_repository.h"
 
-#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDebug>
 #include <QRegularExpression>
-#include <QSet>
 #include <algorithm>
 
 namespace
 {
-QJsonObject planned_metrics_to_json(const ArsPlannedMetrics &m)
+QJsonObject planned_metrics_to_json(const ArsSessionPlannedMetrics &m)
 {
     QJsonObject o;
     o["accelerationDistanceM"] = m.accelerationDistanceM;
@@ -27,9 +26,9 @@ QJsonObject planned_metrics_to_json(const ArsPlannedMetrics &m)
     return o;
 }
 
-ArsPlannedMetrics planned_metrics_from_json(const QJsonObject &o)
+ArsSessionPlannedMetrics planned_metrics_from_json(const QJsonObject &o)
 {
-    ArsPlannedMetrics m;
+    ArsSessionPlannedMetrics m;
     m.accelerationDistanceM = o.value("accelerationDistanceM").toInt(0);
     m.distanceKm = o.value("distanceKm").toDouble(0.0);
     m.dribbles = o.value("dribbles").toInt(0);
@@ -83,16 +82,6 @@ bool ArsTeamRepository::ensureTeamsDir(QString *errorMessage) const
         *errorMessage = QString("Failed to create teams directory: %1").arg(path);
     }
     return false;
-}
-
-bool ArsTeamRepository::ensureInitialized()
-{
-    return ensureTeamsDir(nullptr);
-}
-
-QString ArsTeamRepository::filePath() const
-{
-    return QDir(m_workspacePath).filePath("team.json");
 }
 
 QString ArsTeamRepository::teamFilePath(int teamId) const
@@ -264,142 +253,4 @@ int ArsTeamRepository::nextTeamId(QStringList *warnings) const
         maxId = std::max(maxId, t.teamId);
     }
     return maxId + 1;
-}
-
-QString ArsTeamRepository::workspaceRootPath() const
-{
-    return m_workspacePath;
-}
-
-QString ArsTeamRepository::resolveLogoAbsolutePath(const QString &logoPath) const
-{
-    const QString trimmed = logoPath.trimmed();
-    if (trimmed.isEmpty())
-    {
-        return QString();
-    }
-    const QFileInfo info(trimmed);
-    if (info.isAbsolute())
-    {
-        return QDir::cleanPath(info.absoluteFilePath());
-    }
-    return QDir::cleanPath(QDir(m_workspacePath).filePath(trimmed));
-}
-
-bool ArsTeamRepository::copyTeamLogoToWorkspace(int teamId,
-                                                const QString &sourceLogoPath,
-                                                QString *outRelativeLogoPath,
-                                                QString *errorMessage) const
-{
-    if (outRelativeLogoPath != nullptr)
-    {
-        outRelativeLogoPath->clear();
-    }
-    if (teamId <= 0)
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = "Invalid team_id for logo copy";
-        }
-        return false;
-    }
-
-    const QString source = sourceLogoPath.trimmed();
-    if (source.isEmpty())
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = "Logo source path is empty";
-        }
-        return false;
-    }
-
-    const QFileInfo sourceInfo(source);
-    if (!sourceInfo.exists() || !sourceInfo.isFile())
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = QString("Logo source does not exist: %1").arg(source);
-        }
-        return false;
-    }
-
-    const QString extension = sourceInfo.suffix().toLower();
-    const QSet<QString> allowed = {"png", "jpg", "jpeg", "bmp", "svg"};
-    if (!allowed.contains(extension))
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = QString("Unsupported logo extension: .%1").arg(extension);
-        }
-        return false;
-    }
-
-    QString dirError;
-    if (!ensureTeamsDir(&dirError))
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = dirError;
-        }
-        return false;
-    }
-
-    const QString relativeDir = QString("teams/assets/team_%1").arg(teamId);
-    const QString targetDirPath = QDir(m_workspacePath).filePath(relativeDir);
-    if (!QDir(targetDirPath).exists() && !QDir().mkpath(targetDirPath))
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = QString("Failed to create logo dir: %1").arg(targetDirPath);
-        }
-        return false;
-    }
-
-    const QString relativeTarget = QDir::cleanPath(QString("%1/logo.%2").arg(relativeDir, extension));
-    const QString absoluteTarget = QDir::cleanPath(QDir(m_workspacePath).filePath(relativeTarget));
-    const QString absoluteSource = QDir::cleanPath(sourceInfo.absoluteFilePath());
-
-    if (QString::compare(absoluteSource, absoluteTarget, Qt::CaseInsensitive) == 0)
-    {
-        if (outRelativeLogoPath != nullptr)
-        {
-            *outRelativeLogoPath = relativeTarget;
-        }
-        return true;
-    }
-
-    const QStringList oldLogos = {"logo.png", "logo.jpg", "logo.jpeg", "logo.bmp", "logo.svg"};
-    for (const QString &oldName : oldLogos)
-    {
-        const QString oldPath = QDir(targetDirPath).filePath(oldName);
-        if (QFileInfo::exists(oldPath) && QString::compare(QDir::cleanPath(oldPath), absoluteTarget, Qt::CaseInsensitive) != 0)
-        {
-            QFile::remove(oldPath);
-        }
-    }
-
-    if (QFileInfo::exists(absoluteTarget) && !QFile::remove(absoluteTarget))
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = QString("Failed to replace old logo file: %1").arg(absoluteTarget);
-        }
-        return false;
-    }
-
-    if (!QFile::copy(absoluteSource, absoluteTarget))
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = QString("Failed to copy logo to workspace: %1").arg(absoluteTarget);
-        }
-        return false;
-    }
-
-    if (outRelativeLogoPath != nullptr)
-    {
-        *outRelativeLogoPath = relativeTarget;
-    }
-    return true;
 }

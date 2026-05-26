@@ -26,6 +26,8 @@ SOURCES += \
     ars_tracker/ars_session_duration_scanner.cpp \
     ars_tracker/ars_session_info_json.cpp \
     ars_tracker/ars_session_processing_loader.cpp \
+    ars_tracker/ars_team_edit_dialog.cpp \
+    ars_tracker/ars_tracker_team_tab.cpp \
     ars_trackers_session_download_coordinator.cpp \
     ars_tracker_bulk_fw_update_dialog.cpp \
     ars_tracker_bulk_fw_update_worker.cpp \
@@ -54,6 +56,7 @@ SOURCES += \
     smp_group_img_mgmt.cpp \
     ../../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../../src/ars/workspace/ArsPlayerRepository.cpp \
+    ../../src/ars/workspace/ArsAppSettings.cpp \
     ../../src/ars/workspace/ArsSessionRepository.cpp \
     ../../src/ars/workspace/ArsTeamRepository.cpp \
     ../../src/ars/workspace/ArsTrackerBindingRepository.cpp
@@ -67,6 +70,8 @@ HEADERS += \
     ars_tracker/ars_session_info.h \
     ars_tracker/ars_session_info_json.h \
     ars_tracker/ars_session_processing_loader.h \
+    ars_tracker/ars_team_edit_dialog.h \
+    ars_tracker/ars_tracker_team_tab.h \
     ars_trackers_session_download_coordinator.h \
     ars_tracker_bulk_fw_update_dialog.h \
     ars_tracker_bulk_fw_update_models.h \
@@ -96,7 +101,8 @@ HEADERS += \
     smp_transport.h \
     smp_uart_auterm.h \
     smp_group.h \
-    smp_group_img_mgmt.h
+    smp_group_img_mgmt.h \
+    ../../src/ars/workspace/ArsAppSettings.h
 
 DISTFILES += plugin_mcumgr.json
 

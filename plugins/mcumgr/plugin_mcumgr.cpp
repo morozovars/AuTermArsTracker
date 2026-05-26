@@ -45,6 +45,7 @@
 #include "ars_tracker_utils.h"
 #include "ars_trackers_ui_state.h"
 #include "ars_tracker_sessions_tab.h"
+#include "ars_tracker/ars_tracker_team_tab.h"
 
 static const uint16_t timeout_erase_ms = 14000;
 static const uint32_t timeout_ars_tracker_metadata_ms = 60000;
@@ -3026,6 +3027,7 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		tabWidget_orig->addTab(tab_ars_tracker, QString("Tracker Inspector"));
 		setup_ars_trackers_tab(tabWidget_orig);
 		setup_ars_sessions_tab(tabWidget_orig);
+		setup_ars_team_tab(tabWidget_orig);
 		log_debug() << "Final top tabs after plugin_mcumgr setup:";
 		for (int i = 0; i < tabWidget_orig->count(); ++i)
 		{
@@ -7180,6 +7182,86 @@ void plugin_mcumgr::setup_ars_sessions_tab(QTabWidget *tabWidget_orig)
 		}
 }
 
+void plugin_mcumgr::setup_ars_team_tab(QTabWidget *tabWidget_orig)
+{
+		if (tabWidget_orig == nullptr)
+		{
+				log_warning() << "Team tab setup skipped: tabWidget_orig is null";
+				return;
+		}
+		for (int i = 0; i < tabWidget_orig->count(); ++i)
+		{
+				QWidget *w = tabWidget_orig->widget(i);
+				const QString title = tabWidget_orig->tabText(i);
+				const bool object_name_match =
+						(w != nullptr && (w->objectName() == "ars_tracker_team_tab" || w->objectName() == "tab_ars_team"));
+				const bool title_match = (title.compare("Team", Qt::CaseInsensitive) == 0);
+				if (object_name_match || title_match)
+				{
+						ArsTrackerTeamTab *existing = qobject_cast<ArsTrackerTeamTab *>(w);
+						if (existing != nullptr)
+						{
+								ars_tracker_team_tab = existing;
+						}
+						return;
+				}
+		}
+		if (ars_tracker_team_tab == nullptr)
+		{
+				ars_tracker_team_tab = new ArsTrackerTeamTab(tabWidget_orig);
+		}
+		ars_tracker_team_tab->setObjectName("ars_tracker_team_tab");
+
+		int sessions_index = -1;
+		int trackers_index = -1;
+		int inspector_index = -1;
+		for (int i = 0; i < tabWidget_orig->count(); ++i)
+		{
+				const QString title = tabWidget_orig->tabText(i);
+				if (title.compare("Sessions", Qt::CaseInsensitive) == 0)
+				{
+						sessions_index = i;
+				}
+				else if (title.compare("Trackers", Qt::CaseInsensitive) == 0)
+				{
+						trackers_index = i;
+				}
+				else if (title.compare("Tracker Inspector", Qt::CaseInsensitive) == 0)
+				{
+						inspector_index = i;
+				}
+		}
+
+		if (sessions_index >= 0)
+		{
+				const int inserted = tabWidget_orig->insertTab(sessions_index + 1, ars_tracker_team_tab, QString("Team"));
+				log_debug() << "Team tab added: index=" << inserted
+										<< "countAfter=" << tabWidget_orig->count()
+										<< "objectName=" << ars_tracker_team_tab->objectName();
+		}
+		else if (trackers_index >= 0)
+		{
+				const int inserted = tabWidget_orig->insertTab(trackers_index + 1, ars_tracker_team_tab, QString("Team"));
+				log_debug() << "Team tab added: index=" << inserted
+										<< "countAfter=" << tabWidget_orig->count()
+										<< "objectName=" << ars_tracker_team_tab->objectName();
+		}
+		else if (inspector_index >= 0)
+		{
+				const int inserted = tabWidget_orig->insertTab(inspector_index + 1, ars_tracker_team_tab, QString("Team"));
+				log_debug() << "Team tab added: index=" << inserted
+										<< "countAfter=" << tabWidget_orig->count()
+										<< "objectName=" << ars_tracker_team_tab->objectName();
+		}
+		else
+		{
+				const int inserted = tabWidget_orig->addTab(ars_tracker_team_tab, QString("Team"));
+				log_debug() << "Team tab added: index=" << inserted
+										<< "countAfter=" << tabWidget_orig->count()
+										<< "objectName=" << ars_tracker_team_tab->objectName();
+		}
+}
+
 QString plugin_mcumgr::ars_trackers_download_destination_path() const
 {
 		QString workspace_sessions_path = trackers_workspace_sessions_path();
@@ -7224,6 +7306,10 @@ void plugin_mcumgr::on_selector_tab_currentChanged(int index)
 	if (selector_tab_root != nullptr && selector_tab_root->currentWidget() == ars_tracker_sessions_tab)
 	{
 			ars_tracker_sessions_tab->reloadSessions("sessions-tab-active");
+	}
+	if (selector_tab_root != nullptr && selector_tab_root->currentWidget() == ars_tracker_team_tab)
+	{
+			ars_tracker_team_tab->reloadTeams("team-tab-active");
 	}
 		maybe_auto_refresh_ars_tracker();
 }

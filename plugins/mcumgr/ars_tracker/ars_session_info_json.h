@@ -19,6 +19,13 @@ public:
 		static bool updateSessionInfoActualTimeJson(const QString &sessionPath,
 																								const ArsSessionInfo::ArsSessionActualTime &actualTime,
 																								QString *errorMessage = nullptr);
+		static bool loadSessionTeamId(const QString &sessionPath,
+																	bool *outHasTeamId,
+																	int *outTeamId,
+																	QString *errorMessage = nullptr);
+		static bool saveSessionTeamId(const QString &sessionPath,
+																	int teamId,
+																	QString *errorMessage = nullptr);
 };
 
 #endif // ARS_SESSION_INFO_JSON_H

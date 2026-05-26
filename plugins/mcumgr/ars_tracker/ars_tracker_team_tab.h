@@ -22,6 +22,7 @@ public slots:
 private slots:
     void onCreateTeam();
     void onEditTeam();
+    void onDeleteTeam();
     void onSetDefaultTeam();
 
 private:
@@ -30,7 +31,6 @@ private:
     void updateDefaultTeamLabel();
     void rebuildTeamsTable();
     QString coachesDisplay(const ArsTeam &team) const;
-    QString logoDisplay(const ArsTeam &team) const;
     bool saveTeamWithLog(const ArsTeam &team);
     bool saveTeamWithLogoSelection(const ArsTeam &team,
                                    const QString &logoSourcePath,

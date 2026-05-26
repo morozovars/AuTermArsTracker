@@ -18,6 +18,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
@@ -25,6 +26,7 @@
 #include <QResizeEvent>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimeEdit>
@@ -33,6 +35,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+#include "ars/workspace/ArsAppSettings.h"
+#include "ars/workspace/ArsTeamRepository.h"
 #include "ars/workspace/ArsLocalWorkspace.h"
 #include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_info_json.h"
@@ -108,21 +112,27 @@ void ArsTrackerSessionsTab::buildListPage()
 		QHBoxLayout *actions = new QHBoxLayout();
 		openFolderButton = new QPushButton("Open folder", listPage);
 		reloadButton = new QPushButton("Reload", listPage);
+		QLabel *teamFilterLabel = new QLabel("Team filter:", listPage);
+		teamFilterCombo = new QComboBox(listPage);
 		actions->addWidget(openFolderButton);
 		actions->addWidget(reloadButton);
+		actions->addSpacing(12);
+		actions->addWidget(teamFilterLabel);
+		actions->addWidget(teamFilterCombo);
 		actions->addStretch(1);
 		layout->addLayout(actions, 0, 0, 1, 1);
 
 		sessionsTable = new QTableWidget(listPage);
-		sessionsTable->setColumnCount(2);
-		sessionsTable->setHorizontalHeaderLabels(QStringList() << "Session" << "Trackers");
+		sessionsTable->setColumnCount(3);
+		sessionsTable->setHorizontalHeaderLabels(QStringList() << "Session" << "Team" << "Trackers");
 		sessionsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
 		sessionsTable->setSelectionMode(QAbstractItemView::SingleSelection);
 		sessionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		sessionsTable->verticalHeader()->setVisible(false);
-		sessionsTable->horizontalHeader()->setStretchLastSection(true);
 		sessionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
-		sessionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+		sessionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+		sessionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+		sessionsTable->setColumnWidth(1, 220);
 		layout->addWidget(sessionsTable, 1, 0, 1, 1);
 
 		statusLabel = new QLabel("No local sessions found", listPage);
@@ -130,6 +140,7 @@ void ArsTrackerSessionsTab::buildListPage()
 
 		connect(openFolderButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::openSessionsFolder);
 		connect(reloadButton, &QPushButton::clicked, this, [this]() { reloadSessions("reload"); });
+		connect(teamFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ArsTrackerSessionsTab::onTeamFilterChanged);
 
 		pagesStack->addWidget(listPage);
 		scheduleSessionsListColumnResize();
@@ -165,6 +176,15 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 
 		QGroupBox *parametersBox = new QGroupBox("Parameters", sessionInfoBox);
 		QFormLayout *parametersLayout = new QFormLayout(parametersBox);
+		sessionTeamCombo = new QComboBox(parametersBox);
+		saveSessionTeamButton = new QPushButton("Save team", parametersBox);
+		QHBoxLayout *teamRow = new QHBoxLayout();
+		teamRow->addWidget(sessionTeamCombo, 1);
+		teamRow->addWidget(saveSessionTeamButton);
+		parametersLayout->addRow("Team", teamRow);
+		sessionTeamStatusLabel = new QLabel(parametersBox);
+		parametersLayout->addRow("", sessionTeamStatusLabel);
+
 		comboSessionType = new QComboBox(parametersBox);
 		comboSessionType->setObjectName("combo_session_type");
 		comboSessionType->addItem("Training session", "training");
@@ -248,6 +268,15 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		connect(backButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onBackFromSessionDetails);
 		connect(rescanButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onRescanSessionClicked);
 		connect(processButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onProcessSessionClicked);
+		connect(saveSessionTeamButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onSaveSessionTeamClicked);
+		connect(sessionTeamCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+				if (saveSessionTeamButton == nullptr || sessionTeamCombo == nullptr)
+				{
+						return;
+				}
+				const int selectedTeamId = sessionTeamCombo->currentData().toInt();
+				saveSessionTeamButton->setEnabled(selectedTeamId > 0 && m_teamsById.contains(selectedTeamId));
+		});
 
 		pagesStack->addWidget(detailsPage);
 }
@@ -364,6 +393,46 @@ QString ArsTrackerSessionsTab::buildTrackersDisplayText(const QList<SessionTrack
 		return parts.join(", ");
 }
 
+QString ArsTrackerSessionsTab::teamDisplayName(const ArsTeam &team) const
+{
+		if (!team.ageCategory.trimmed().isEmpty())
+		{
+				return QString("%1 (%2)").arg(team.name, team.ageCategory);
+		}
+		return team.name;
+}
+
+void ArsTrackerSessionsTab::applyTeamContextToSession(LocalSessionInfo *session) const
+{
+		if (session == nullptr)
+		{
+				return;
+		}
+		session->effectiveTeamId = -1;
+		session->effectiveTeamDisplayText.clear();
+		if (session->hasExplicitTeamId)
+		{
+				if (m_teamsById.contains(session->explicitTeamId))
+				{
+						const ArsTeam team = m_teamsById.value(session->explicitTeamId);
+						session->teamDisplayText = teamDisplayName(team);
+						session->effectiveTeamId = session->explicitTeamId;
+						session->effectiveTeamDisplayText = session->teamDisplayText;
+				}
+				else
+				{
+						session->teamDisplayText = QString("Missing team id %1").arg(session->explicitTeamId);
+				}
+				return;
+		}
+		session->teamDisplayText = "not configured";
+		if (m_defaultTeamId > 0 && m_teamsById.contains(m_defaultTeamId))
+		{
+				session->effectiveTeamId = m_defaultTeamId;
+				session->effectiveTeamDisplayText = teamDisplayName(m_teamsById.value(m_defaultTeamId));
+		}
+}
+
 QList<LocalSessionInfo> ArsTrackerSessionsTab::scanLocalSessions(const QString &sessionsPath) const
 {
 		QList<LocalSessionInfo> out;
@@ -383,6 +452,18 @@ QList<LocalSessionInfo> ArsTrackerSessionsTab::scanLocalSessions(const QString &
 				local.displayName = formatSessionDisplayName(local.folderName);
 				local.absolutePath = sessionInfo.absoluteFilePath();
 				local.trackersDisplayText = buildTrackersDisplayText(scanSessionTrackers(local.absolutePath));
+				QString teamReadError;
+				int teamId = -1;
+				bool hasTeamId = false;
+				if (!ArsSessionInfoJson::loadSessionTeamId(local.absolutePath, &hasTeamId, &teamId, &teamReadError))
+				{
+						qWarning() << "SessionInfo team read failed session=" << local.folderName << "error=" << teamReadError;
+				}
+				local.hasExplicitTeamId = hasTeamId;
+				local.explicitTeamId = hasTeamId ? teamId : -1;
+				qDebug() << "Sessions session team read session=" << local.folderName
+								 << "hasTeamId=" << local.hasExplicitTeamId
+								 << "teamId=" << local.explicitTeamId;
 				out.append(local);
 				if (!hasAny || session_sort_key_seconds(sessionInfo) > session_sort_key_seconds(newestInfo))
 				{
@@ -428,7 +509,25 @@ void ArsTrackerSessionsTab::fillSessionsTable(const QList<LocalSessionInfo> &ses
 				sessionLink->setToolTip(session.absolutePath);
 				connect(sessionLink, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onSessionNameClicked);
 				sessionsTable->setCellWidget(row, 0, sessionLink);
-				sessionsTable->setItem(row, 1, new QTableWidgetItem(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText));
+				QTableWidgetItem *teamItem = new QTableWidgetItem(session.teamDisplayText);
+				if (session.hasExplicitTeamId)
+				{
+						if (session.effectiveTeamId > 0)
+						{
+								teamItem->setToolTip(QString("TeamId: %1").arg(session.explicitTeamId));
+						}
+						else
+						{
+								teamItem->setToolTip(QString("TeamId: %1 is configured in SessionInfo.json but team was not found").arg(session.explicitTeamId));
+						}
+				}
+				else
+				{
+						teamItem->setToolTip("TeamId is not configured in SessionInfo.json");
+				}
+				sessionsTable->setItem(row, 1, teamItem);
+				sessionsTable->setItem(row, 2, new QTableWidgetItem(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText));
+				qDebug() << "Sessions session team display session=" << session.folderName << "display=" << session.teamDisplayText;
 		}
 }
 
@@ -449,6 +548,35 @@ void ArsTrackerSessionsTab::fillSessionTrackersTable(const QList<SessionTrackerP
 void ArsTrackerSessionsTab::reloadSessions(const QString &reason)
 {
 		const QString sessions_path = sessionsPath();
+		ArsLocalWorkspace workspace;
+		const QString workspaceRootPath = workspace.initialize() ? workspace.rootPath() : QString();
+		qDebug() << "Sessions team filter reload begin workspace=" << workspaceRootPath;
+		m_teams.clear();
+		m_teamsById.clear();
+		m_defaultTeamId = -1;
+		if (!workspaceRootPath.trimmed().isEmpty())
+		{
+				ArsTeamRepository teamRepository(workspaceRootPath);
+				QStringList teamWarnings;
+				m_teams = teamRepository.loadTeams(&teamWarnings);
+				for (const QString &warning : teamWarnings)
+				{
+						qWarning().noquote() << warning;
+				}
+				for (const ArsTeam &team : m_teams)
+				{
+						m_teamsById.insert(team.teamId, team);
+				}
+				qDebug() << "Sessions team repository loaded count=" << m_teams.size();
+				QString settingsError;
+				if (!ArsAppSettings(workspaceRootPath).loadDefaultTeamId(&m_defaultTeamId, &settingsError))
+				{
+						qWarning() << "Ars Team settings load failed error=" << settingsError;
+						m_defaultTeamId = -1;
+				}
+				qDebug() << "Sessions default team id=" << m_defaultTeamId;
+		}
+
 		if (sessions_path.trimmed().isEmpty())
 		{
 				sessionsTable->setRowCount(0);
@@ -463,11 +591,81 @@ void ArsTrackerSessionsTab::reloadSessions(const QString &reason)
 				qWarning() << "Sessions tab scan failed: cannot create path" << sessions_path;
 				return;
 		}
-		const QList<LocalSessionInfo> sessions = scanLocalSessions(sessions_path);
-		fillSessionsTable(sessions);
+		m_allSessions = scanLocalSessions(sessions_path);
+		for (LocalSessionInfo &session : m_allSessions)
+		{
+				applyTeamContextToSession(&session);
+		}
+		rebuildTeamFilterCombo(!m_teamFilterInitialized);
+		applySessionsFilterAndRefreshTable();
+		statusLabel->setText(m_filteredSessions.isEmpty() ? "No local sessions found" : QString("Local sessions: %1").arg(m_filteredSessions.size()));
+		qDebug() << "Sessions tab list loaded" << "reason=" << reason << "path=" << sessions_path << "count=" << m_filteredSessions.size();
+}
+
+void ArsTrackerSessionsTab::rebuildTeamFilterCombo(bool resetToDefaultSelection)
+{
+		if (teamFilterCombo == nullptr)
+		{
+				return;
+		}
+		const int currentData = teamFilterCombo->currentData().isValid() ? teamFilterCombo->currentData().toInt() : -999;
+		const QSignalBlocker blocker(teamFilterCombo);
+		teamFilterCombo->clear();
+		teamFilterCombo->addItem("All teams", -999);
+		teamFilterCombo->addItem("Not configured", -1);
+		for (const ArsTeam &team : m_teams)
+		{
+				teamFilterCombo->addItem(teamDisplayName(team), team.teamId);
+		}
+
+		int selection = currentData;
+		if (resetToDefaultSelection)
+		{
+				selection = -999;
+				if (m_defaultTeamId > 0 && m_teamsById.contains(m_defaultTeamId))
+				{
+						selection = m_defaultTeamId;
+				}
+				m_teamFilterInitialized = true;
+		}
+		int index = teamFilterCombo->findData(selection);
+		if (index < 0)
+		{
+				index = teamFilterCombo->findData(-999);
+		}
+		teamFilterCombo->setCurrentIndex(index);
+		m_selectedTeamFilterData = teamFilterCombo->currentData().isValid() ? teamFilterCombo->currentData().toInt() : -999;
+		qDebug() << "Sessions filter selected id=" << m_selectedTeamFilterData
+						 << "mode=" << (m_selectedTeamFilterData == -999 ? "all" : (m_selectedTeamFilterData == -1 ? "not-configured" : "team"));
+}
+
+void ArsTrackerSessionsTab::applySessionsFilterAndRefreshTable()
+{
+		const int mode = teamFilterCombo != nullptr && teamFilterCombo->currentData().isValid() ? teamFilterCombo->currentData().toInt() : -999;
+		m_filteredSessions.clear();
+		for (const LocalSessionInfo &session : m_allSessions)
+		{
+				bool keep = false;
+				if (mode == -999)
+				{
+						keep = true;
+				}
+				else if (mode == -1)
+				{
+						keep = !session.hasExplicitTeamId;
+				}
+				else
+				{
+						keep = session.effectiveTeamId == mode;
+				}
+				if (keep)
+				{
+						m_filteredSessions.append(session);
+				}
+		}
+		fillSessionsTable(m_filteredSessions);
 		scheduleSessionsListColumnResize();
-		statusLabel->setText(sessions.isEmpty() ? "No local sessions found" : QString("Local sessions: %1").arg(sessions.size()));
-		qDebug() << "Sessions tab list loaded" << "reason=" << reason << "path=" << sessions_path << "count=" << sessions.size();
+		qDebug() << "Sessions filtered sessions count=" << m_filteredSessions.size() << "total=" << m_allSessions.size();
 }
 
 void ArsTrackerSessionsTab::showSessionsListPage(bool forceReload)
@@ -552,6 +750,7 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 		}
 
 		fillSessionTrackersTable(scanSessionTrackers(sessionPath));
+		refreshSessionDetailsTeamUi();
 		detailsStatusLabel->setText("Ready to process");
 		pagesStack->setCurrentWidget(detailsPage);
 
@@ -1517,6 +1716,164 @@ uint32_t ArsTrackerSessionsTab::maxIntegralTimestamp(const std::vector<IntegralS
 				}
 		}
 		return maxTs;
+}
+
+LocalSessionInfo *ArsTrackerSessionsTab::findSessionById(const QString &sessionId)
+{
+		for (LocalSessionInfo &session : m_allSessions)
+		{
+				if (session.folderName == sessionId)
+				{
+						return &session;
+				}
+		}
+		return nullptr;
+}
+
+const LocalSessionInfo *ArsTrackerSessionsTab::findSessionById(const QString &sessionId) const
+{
+		for (const LocalSessionInfo &session : m_allSessions)
+		{
+				if (session.folderName == sessionId)
+				{
+						return &session;
+				}
+		}
+		return nullptr;
+}
+
+bool ArsTrackerSessionsTab::saveSessionTeamId(const QString &sessionPath, int teamId, QString *errorMessage) const
+{
+		if (teamId <= 0)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Selected team id is invalid.";
+				}
+				return false;
+		}
+		if (!m_teamsById.contains(teamId))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Team id %1 does not exist.").arg(teamId);
+				}
+				return false;
+		}
+		return ArsSessionInfoJson::saveSessionTeamId(sessionPath, teamId, errorMessage);
+}
+
+void ArsTrackerSessionsTab::refreshSessionDetailsTeamUi()
+{
+		if (sessionTeamCombo == nullptr || saveSessionTeamButton == nullptr || sessionTeamStatusLabel == nullptr)
+		{
+				return;
+		}
+		const LocalSessionInfo *session = findSessionById(currentSessionId);
+		const QSignalBlocker blocker(sessionTeamCombo);
+		sessionTeamCombo->clear();
+
+		const bool hasDefaultTeam = m_defaultTeamId > 0 && m_teamsById.contains(m_defaultTeamId);
+		if (session == nullptr)
+		{
+				sessionTeamCombo->addItem("Not configured", -1);
+				saveSessionTeamButton->setEnabled(false);
+				sessionTeamStatusLabel->setText("Session is not available.");
+				return;
+		}
+
+		if (!session->hasExplicitTeamId)
+		{
+				if (hasDefaultTeam)
+				{
+						sessionTeamCombo->addItem(QString("Default: %1").arg(teamDisplayName(m_teamsById.value(m_defaultTeamId))), m_defaultTeamId);
+				}
+				else
+				{
+						sessionTeamCombo->addItem("Not configured", -1);
+				}
+		}
+		else if (session->hasExplicitTeamId && !m_teamsById.contains(session->explicitTeamId))
+		{
+				sessionTeamCombo->addItem(QString("Missing team id %1").arg(session->explicitTeamId), session->explicitTeamId);
+		}
+
+		for (const ArsTeam &team : m_teams)
+		{
+				sessionTeamCombo->addItem(teamDisplayName(team), team.teamId);
+		}
+
+		int selectedId = -1;
+		if (session->hasExplicitTeamId)
+		{
+				selectedId = session->explicitTeamId;
+		}
+		else if (hasDefaultTeam)
+		{
+				selectedId = m_defaultTeamId;
+		}
+		int index = sessionTeamCombo->findData(selectedId);
+		if (index < 0)
+		{
+				index = 0;
+		}
+		sessionTeamCombo->setCurrentIndex(index);
+
+		if (!session->hasExplicitTeamId)
+		{
+				sessionTeamStatusLabel->setText("Using default team. Click Save team to bind this session explicitly.");
+		}
+		else if (session->hasExplicitTeamId && !m_teamsById.contains(session->explicitTeamId))
+		{
+				sessionTeamStatusLabel->setText("Configured TeamId was not found. Select another team and save.");
+		}
+		else
+		{
+				sessionTeamStatusLabel->setText("TeamId is configured for this session.");
+		}
+		const int selectedTeamId = sessionTeamCombo->currentData().isValid() ? sessionTeamCombo->currentData().toInt() : -1;
+		saveSessionTeamButton->setEnabled(selectedTeamId > 0 && m_teamsById.contains(selectedTeamId));
+		qDebug() << "Session detail team resolved session=" << currentSessionId
+						 << "hasExplicitTeamId=" << session->hasExplicitTeamId
+						 << "explicitTeamId=" << session->explicitTeamId
+						 << "defaultTeamId=" << m_defaultTeamId
+						 << "display=" << session->teamDisplayText;
+}
+
+void ArsTrackerSessionsTab::onTeamFilterChanged()
+{
+		if (teamFilterCombo == nullptr)
+		{
+				return;
+		}
+		m_selectedTeamFilterData = teamFilterCombo->currentData().isValid() ? teamFilterCombo->currentData().toInt() : -999;
+		qDebug() << "Sessions team filter changed mode="
+						 << (m_selectedTeamFilterData == -999 ? "all" : (m_selectedTeamFilterData == -1 ? "not-configured" : "team"))
+						 << "id=" << m_selectedTeamFilterData;
+		applySessionsFilterAndRefreshTable();
+}
+
+void ArsTrackerSessionsTab::onSaveSessionTeamClicked()
+{
+		if (currentSessionId.trimmed().isEmpty())
+		{
+				return;
+		}
+		const int teamId = (sessionTeamCombo != nullptr && sessionTeamCombo->currentData().isValid()) ? sessionTeamCombo->currentData().toInt() : -1;
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
+		qDebug() << "Session detail save team begin session=" << currentSessionId << "teamId=" << teamId;
+		QString error;
+		if (!saveSessionTeamId(sessionPath, teamId, &error))
+		{
+				qWarning() << "Session detail save team failed session=" << currentSessionId << "error=" << error;
+				qWarning() << "SessionInfo team write failed session=" << currentSessionId << "error=" << error;
+				QMessageBox::warning(this, "Sessions", QString("Failed to save TeamId: %1").arg(error));
+				return;
+		}
+		qDebug() << "Session detail save team done session=" << currentSessionId << "teamId=" << teamId
+						 << "path=" << QDir(sessionPath).filePath("SessionInfo.json");
+		reloadSessions("session-team-saved");
+		refreshSessionDetailsTeamUi();
 }
 
 void ArsTrackerSessionsTab::onSessionNameClicked()

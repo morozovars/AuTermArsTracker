@@ -34,6 +34,7 @@ SOURCES += main.cpp\
     AutPlugin.cpp \
     AutPopup.cpp \
     AutScrollEdit.cpp \
+    ../src/ars/workspace/ArsAppSettings.cpp \
     ../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../src/ars/workspace/ArsPlayerRepository.cpp \
     ../src/ars/workspace/ArsSessionRepository.cpp \
@@ -46,6 +47,7 @@ HEADERS  += \
     AutMainWindow.h \
     AutPopup.h \
     AutScrollEdit.h \
+    ../src/ars/workspace/ArsAppSettings.h \
     ../src/ars/workspace/ArsLocalWorkspace.h \
     ../src/ars/workspace/ArsPlayerRepository.h \
     ../src/ars/workspace/ArsSessionRepository.h \

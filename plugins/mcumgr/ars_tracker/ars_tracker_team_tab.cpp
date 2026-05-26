@@ -8,6 +8,7 @@
 #include <QMessageBox>
 #include <QDialog>
 #include <QPushButton>
+#include <QPixmap>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -17,6 +18,24 @@
 #include "ars/workspace/ArsAppSettings.h"
 #include "ars/workspace/ArsTeamRepository.h"
 #include "ars_team_edit_dialog.h"
+
+namespace
+{
+QString resolve_team_logo_absolute_path(const QString &workspaceRoot, const QString &logoPath)
+{
+    const QString trimmed = logoPath.trimmed();
+    if (trimmed.isEmpty())
+    {
+        return QString();
+    }
+    const QFileInfo info(trimmed);
+    if (info.isAbsolute())
+    {
+        return QDir::cleanPath(info.absoluteFilePath());
+    }
+    return QDir::cleanPath(QDir(workspaceRoot).filePath(trimmed));
+}
+}
 
 ArsTrackerTeamTab::ArsTrackerTeamTab(QWidget *parent)
     : QWidget(parent)
@@ -65,8 +84,10 @@ void ArsTrackerTeamTab::buildUi()
     m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
-    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Fixed);
     m_table->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
+    m_table->setColumnWidth(6, 72);
+    m_table->verticalHeader()->setDefaultSectionSize(56);
     root->addWidget(m_table, 1);
 
     connect(m_reloadButton, &QPushButton::clicked, this, [this]() { reloadTeams("reload-click"); });
@@ -146,20 +167,12 @@ QString ArsTrackerTeamTab::coachesDisplay(const ArsTeam &team) const
     return team.defaultCoaches.isEmpty() ? QString("-") : team.defaultCoaches.join(", ");
 }
 
-QString ArsTrackerTeamTab::logoDisplay(const ArsTeam &team) const
-{
-    if (team.teamLogoPath.trimmed().isEmpty())
-    {
-        return "-";
-    }
-    return QFileInfo(team.teamLogoPath).fileName();
-}
-
 void ArsTrackerTeamTab::rebuildTeamsTable()
 {
     m_table->setSortingEnabled(false);
     m_table->clearContents();
     m_table->setRowCount(m_teams.size());
+    const QString root = workspacePath();
 
     for (int row = 0; row < m_teams.size(); ++row)
     {
@@ -180,12 +193,51 @@ void ArsTrackerTeamTab::rebuildTeamsTable()
         m_table->setItem(row, 3, new QTableWidgetItem(team.name));
         m_table->setItem(row, 4, new QTableWidgetItem(team.ageCategory));
         m_table->setItem(row, 5, new QTableWidgetItem(coachesDisplay(team)));
-        m_table->setItem(row, 6, new QTableWidgetItem(logoDisplay(team)));
 
-        QPushButton *edit = new QPushButton("Edit", m_table);
+        QLabel *logoLabel = new QLabel(m_table);
+        logoLabel->setAlignment(Qt::AlignCenter);
+        const QString absoluteLogoPath = resolve_team_logo_absolute_path(root, team.teamLogoPath);
+        if (team.teamLogoPath.trimmed().isEmpty())
+        {
+            logoLabel->setText("No logo");
+        }
+        else if (!QFileInfo::exists(absoluteLogoPath))
+        {
+            qWarning() << "Ars Team logo missing id=" << team.teamId << "path=" << absoluteLogoPath;
+            logoLabel->setText("Missing");
+            logoLabel->setToolTip(team.teamLogoPath);
+        }
+        else
+        {
+            QPixmap pixmap(absoluteLogoPath);
+            if (pixmap.isNull())
+            {
+                qWarning() << "Ars Team logo invalid id=" << team.teamId << "path=" << absoluteLogoPath;
+                logoLabel->setText("Invalid image");
+                logoLabel->setToolTip(team.teamLogoPath);
+            }
+            else
+            {
+                logoLabel->setPixmap(pixmap.scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                logoLabel->setToolTip(absoluteLogoPath);
+            }
+        }
+        m_table->setCellWidget(row, 6, logoLabel);
+        m_table->setRowHeight(row, 56);
+
+        QWidget *actionsWidget = new QWidget(m_table);
+        QHBoxLayout *actionsLayout = new QHBoxLayout(actionsWidget);
+        actionsLayout->setContentsMargins(2, 2, 2, 2);
+        actionsLayout->setSpacing(4);
+        QPushButton *edit = new QPushButton("Edit", actionsWidget);
         edit->setProperty("teamId", team.teamId);
         connect(edit, &QPushButton::clicked, this, &ArsTrackerTeamTab::onEditTeam);
-        m_table->setCellWidget(row, 7, edit);
+        QPushButton *del = new QPushButton("Delete", actionsWidget);
+        del->setProperty("teamId", team.teamId);
+        connect(del, &QPushButton::clicked, this, &ArsTrackerTeamTab::onDeleteTeam);
+        actionsLayout->addWidget(edit);
+        actionsLayout->addWidget(del);
+        m_table->setCellWidget(row, 7, actionsWidget);
     }
 }
 
@@ -260,7 +312,16 @@ bool ArsTrackerTeamTab::saveTeamWithLogoSelection(const ArsTeam &team,
         }
     }
 
-    return saveTeamWithLog(teamToSave);
+    if (!saveTeamWithLog(teamToSave))
+    {
+        return false;
+    }
+    QString lastIdError;
+    if (!ArsAppSettings(workspace).saveLastTeamId(teamToSave.teamId, &lastIdError))
+    {
+        qWarning() << "Ars Team settings save last_team_id failed id=" << teamToSave.teamId << "error=" << lastIdError;
+    }
+    return true;
 }
 
 bool ArsTrackerTeamTab::saveDefaultTeamIdWithLog(int teamId)
@@ -421,4 +482,58 @@ void ArsTrackerTeamTab::onSetDefaultTeam()
         return;
     }
     reloadTeams("set-default");
+}
+
+void ArsTrackerTeamTab::onDeleteTeam()
+{
+    QPushButton *button = qobject_cast<QPushButton *>(sender());
+    if (button == nullptr)
+    {
+        return;
+    }
+    const int teamId = button->property("teamId").toInt();
+    const ArsTeam *team = findTeamById(teamId);
+    if (team == nullptr || teamId <= 0)
+    {
+        return;
+    }
+    qDebug() << "Ars Team delete requested id=" << teamId << "name=" << team->name;
+
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        this,
+        "Delete team",
+        QString("Delete team?\nTeam: %1\nID: %2\n\nThis will delete team JSON and team assets.").arg(team->name).arg(teamId),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+    {
+        qDebug() << "Ars Team delete cancelled id=" << teamId;
+        return;
+    }
+    qDebug() << "Ars Team delete confirmed id=" << teamId;
+
+    const QString workspace = workspacePath();
+    ArsTeamRepository repository(workspace);
+    QString error;
+    if (!repository.deleteTeam(teamId, &error))
+    {
+        QMessageBox::warning(this, "Team", QString("Failed to delete team: %1").arg(error));
+        return;
+    }
+
+    if (teamId == m_defaultTeamId)
+    {
+        qDebug() << "Ars Team deleted team was default id=" << teamId << ", clearing default";
+        QString clearError;
+        if (!ArsAppSettings(workspace).clearDefaultTeamId(&clearError))
+        {
+            qWarning() << "Ars Team settings save failed error=" << clearError;
+            QMessageBox::warning(this, "Team", QString("Failed to clear default team: %1").arg(clearError));
+        }
+        else
+        {
+            qDebug() << "Ars Team default cleared after delete id=" << teamId;
+        }
+    }
+    reloadTeams("delete-team");
 }

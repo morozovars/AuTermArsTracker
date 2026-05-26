@@ -9,6 +9,9 @@ public:
 
     bool loadDefaultTeamId(int *outTeamId, QString *errorMessage = nullptr) const;
     bool saveDefaultTeamId(int teamId, QString *errorMessage = nullptr) const;
+    bool clearDefaultTeamId(QString *errorMessage = nullptr) const;
+    bool loadLastTeamId(int *outTeamId, QString *errorMessage = nullptr) const;
+    bool saveLastTeamId(int teamId, QString *errorMessage = nullptr) const;
     QString settingsPath() const;
 
 private:

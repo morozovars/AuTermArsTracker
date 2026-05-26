@@ -39,6 +39,7 @@ public:
     QList<ArsTeam> loadTeams(QStringList *warnings = nullptr) const;
     bool loadTeam(int teamId, ArsTeam *outTeam, QString *errorMessage = nullptr) const;
     bool saveTeam(const ArsTeam &team, QString *errorMessage = nullptr) const;
+    bool deleteTeam(int teamId, QString *errorMessage = nullptr) const;
     int nextTeamId(QStringList *warnings = nullptr) const;
     bool copyTeamLogoToWorkspace(int teamId,
                                  const QString &sourceLogoPath,
@@ -49,5 +50,6 @@ public:
 
 private:
     QString teamFilePath(int teamId) const;
+    QString teamAssetsPath(int teamId) const;
     QString m_workspacePath;
 };

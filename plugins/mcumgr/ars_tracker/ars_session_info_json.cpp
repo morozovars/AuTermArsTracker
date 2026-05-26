@@ -24,6 +24,56 @@ QTime parse_time_value(const QJsonValue &value, bool *ok = nullptr)
 		}
 		return t;
 }
+
+bool load_session_info_root(const QString &filePath,
+														bool *outExists,
+														QJsonObject *outRoot,
+														QString *errorMessage)
+{
+		if (outExists != nullptr)
+		{
+				*outExists = false;
+		}
+		if (outRoot == nullptr)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Output JSON object pointer is null";
+				}
+				return false;
+		}
+		*outRoot = QJsonObject();
+		QFile file(filePath);
+		if (!file.exists())
+		{
+				return true;
+		}
+		if (outExists != nullptr)
+		{
+				*outExists = true;
+		}
+		if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Failed to open file for read: %1").arg(filePath);
+				}
+				return false;
+		}
+		QJsonParseError parseError;
+		const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+		file.close();
+		if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Invalid JSON in %1: %2").arg(filePath, parseError.errorString());
+				}
+				return false;
+		}
+		*outRoot = doc.object();
+		return true;
+}
 }
 
 bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
@@ -31,6 +81,17 @@ bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
 																						 QString *errorMessage)
 {
 		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QJsonObject root;
+		bool fileExists = false;
+		QString loadError;
+		if (!load_session_info_root(filePath, &fileExists, &root, &loadError))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = loadError;
+				}
+				return false;
+		}
 		QJsonObject planned;
 		planned["distanceKm"] = info.plannedMetrics.distanceKm;
 		planned["accelerationDistanceM"] = info.plannedMetrics.accelerationDistanceM;
@@ -47,7 +108,6 @@ bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
 				goals.append(goal);
 		}
 
-		QJsonObject root;
 		root["plannedMetrics"] = planned;
 		root["startTime"] = info.parameters.startTime.toString("HH:mm:ss");
 		root["endTime"] = info.parameters.endTime.toString("HH:mm:ss");
@@ -296,5 +356,77 @@ bool ArsSessionInfoJson::updateSessionInfoActualTimeJson(const QString &sessionP
 		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
 		file.close();
 		qDebug() << "Sessions tab SessionInfo actualTime updated" << "path=" << filePath;
+		return true;
+}
+
+bool ArsSessionInfoJson::loadSessionTeamId(const QString &sessionPath,
+																					 bool *outHasTeamId,
+																					 int *outTeamId,
+																					 QString *errorMessage)
+{
+		if (outHasTeamId == nullptr || outTeamId == nullptr)
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = "Output TeamId pointers are null";
+				}
+				return false;
+		}
+		*outHasTeamId = false;
+		*outTeamId = -1;
+
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QJsonObject root;
+		QString loadError;
+		bool exists = false;
+		if (!load_session_info_root(filePath, &exists, &root, &loadError))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = loadError;
+				}
+				return false;
+		}
+		if (!exists)
+		{
+				return true;
+		}
+
+		const QJsonValue teamIdValue = root.value("TeamId");
+		if (teamIdValue.isDouble())
+		{
+				*outHasTeamId = true;
+				*outTeamId = teamIdValue.toInt(-1);
+		}
+		return true;
+}
+
+bool ArsSessionInfoJson::saveSessionTeamId(const QString &sessionPath, int teamId, QString *errorMessage)
+{
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QJsonObject root;
+		bool exists = false;
+		QString loadError;
+		if (!load_session_info_root(filePath, &exists, &root, &loadError))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = loadError;
+				}
+				return false;
+		}
+		root["TeamId"] = teamId;
+
+		QFile file(filePath);
+		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+		{
+				if (errorMessage != nullptr)
+				{
+						*errorMessage = QString("Failed to open file for write: %1").arg(filePath);
+				}
+				return false;
+		}
+		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+		file.close();
 		return true;
 }

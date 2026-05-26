@@ -1,4 +1,5 @@
 #include "ArsTeamRepository.h"
+#include "ArsAppSettings.h"
 
 #include <QDebug>
 #include <QDir>
@@ -98,6 +99,11 @@ QString ArsTeamRepository::filePath() const
 QString ArsTeamRepository::teamFilePath(int teamId) const
 {
     return QDir(teamsPath()).filePath(QString("team_%1.json").arg(teamId));
+}
+
+QString ArsTeamRepository::teamAssetsPath(int teamId) const
+{
+    return QDir(teamsPath()).filePath(QString("assets/team_%1").arg(teamId));
 }
 
 QList<ArsTeam> ArsTeamRepository::loadTeams(QStringList *warnings) const
@@ -255,6 +261,59 @@ bool ArsTeamRepository::saveTeam(const ArsTeam &team, QString *errorMessage) con
     return true;
 }
 
+bool ArsTeamRepository::deleteTeam(int teamId, QString *errorMessage) const
+{
+    if (teamId <= 0)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Invalid team_id";
+        }
+        return false;
+    }
+
+    const QString jsonPath = teamFilePath(teamId);
+    const QString assetsPath = teamAssetsPath(teamId);
+    qDebug() << "Ars Team delete begin id=" << teamId << "jsonPath=" << jsonPath << "assetsPath=" << assetsPath;
+
+    const QFileInfo jsonInfo(jsonPath);
+    if (jsonInfo.exists())
+    {
+        if (!QFile::remove(jsonPath))
+        {
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = QString("Failed to delete team JSON: %1").arg(jsonPath);
+            }
+            qWarning() << "Ars Team delete failed id=" << teamId << "error=" << (errorMessage != nullptr ? *errorMessage : QString());
+            return false;
+        }
+        qDebug() << "Ars Team delete json removed id=" << teamId << "path=" << jsonPath;
+    }
+    else
+    {
+        qWarning() << "Ars Team delete warning: JSON file missing id=" << teamId << "path=" << jsonPath;
+    }
+
+    QDir assetsDir(assetsPath);
+    if (assetsDir.exists())
+    {
+        if (!assetsDir.removeRecursively())
+        {
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = QString("Failed to delete team assets: %1").arg(assetsPath);
+            }
+            qWarning() << "Ars Team delete failed id=" << teamId << "error=" << (errorMessage != nullptr ? *errorMessage : QString());
+            return false;
+        }
+        qDebug() << "Ars Team delete assets removed id=" << teamId << "path=" << assetsPath;
+    }
+
+    qDebug() << "Ars Team delete done id=" << teamId;
+    return true;
+}
+
 int ArsTeamRepository::nextTeamId(QStringList *warnings) const
 {
     const QList<ArsTeam> teams = loadTeams(warnings);
@@ -263,6 +322,16 @@ int ArsTeamRepository::nextTeamId(QStringList *warnings) const
     {
         maxId = std::max(maxId, t.teamId);
     }
+    int lastTeamId = -1;
+    QString settingsError;
+    if (!ArsAppSettings(m_workspacePath).loadLastTeamId(&lastTeamId, &settingsError))
+    {
+        if (warnings != nullptr && !settingsError.trimmed().isEmpty())
+        {
+            warnings->append(QString("Ars Team load warning settings error=%1").arg(settingsError));
+        }
+    }
+    maxId = std::max(maxId, lastTeamId);
     return maxId + 1;
 }
 

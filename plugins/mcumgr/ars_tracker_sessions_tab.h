@@ -6,11 +6,13 @@
 #include <QList>
 #include <QTime>
 #include <QStringList>
+#include <QHash>
 
 #include "ars_tracker/ars_session_info.h"
 #include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_processing_loader.h"
 #include "ars_tracker/ars_session_postprocessor.h"
+#include "ars/workspace/ArsTeamRepository.h"
 
 class QPushButton;
 class QTableWidget;
@@ -41,6 +43,11 @@ struct LocalSessionInfo
 		QString displayName;
 		QString absolutePath;
 		QString trackersDisplayText;
+		bool hasExplicitTeamId = false;
+		int explicitTeamId = -1;
+		int effectiveTeamId = -1;
+		QString teamDisplayText;
+		QString effectiveTeamDisplayText;
 };
 
 class ArsTrackerSessionsTab : public QWidget
@@ -59,6 +66,8 @@ private slots:
 		void onBackFromSessionDetails();
 		void onRescanSessionClicked();
 		void onProcessSessionClicked();
+		void onTeamFilterChanged();
+		void onSaveSessionTeamClicked();
 
 private:
 		void resizeEvent(QResizeEvent *event) override;
@@ -70,6 +79,11 @@ private:
 		QList<SessionTrackerPair> scanSessionTrackers(const QString &sessionPath) const;
 		QString formatSessionDisplayName(const QString &sessionFolderName) const;
 		QString buildTrackersDisplayText(const QList<SessionTrackerPair> &pairs) const;
+		QString teamDisplayName(const ArsTeam &team) const;
+		void applyTeamContextToSession(LocalSessionInfo *session) const;
+		void rebuildTeamFilterCombo(bool resetToDefaultSelection);
+		void applySessionsFilterAndRefreshTable();
+		void refreshSessionDetailsTeamUi();
 		void showSessionsListPage(bool forceReload = false);
 		void showSessionDetailsPage(const QString &sessionId);
 		void fillSessionsTable(const QList<LocalSessionInfo> &sessions);
@@ -102,20 +116,27 @@ private:
 		uint32_t maxIntegralTimestamp(const std::vector<IntegralState> &states) const;
 		void scheduleSessionsListColumnResize();
 		void resizeSessionsListColumnsToContent();
+		LocalSessionInfo *findSessionById(const QString &sessionId);
+		const LocalSessionInfo *findSessionById(const QString &sessionId) const;
+		bool saveSessionTeamId(const QString &sessionPath, int teamId, QString *errorMessage) const;
 
 		QStackedWidget *pagesStack = nullptr;
 		QWidget *listPage = nullptr;
 		QWidget *detailsPage = nullptr;
 		QPushButton *openFolderButton = nullptr;
 		QPushButton *reloadButton = nullptr;
+		QComboBox *teamFilterCombo = nullptr;
 		QPushButton *backButton = nullptr;
 		QPushButton *rescanButton = nullptr;
 		QPushButton *processButton = nullptr;
+		QPushButton *saveSessionTeamButton = nullptr;
 		QTableWidget *sessionsTable = nullptr;
 		QLabel *sessionTitleLabel = nullptr;
 		QLabel *detailsStatusLabel = nullptr;
 		QLabel *sessionTimeSummaryLabel = nullptr;
 		QLabel *sessionDurationSummaryLabel = nullptr;
+		QLabel *sessionTeamStatusLabel = nullptr;
+		QComboBox *sessionTeamCombo = nullptr;
 		QDoubleSpinBox *spinTargetDistanceKm = nullptr;
 		QSpinBox *spinTargetAccelerationDistanceM = nullptr;
 		QSpinBox *spinTargetFootload10_3g = nullptr;
@@ -130,6 +151,13 @@ private:
 		QLabel *sessionTrackersEmptyLabel = nullptr;
 		QLabel *statusLabel = nullptr;
 		QString currentSessionId;
+		QList<LocalSessionInfo> m_allSessions;
+		QList<LocalSessionInfo> m_filteredSessions;
+		QList<ArsTeam> m_teams;
+		QHash<int, ArsTeam> m_teamsById;
+		int m_defaultTeamId = -1;
+		bool m_teamFilterInitialized = false;
+		int m_selectedTeamFilterData = -999;
 		QTime m_currentSessionStartTime;
 		bool m_currentSessionStartTimestampValid = false;
 		bool m_currentSessionFinishKnown = false;

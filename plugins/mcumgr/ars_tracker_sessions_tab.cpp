@@ -656,8 +656,14 @@ void ArsTrackerSessionsTab::applySessionsFilterAndRefreshTable()
 				}
 				else
 				{
-						keep = session.effectiveTeamId == mode;
+						keep = session.hasExplicitTeamId && session.explicitTeamId == mode;
 				}
+				qDebug() << "Sessions filter result session=" << session.folderName
+								 << "hasExplicitTeamId=" << (session.hasExplicitTeamId ? 1 : 0)
+								 << "explicitTeamId=" << session.explicitTeamId
+								 << "mode=" << (mode == -999 ? "all" : (mode == -1 ? "not-configured" : "specific"))
+								 << "selectedTeamId=" << mode
+								 << "accepted=" << (keep ? 1 : 0);
 				if (keep)
 				{
 						m_filteredSessions.append(session);
@@ -665,7 +671,10 @@ void ArsTrackerSessionsTab::applySessionsFilterAndRefreshTable()
 		}
 		fillSessionsTable(m_filteredSessions);
 		scheduleSessionsListColumnResize();
-		qDebug() << "Sessions filtered sessions count=" << m_filteredSessions.size() << "total=" << m_allSessions.size();
+		qDebug() << "Sessions filtered sessions count=" << m_filteredSessions.size()
+						 << "total=" << m_allSessions.size()
+						 << "mode=" << (mode == -999 ? "all" : (mode == -1 ? "not-configured" : "specific"))
+						 << "selectedTeamId=" << mode;
 }
 
 void ArsTrackerSessionsTab::showSessionsListPage(bool forceReload)
@@ -1821,7 +1830,7 @@ void ArsTrackerSessionsTab::refreshSessionDetailsTeamUi()
 
 		if (!session->hasExplicitTeamId)
 		{
-				sessionTeamStatusLabel->setText("Using default team. Click Save team to bind this session explicitly.");
+				sessionTeamStatusLabel->setText("Using default team. TeamId is not saved for this session.");
 		}
 		else if (session->hasExplicitTeamId && !m_teamsById.contains(session->explicitTeamId))
 		{
@@ -1848,8 +1857,8 @@ void ArsTrackerSessionsTab::onTeamFilterChanged()
 		}
 		m_selectedTeamFilterData = teamFilterCombo->currentData().isValid() ? teamFilterCombo->currentData().toInt() : -999;
 		qDebug() << "Sessions team filter changed mode="
-						 << (m_selectedTeamFilterData == -999 ? "all" : (m_selectedTeamFilterData == -1 ? "not-configured" : "team"))
-						 << "id=" << m_selectedTeamFilterData;
+						 << (m_selectedTeamFilterData == -999 ? "All" : (m_selectedTeamFilterData == -1 ? "NotConfigured" : "SpecificTeam"))
+						 << "selectedTeamId=" << m_selectedTeamFilterData;
 		applySessionsFilterAndRefreshTable();
 }
 

@@ -11,8 +11,8 @@ ARS_TRACKER_ALGA_ROOT = $$PWD/../../src/ars_tracker_alga
 
 INCLUDEPATH    += ../../AuTerm \
     ../../src \
-    $$ARS_TRACKER_ALGA_ROOT \
-    $$ARS_TRACKER_ALGA_ROOT/sources/soccer_insole
+    $$ARS_TRACKER_ALGA_ROOT
+DEPENDPATH += $$ARS_TRACKER_ALGA_ROOT
 TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 
 # You can make your code fail to compile if it uses deprecated APIs.
@@ -22,6 +22,7 @@ TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 SOURCES += \
     ../../AuTerm/AutScrollEdit.cpp \
     ars_tracker/ars_processed_str_parser.cpp \
+    ars_tracker/ars_session_postprocessor.cpp \
     ars_tracker/ars_session_duration_scanner.cpp \
     ars_tracker/ars_session_info_json.cpp \
     ars_tracker/ars_session_processing_loader.cpp \
@@ -51,7 +52,6 @@ SOURCES += \
     smp_processor.cpp \
     smp_uart_auterm.cpp \
     smp_group_img_mgmt.cpp \
-    $$ARS_TRACKER_ALGA_ROOT/sources/soccer_insole/PostProcessing.cpp \
     ../../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../../src/ars/workspace/ArsPlayerRepository.cpp \
     ../../src/ars/workspace/ArsSessionRepository.cpp \
@@ -62,6 +62,7 @@ HEADERS += \
     ../../AuTerm/AutPlugin.h \
     ../../AuTerm/AutScrollEdit.h \
     ars_tracker/ars_processed_str_parser.h \
+    ars_tracker/ars_session_postprocessor.h \
     ars_tracker/ars_session_duration_scanner.h \
     ars_tracker/ars_session_info.h \
     ars_tracker/ars_session_info_json.h \
@@ -95,9 +96,7 @@ HEADERS += \
     smp_transport.h \
     smp_uart_auterm.h \
     smp_group.h \
-    smp_group_img_mgmt.h \
-    $$ARS_TRACKER_ALGA_ROOT/Algorithms.h \
-    $$ARS_TRACKER_ALGA_ROOT/sources/soccer_insole/PostProcessing.h
+    smp_group_img_mgmt.h
 
 DISTFILES += plugin_mcumgr.json
 
@@ -112,8 +111,10 @@ CONFIG += install_ok  # Do not cargo-cult this!
 # Common build location
 CONFIG(release, debug|release) {
     DESTDIR = ../../release
+    ARS_TRACKER_ALGA_LIBDIR = $$PWD/../../release
 } else {
     DESTDIR = ../../debug
+    ARS_TRACKER_ALGA_LIBDIR = $$PWD/../../debug
 
 
     # The following form is only used for creating the GUI in Qt Creator, it is
@@ -128,6 +129,11 @@ CONFIG(release, debug|release) {
     FORMS += \
         form.ui
 }
+
+LIBS += -L$$ARS_TRACKER_ALGA_LIBDIR -lars_tracker_alga
+win32-msvc*: PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBDIR/ars_tracker_alga.lib
+win32-g++: PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBDIR/libars_tracker_alga.a
+unix:!macx: PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBDIR/libars_tracker_alga.a
 
 # Do not prefix with lib for non-static builds
 !contains(CONFIG, static) {

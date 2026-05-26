@@ -1057,7 +1057,9 @@ void ArsTrackerSessionsTab::startSessionProcessingFlow()
 {
 		QApplication::setOverrideCursor(Qt::WaitCursor);
 		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
-		qDebug() << "Sessions tab process begin" << "sessionPath=" << sessionPath;
+		const QString outputPath = QDir(sessionPath).filePath("postprocessed");
+		m_processSuccesses.clear();
+		qDebug() << "Sessions tab process begin" << "sessionPath=" << sessionPath << "outputPath=" << outputPath;
 		qDebug() << "Sessions tab actual time calculation begin" << "session=" << currentSessionId;
 
 		m_pendingProcessSessionInfo = readSessionInfoFromUi();
@@ -1065,6 +1067,50 @@ void ArsTrackerSessionsTab::startSessionProcessingFlow()
 		{
 				m_processValidationOk = false;
 				qWarning() << "Sessions tab process validation failed";
+		}
+
+		const QTime plannedStart = timeSessionStart->time();
+		const QTime plannedFinish = timeSessionFinish->time();
+		if (plannedFinish <= plannedStart)
+		{
+				m_processProblems.append("Planned session finish time must be later than start time.");
+		}
+		// TODO: support planned session period crossing midnight.
+		const QTime sessionStart = sessionStartTimeFromSessionName(currentSessionId, nullptr);
+		const int startOffsetSecRaw = sessionStart.secsTo(plannedStart);
+		const int finishOffsetSec = sessionStart.secsTo(plannedFinish);
+		int startOffsetSec = startOffsetSecRaw;
+		if (startOffsetSec < 0)
+		{
+				startOffsetSec = 0;
+				m_processProblems.append("Planned start is before session start, clamped to 00:00.");
+		}
+		if (finishOffsetSec <= 0)
+		{
+				m_processProblems.append("Planned finish is before session start.");
+		}
+		const qint64 start100ms = static_cast<qint64>(startOffsetSec) * 10;
+		const qint64 finish100ms = static_cast<qint64>(finishOffsetSec) * 10;
+		m_postprocessRequest.sessionName = currentSessionId;
+		m_postprocessRequest.outputPath = outputPath;
+		m_postprocessRequest.timeRange.startTimestamp100ms = static_cast<uint32_t>(std::max<qint64>(0, start100ms));
+		m_postprocessRequest.timeRange.finishTimestamp100ms = static_cast<uint32_t>(std::max<qint64>(0, finish100ms));
+		m_postprocessRequest.timeRange.plannedStartTimeText = plannedStart.toString("HH:mm:ss");
+		m_postprocessRequest.timeRange.plannedFinishTimeText = plannedFinish.toString("HH:mm:ss");
+		qDebug() << "Sessions tab postprocessing begin"
+						 << "sessionPath=" << sessionPath
+						 << "outputPath=" << outputPath
+						 << "plannedStart=" << m_postprocessRequest.timeRange.plannedStartTimeText
+						 << "plannedFinish=" << m_postprocessRequest.timeRange.plannedFinishTimeText
+						 << "start100ms=" << m_postprocessRequest.timeRange.startTimestamp100ms
+						 << "finish100ms=" << m_postprocessRequest.timeRange.finishTimestamp100ms;
+
+		if (m_processProblems.isEmpty())
+		{
+				if (!QDir().mkpath(outputPath))
+				{
+						m_processProblems.append(QString("Failed to create postprocessed directory: %1").arg(outputPath));
+				}
 		}
 
 		if (m_processProblems.isEmpty())
@@ -1109,8 +1155,12 @@ void ArsTrackerSessionsTab::processNextSessionPair()
 		}
 		const ArsSessionPairInput pairInput = m_processPairInputs.at(m_processPairIndex);
 		const int index = m_processPairIndex + 1;
-		m_processStatusLabel->setText(QString("Processing pair %1 of %2: %3").arg(index).arg(total).arg(pairInput.pairSerial));
+		m_processStatusLabel->setText(QString("Processing pair %1 of %2: %3\nParsing and postprocessing...")
+																	.arg(index)
+																	.arg(total)
+																	.arg(pairInput.pairSerial));
 		qDebug() << "Sessions tab process pair begin" << "index=" << index << "total=" << total << "serial=" << pairInput.pairSerial;
+		qDebug() << "Sessions tab postprocessing pair begin" << "serial=" << pairInput.pairSerial;
 
 		QStringList pairWarnings;
 		const ArsPairProcessedData pair = ArsSessionProcessingLoader::loadPair(pairInput, &pairWarnings);
@@ -1173,6 +1223,35 @@ void ArsTrackerSessionsTab::processNextSessionPair()
 		{
 				m_processProblems.append(w);
 		}
+
+		ArsPairPostprocessResult postResult;
+		if (hasLeft && hasRight)
+		{
+				postResult = ArsSessionPostprocessor::processPair(m_postprocessRequest, pair);
+				if (!postResult.ok)
+				{
+						for (const QString &p : postResult.problems)
+						{
+								m_processProblems.append(p);
+						}
+						qWarning() << "Sessions tab postprocessing pair failed"
+											 << "serial=" << pairInput.pairSerial
+											 << "errors=" << postResult.problems;
+				}
+				else
+				{
+						m_processSuccesses.append(QString("%1: saved %2, %3")
+																				.arg(pairInput.pairSerial,
+																						 QFileInfo(postResult.jsonPath).fileName(),
+																						 QFileInfo(postResult.touchIntensityCsvPath).fileName()));
+						qDebug() << "Sessions tab postprocessing pair algorithm done" << "serial=" << pairInput.pairSerial;
+						qDebug() << "Sessions tab postprocessing pair artifacts saved"
+										 << "serial=" << pairInput.pairSerial
+										 << "json=" << postResult.jsonPath
+										 << "csv=" << postResult.touchIntensityCsvPath;
+				}
+		}
+
 		const bool pairOk = pairWarnings.isEmpty() && leftMalformed == 0 && rightMalformed == 0 && pairInput.hasLeft && pairInput.hasRight;
 		qDebug() << "Sessions tab process pair done"
 						 << "index=" << index
@@ -1290,13 +1369,43 @@ void ArsTrackerSessionsTab::finishSessionProcessingFlow()
 		}
 		else if (ok)
 		{
-				m_processStatusLabel->setText(QString("Processing completed successfully.\nPairs processed: %1/%2").arg(processedPairs).arg(totalPairs));
+				m_processStatusLabel->setText(QString("Processing completed successfully.\nPairs processed: %1/%2\nArtifacts saved to:\n%3")
+																	 .arg(processedPairs)
+																	 .arg(totalPairs)
+																	 .arg(m_postprocessRequest.outputPath));
+				QString text = QString("Processing completed successfully.\nPairs processed: %1/%2\nArtifacts saved to:\n%3\n")
+												 .arg(processedPairs)
+												 .arg(totalPairs)
+												 .arg(m_postprocessRequest.outputPath);
+				if (!m_processSuccesses.isEmpty())
+				{
+						text += "\nSuccessful pairs:\n";
+						for (const QString &s : m_processSuccesses)
+						{
+								text += QString("- %1\n").arg(s);
+						}
+				}
+				m_processResultText->setVisible(true);
+				m_processResultText->setPlainText(text.trimmed());
 				detailsStatusLabel->setText(QString("Processing completed successfully. Pairs=%1").arg(totalPairs));
 		}
 		else
 		{
 				m_processStatusLabel->setText(QString("Processing completed with errors.\nPairs processed: %1/%2").arg(processedPairs).arg(totalPairs));
-				QString text = QString("Pairs processed: %1/%2\nProblems:\n").arg(processedPairs).arg(totalPairs);
+				QString text = QString("Processing completed with errors.\nPairs processed: %1/%2\nArtifacts path:\n%3\n")
+												 .arg(processedPairs)
+												 .arg(totalPairs)
+												 .arg(m_postprocessRequest.outputPath);
+				if (!m_processSuccesses.isEmpty())
+				{
+						text += "\nSuccessful pairs:\n";
+						for (const QString &s : m_processSuccesses)
+						{
+								text += QString("- %1\n").arg(s);
+						}
+						text += "\n";
+				}
+				text += "Problems:\n";
 				for (const QString &p : m_processProblems)
 				{
 						text += QString("- %1\n").arg(p);
@@ -1308,7 +1417,13 @@ void ArsTrackerSessionsTab::finishSessionProcessingFlow()
 						 << "ok=" << ok
 						 << "processedPairs=" << processedPairs
 						 << "totalPairs=" << totalPairs
+						 << "outputPath=" << m_postprocessRequest.outputPath
 						 << "problems=" << m_processProblems.size();
+		qDebug() << "Sessions tab postprocessing done"
+						 << "ok=" << ok
+						 << "processedPairs=" << processedPairs
+						 << "totalPairs=" << totalPairs
+						 << "outputPath=" << m_postprocessRequest.outputPath;
 		QApplication::restoreOverrideCursor();
 }
 

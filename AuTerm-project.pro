@@ -6,11 +6,15 @@ SUBDIRS += \
     AuTerm
 
 !contains(DEFINES, SKIPPLUGINS) {
-    !contains(DEFINES, SKIPPLUGIN_MCUMGR) {
-        SUBDIRS += \
-            plugins/mcumgr
+    ars_tracker_alga_qt.subdir = src/ars_tracker_alga_qt
+    SUBDIRS += ars_tracker_alga_qt
 
-        AuTerm.depends += plugins/mcumgr
+    !contains(DEFINES, SKIPPLUGIN_MCUMGR) {
+        mcumgr.subdir = plugins/mcumgr
+        mcumgr.depends += ars_tracker_alga_qt
+        SUBDIRS += mcumgr
+
+        AuTerm.depends += mcumgr
     }
 
     !contains(DEFINES, SKIPPLUGIN_LOGGER) {

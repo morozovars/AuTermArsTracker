@@ -10,6 +10,7 @@
 #include "ars_tracker/ars_session_info.h"
 #include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_processing_loader.h"
+#include "ars_tracker/ars_session_postprocessor.h"
 
 class QPushButton;
 class QTableWidget;
@@ -147,6 +148,8 @@ private:
 		bool m_processHasIntegralTimestamp = false;
 		bool m_processValidationOk = true;
 		ArsSessionInfo m_pendingProcessSessionInfo;
+		ArsSessionPostprocessRequest m_postprocessRequest;
+		QStringList m_processSuccesses;
 
 		QDialog *m_scanDialog = nullptr;
 		QLabel *m_scanStatusLabel = nullptr;

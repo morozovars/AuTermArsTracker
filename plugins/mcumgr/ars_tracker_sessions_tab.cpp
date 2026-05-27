@@ -90,6 +90,53 @@ qint64 session_sort_key_seconds(const QFileInfo &sessionInfo)
 		}
 		return sessionInfo.lastModified().toSecsSinceEpoch();
 }
+
+QString trim_leading_zeros_for_display(QString value)
+{
+		value = value.trimmed();
+		if (value.isEmpty())
+		{
+				return QString("-");
+		}
+		while (value.size() > 1 && value.startsWith('0'))
+		{
+				value.remove(0, 1);
+		}
+		return value.isEmpty() ? QString("0") : value;
+}
+
+QString display_pair_name(const QString &pairId)
+{
+		const QString raw = pairId.trimmed();
+		if (raw.isEmpty())
+		{
+				return QString("-");
+		}
+		return trim_leading_zeros_for_display(raw);
+}
+
+QString display_pair_sides(const QString &leftTrackerSerial, const QString &rightTrackerSerial)
+{
+		QStringList sides;
+		if (!leftTrackerSerial.trimmed().isEmpty() && leftTrackerSerial != "-")
+		{
+				sides.append("L");
+		}
+		if (!rightTrackerSerial.trimmed().isEmpty() && rightTrackerSerial != "-")
+		{
+				sides.append("R");
+		}
+		if (sides.isEmpty())
+		{
+				return QString("-");
+		}
+		return sides.join(" + ");
+}
+
+QString compact_pair_display(const QString &pairId, const QString &leftTrackerSerial, const QString &rightTrackerSerial)
+{
+		return QString("%1: %2").arg(display_pair_name(pairId), display_pair_sides(leftTrackerSerial, rightTrackerSerial));
+}
 }
 
 ArsTrackerSessionsTab::ArsTrackerSessionsTab(QWidget *parent) : QWidget(parent)
@@ -137,6 +184,8 @@ void ArsTrackerSessionsTab::buildListPage()
 		sessionsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
 		sessionsTable->setSelectionMode(QAbstractItemView::SingleSelection);
 		sessionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+		sessionsTable->setWordWrap(true);
+		sessionsTable->setTextElideMode(Qt::ElideNone);
 		sessionsTable->verticalHeader()->setVisible(false);
 		sessionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
 		sessionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
@@ -449,9 +498,7 @@ QString ArsTrackerSessionsTab::buildTrackersDisplayTextForSession(const QString 
 		QList<SessionPairDisplayItem> items;
 		for (const SessionTrackerPair &pair : pairs)
 		{
-				const QString leftText = (pair.leftTracker == "-" ? "missing L" : pair.leftTracker);
-				const QString rightText = (pair.rightTracker == "-" ? "missing R" : pair.rightTracker);
-				const QString pairText = QString("%1: %2 + %3").arg(pair.pairSerial, leftText, rightText);
+				const QString pairText = compact_pair_display(pair.pairSerial, pair.leftTracker, pair.rightTracker);
 
 				QString playerDisplay = "not assigned";
 				bool hasAssignedPlayer = false;
@@ -488,11 +535,16 @@ QString ArsTrackerSessionsTab::buildTrackersDisplayTextForSession(const QString 
 				item.hasAssignedPlayer = hasAssignedPlayer;
 				item.text = QString("%1 (%2)").arg(playerDisplay, pairText);
 				items.append(item);
+				qDebug() << "Sessions players-trackers compact display session=" << QFileInfo(sessionPath).fileName()
+								 << "pairId=" << pair.pairSerial
+								 << "pairDisplay=" << pairText
+								 << "left=" << pair.leftTracker
+								 << "right=" << pair.rightTracker;
 				qDebug() << "Sessions list tracker display row session=" << QFileInfo(sessionPath).fileName()
 								 << "pairId=" << pair.pairSerial
 								 << "playerDisplay=" << playerDisplay
-								 << "left=" << leftText
-								 << "right=" << rightText;
+								 << "left=" << pair.leftTracker
+								 << "right=" << pair.rightTracker;
 		}
 
 		std::sort(items.begin(), items.end(), [](const SessionPairDisplayItem &a, const SessionPairDisplayItem &b) {
@@ -526,11 +578,14 @@ QString ArsTrackerSessionsTab::buildTrackersDisplayTextForSession(const QString 
 						++unassignedCount;
 				}
 		}
-		const QString inlineText = parts.join("; ");
+		const QString inlineText = parts.join(", ");
 		qDebug() << "Sessions players-trackers display sorted session=" << QFileInfo(sessionPath).fileName()
 						 << "assignedCount=" << assignedCount
+						 << "unassignedCount=" << unassignedCount;
+		qDebug() << "Sessions players-trackers display wrapped session=" << QFileInfo(sessionPath).fileName()
+						 << "assignedCount=" << assignedCount
 						 << "unassignedCount=" << unassignedCount
-						 << "text=" << inlineText;
+						 << "length=" << inlineText.size();
 		return inlineText;
 }
 
@@ -679,8 +734,19 @@ void ArsTrackerSessionsTab::fillSessionsTable(const QList<LocalSessionInfo> &ses
 				teamItem->setData(Qt::UserRole, session.folderName);
 				teamItem->setData(Qt::UserRole + 1, session.absolutePath);
 				sessionsTable->setItem(row, kSessionsColumnTeam, teamItem);
-				QTableWidgetItem *trackersItem = new QTableWidgetItem(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText);
-				trackersItem->setToolTip(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText);
+				QString displayText = session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText;
+				displayText.replace(QStringLiteral("\r\n"), QStringLiteral(", "));
+				displayText.replace(QChar('\n'), QStringLiteral(", "));
+				displayText.replace(QChar('\r'), QStringLiteral(", "));
+				displayText.replace(QRegularExpression(QStringLiteral("\\s*,\\s*")), QStringLiteral(", "));
+				displayText = displayText.simplified();
+				if (displayText.isEmpty())
+				{
+						displayText = "-";
+				}
+				qDebug() << "Players-trackers contains newline:" << displayText.contains('\n');
+				QTableWidgetItem *trackersItem = new QTableWidgetItem(displayText);
+				trackersItem->setToolTip(displayText);
 				trackersItem->setData(Qt::UserRole, session.folderName);
 				trackersItem->setData(Qt::UserRole + 1, session.absolutePath);
 				sessionsTable->setItem(row, kSessionsColumnTrackers, trackersItem);
@@ -692,7 +758,7 @@ void ArsTrackerSessionsTab::fillSessionsTable(const QList<LocalSessionInfo> &ses
 				sessionsTable->setCellWidget(row, kSessionsColumnActions, deleteButton);
 				qDebug() << "Sessions session team display session=" << session.folderName << "display=" << session.teamDisplayText;
 		}
-		// Keep default compact row heights; no manual multiline formatting in Players-trackers column.
+		sessionsTable->resizeRowsToContents();
 }
 
 QList<ArsSessionTrackerPair> ArsTrackerSessionsTab::detectedSessionPairs(const QString &sessionPath) const
@@ -2607,6 +2673,7 @@ void ArsTrackerSessionsTab::resizeSessionsListColumnsToContent()
 		const int maxWidth = std::max(120, viewportWidth / 2);
 		const int finalWidth = std::max(120, std::min(contentWidth, maxWidth));
 		sessionsTable->setColumnWidth(sessionColumn, finalWidth);
+		sessionsTable->resizeRowsToContents();
 		qDebug() << "Sessions tab session name column resized"
 						 << "viewportWidth=" << viewportWidth
 						 << "contentWidth=" << contentWidth

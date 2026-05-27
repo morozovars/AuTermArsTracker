@@ -1,3 +1,7 @@
 [submodule "src/ars_tracker_alga"]
 	path = src/ars_tracker_alga
 	url = https://github.com/morozovars/ars_tracker_alga
+[submodule "src/ars_tracker_reports"]
+	path = src/ars_tracker_reports
+	url = https://github.com/morozovars/ars_tracker_reports.git
+	branch = main

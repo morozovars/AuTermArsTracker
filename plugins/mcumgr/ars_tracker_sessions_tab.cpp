@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QResizeEvent>
+#include <QFileInfo>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QSignalBlocker>
@@ -46,6 +47,10 @@ namespace
 constexpr int kMaxMalformedLinesToLog = 10;
 const QTime kDefaultPlannedStart(10, 0, 0);
 const QTime kDefaultPlannedFinish(11, 30, 0);
+constexpr int kSessionsColumnSession = 0;
+constexpr int kSessionsColumnTeam = 1;
+constexpr int kSessionsColumnTrackers = 2;
+constexpr int kSessionsColumnActions = 3;
 
 QString normalize_pair_serial(const QString &serial)
 {
@@ -123,8 +128,8 @@ void ArsTrackerSessionsTab::buildListPage()
 		layout->addLayout(actions, 0, 0, 1, 1);
 
 		sessionsTable = new QTableWidget(listPage);
-		sessionsTable->setColumnCount(3);
-		sessionsTable->setHorizontalHeaderLabels(QStringList() << "Session" << "Team" << "Trackers");
+		sessionsTable->setColumnCount(4);
+		sessionsTable->setHorizontalHeaderLabels(QStringList() << "Session" << "Team" << "Trackers" << "Actions");
 		sessionsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
 		sessionsTable->setSelectionMode(QAbstractItemView::SingleSelection);
 		sessionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -132,6 +137,7 @@ void ArsTrackerSessionsTab::buildListPage()
 		sessionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
 		sessionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
 		sessionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+		sessionsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
 		sessionsTable->setColumnWidth(1, 220);
 		layout->addWidget(sessionsTable, 1, 0, 1, 1);
 
@@ -141,6 +147,7 @@ void ArsTrackerSessionsTab::buildListPage()
 		connect(openFolderButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::openSessionsFolder);
 		connect(reloadButton, &QPushButton::clicked, this, [this]() { reloadSessions("reload"); });
 		connect(teamFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ArsTrackerSessionsTab::onTeamFilterChanged);
+		connect(sessionsTable, &QTableWidget::cellClicked, this, &ArsTrackerSessionsTab::onSessionTableCellClicked);
 
 		pagesStack->addWidget(listPage);
 		scheduleSessionsListColumnResize();
@@ -501,14 +508,11 @@ void ArsTrackerSessionsTab::fillSessionsTable(const QList<LocalSessionInfo> &ses
 		for (int row = 0; row < sessions.size(); ++row)
 		{
 				const LocalSessionInfo &session = sessions.at(row);
-				QPushButton *sessionLink = new QPushButton(session.displayName, sessionsTable);
-				sessionLink->setFlat(true);
-				sessionLink->setCursor(Qt::PointingHandCursor);
-				sessionLink->setStyleSheet("QPushButton { text-align: left; color: #1e5aa8; border: none; }");
-				sessionLink->setProperty("sessionId", session.folderName);
-				sessionLink->setToolTip(session.absolutePath);
-				connect(sessionLink, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onSessionNameClicked);
-				sessionsTable->setCellWidget(row, 0, sessionLink);
+				QTableWidgetItem *sessionItem = new QTableWidgetItem(session.displayName);
+				sessionItem->setData(Qt::UserRole, session.folderName);
+				sessionItem->setData(Qt::UserRole + 1, session.absolutePath);
+				sessionItem->setToolTip(QString("Open session\n%1").arg(session.absolutePath));
+				sessionsTable->setItem(row, kSessionsColumnSession, sessionItem);
 				QTableWidgetItem *teamItem = new QTableWidgetItem(session.teamDisplayText);
 				if (session.hasExplicitTeamId)
 				{
@@ -525,8 +529,19 @@ void ArsTrackerSessionsTab::fillSessionsTable(const QList<LocalSessionInfo> &ses
 				{
 						teamItem->setToolTip("TeamId is not configured in SessionInfo.json");
 				}
-				sessionsTable->setItem(row, 1, teamItem);
-				sessionsTable->setItem(row, 2, new QTableWidgetItem(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText));
+				teamItem->setData(Qt::UserRole, session.folderName);
+				teamItem->setData(Qt::UserRole + 1, session.absolutePath);
+				sessionsTable->setItem(row, kSessionsColumnTeam, teamItem);
+				QTableWidgetItem *trackersItem = new QTableWidgetItem(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText);
+				trackersItem->setData(Qt::UserRole, session.folderName);
+				trackersItem->setData(Qt::UserRole + 1, session.absolutePath);
+				sessionsTable->setItem(row, kSessionsColumnTrackers, trackersItem);
+				QPushButton *deleteButton = new QPushButton("Delete", sessionsTable);
+				deleteButton->setToolTip("Delete session from disk");
+				deleteButton->setProperty("sessionName", session.folderName);
+				deleteButton->setProperty("sessionPath", session.absolutePath);
+				connect(deleteButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onDeleteSessionClicked);
+				sessionsTable->setCellWidget(row, kSessionsColumnActions, deleteButton);
 				qDebug() << "Sessions session team display session=" << session.folderName << "display=" << session.teamDisplayText;
 		}
 }
@@ -1899,6 +1914,143 @@ void ArsTrackerSessionsTab::onSessionNameClicked()
 		}
 }
 
+void ArsTrackerSessionsTab::onSessionTableCellClicked(int row, int column)
+{
+		if (sessionsTable == nullptr || row < 0 || row >= sessionsTable->rowCount())
+		{
+				return;
+		}
+		QTableWidgetItem *item = sessionsTable->item(row, kSessionsColumnSession);
+		if (item == nullptr)
+		{
+				return;
+		}
+		const QString sessionId = item->data(Qt::UserRole).toString();
+		const QString sessionPath = item->data(Qt::UserRole + 1).toString();
+		qDebug() << "Sessions list row clicked row=" << row << "column=" << column << "session=" << sessionId << "path=" << sessionPath;
+		if (column == kSessionsColumnActions)
+		{
+				return;
+		}
+		if (sessionId.trimmed().isEmpty())
+		{
+				return;
+		}
+		qDebug() << "Sessions list opening session from row session=" << sessionId;
+		showSessionDetailsPage(sessionId);
+}
+
+bool ArsTrackerSessionsTab::validateSessionDeletePath(const QString &sessionName,
+																											const QString &sessionPath,
+																											QString *errorMessage) const
+{
+		if (sessionName.trimmed().isEmpty())
+		{
+				if (errorMessage != nullptr) *errorMessage = "Session name is empty.";
+				return false;
+		}
+		if (sessionPath.trimmed().isEmpty())
+		{
+				if (errorMessage != nullptr) *errorMessage = "Session path is empty.";
+				return false;
+		}
+		const QString sessionsRoot = sessionsPath();
+		if (sessionsRoot.trimmed().isEmpty())
+		{
+				if (errorMessage != nullptr) *errorMessage = "Sessions root path is empty.";
+				return false;
+		}
+		const QFileInfo targetInfo(sessionPath);
+		if (!targetInfo.exists() || !targetInfo.isDir())
+		{
+				if (errorMessage != nullptr) *errorMessage = "Session directory does not exist.";
+				return false;
+		}
+		const QString rootCanonical = QFileInfo(QDir::cleanPath(sessionsRoot)).canonicalFilePath();
+		const QString targetCanonical = targetInfo.canonicalFilePath();
+		if (rootCanonical.isEmpty() || targetCanonical.isEmpty())
+		{
+				if (errorMessage != nullptr) *errorMessage = "Failed to resolve canonical path.";
+				return false;
+		}
+		const QString rootClean = QDir::cleanPath(rootCanonical);
+		const QString targetClean = QDir::cleanPath(targetCanonical);
+		if (QString::compare(rootClean, targetClean, Qt::CaseInsensitive) == 0)
+		{
+				if (errorMessage != nullptr) *errorMessage = "Refusing to delete sessions root.";
+				return false;
+		}
+		const QString rootPrefix = rootClean + QDir::separator();
+		if (!targetClean.startsWith(rootPrefix, Qt::CaseInsensitive))
+		{
+				if (errorMessage != nullptr) *errorMessage = "Session path is outside sessions root.";
+				return false;
+		}
+		return true;
+}
+
+bool ArsTrackerSessionsTab::deleteSessionDirectory(const QString &sessionName,
+																									 const QString &sessionPath,
+																									 QString *errorMessage) const
+{
+		QString safetyError;
+		if (!validateSessionDeletePath(sessionName, sessionPath, &safetyError))
+		{
+				if (errorMessage != nullptr) *errorMessage = safetyError;
+				qWarning() << "Sessions delete safety check failed session=" << sessionName << "path=" << sessionPath << "error=" << safetyError;
+				return false;
+		}
+		QDir dir(sessionPath);
+		if (!dir.removeRecursively())
+		{
+				if (errorMessage != nullptr) *errorMessage = "Failed to delete session directory recursively.";
+				return false;
+		}
+		return true;
+}
+
+void ArsTrackerSessionsTab::onDeleteSessionClicked()
+{
+		QPushButton *button = qobject_cast<QPushButton *>(sender());
+		if (button == nullptr)
+		{
+				return;
+		}
+		const QString sessionName = button->property("sessionName").toString();
+		const QString sessionPath = button->property("sessionPath").toString();
+		qDebug() << "Sessions delete requested session=" << sessionName << "path=" << sessionPath;
+
+		const QMessageBox::StandardButton answer = QMessageBox::question(
+				this,
+				"Delete session",
+				QString("Delete session?\nSession: %1\nPath: %2\n\nThis will permanently delete this session folder and all related files:\n- raw tracker files\n- SessionInfo.json\n- postprocessed artifacts\n- generated reports, if any\n\nThis action cannot be undone.")
+						.arg(sessionName, sessionPath),
+				QMessageBox::Yes | QMessageBox::No,
+				QMessageBox::No);
+		if (answer != QMessageBox::Yes)
+		{
+				qDebug() << "Sessions delete cancelled session=" << sessionName;
+				return;
+		}
+
+		qDebug() << "Sessions delete begin session=" << sessionName << "path=" << sessionPath;
+		QString error;
+		if (!deleteSessionDirectory(sessionName, sessionPath, &error))
+		{
+				qWarning() << "Sessions delete failed session=" << sessionName << "path=" << sessionPath << "error=" << error;
+				QMessageBox::warning(this, "Sessions", QString("Failed to delete session: %1").arg(error));
+				return;
+		}
+		qDebug() << "Sessions delete done session=" << sessionName << "path=" << sessionPath;
+
+		if (currentSessionId == sessionName && pagesStack != nullptr && pagesStack->currentWidget() == detailsPage)
+		{
+				showSessionsListPage(false);
+		}
+		reloadSessions("delete-session");
+		qDebug() << "Sessions list reloaded after delete count=" << m_filteredSessions.size();
+}
+
 void ArsTrackerSessionsTab::onBackFromSessionDetails()
 {
 		showSessionsListPage(true);
@@ -1926,7 +2078,7 @@ void ArsTrackerSessionsTab::resizeSessionsListColumnsToContent()
 				return;
 		}
 
-		const int sessionColumn = 0;
+		const int sessionColumn = kSessionsColumnSession;
 		const int viewportWidth = sessionsTable->viewport() != nullptr ? sessionsTable->viewport()->width() : sessionsTable->width();
 		if (viewportWidth <= 0)
 		{

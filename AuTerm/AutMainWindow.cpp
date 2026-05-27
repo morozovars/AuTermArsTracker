@@ -2632,10 +2632,12 @@ void AutMainWindow::apply_main_tab_filter()
 												object_name == "tab_ars_trackers" ||
 												object_name == "ars_tracker_sessions_tab" ||
 												object_name == "ars_tracker_team_tab" ||
+												object_name == "ars_tracker_players_tab" ||
 												title == "Tracker Inspector" ||
 												title == "Trackers" ||
 												title == "Sessions" ||
-												title == "Team";
+												title == "Team" ||
+												title == "Players";
 
 				if (keep_tab)
 				{
@@ -2697,6 +2699,7 @@ void AutMainWindow::apply_main_tab_filter()
 		move_tab_to_index("tab_ars_tracker", "Tracker Inspector", 1, "Tracker Inspector");
 		move_tab_to_index("ars_tracker_sessions_tab", "Sessions", 2, "Sessions");
 		move_tab_to_index("ars_tracker_team_tab", "Team", 3, "Team");
+		move_tab_to_index("ars_tracker_players_tab", "Players", 4, "Players");
 
 		qDebug() << "Top-level tabs after order adjust:";
 		for (int i = 0; i < tabs->count(); ++i)

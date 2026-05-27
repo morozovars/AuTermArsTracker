@@ -201,3 +201,62 @@ bool ArsAppSettings::saveLastTeamId(int teamId, QString *errorMessage) const
     writeFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     return true;
 }
+
+bool ArsAppSettings::loadLastPlayerId(int *outPlayerId, QString *errorMessage) const
+{
+    if (outPlayerId == nullptr)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Output pointer is null";
+        }
+        return false;
+    }
+    *outPlayerId = -1;
+    QJsonObject root;
+    if (!load_root_object(settingsPath(), &root, errorMessage))
+    {
+        return false;
+    }
+    const QJsonValue value = root.value("last_player_id");
+    if (value.isDouble())
+    {
+        *outPlayerId = value.toInt(-1);
+    }
+    return true;
+}
+
+bool ArsAppSettings::saveLastPlayerId(int playerId, QString *errorMessage) const
+{
+    QString dirError;
+    if (!ensureConfigDir(&dirError))
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = dirError;
+        }
+        return false;
+    }
+    QJsonObject root;
+    QString loadError;
+    if (!load_root_object(settingsPath(), &root, &loadError))
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "settings.json is invalid.";
+        }
+        return false;
+    }
+    root["last_player_id"] = playerId;
+    QFile writeFile(settingsPath());
+    if (!writeFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = QString("Failed to write settings: %1").arg(writeFile.errorString());
+        }
+        return false;
+    }
+    writeFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return true;
+}

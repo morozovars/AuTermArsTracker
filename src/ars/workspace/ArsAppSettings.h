@@ -12,6 +12,8 @@ public:
     bool clearDefaultTeamId(QString *errorMessage = nullptr) const;
     bool loadLastTeamId(int *outTeamId, QString *errorMessage = nullptr) const;
     bool saveLastTeamId(int teamId, QString *errorMessage = nullptr) const;
+    bool loadLastPlayerId(int *outPlayerId, QString *errorMessage = nullptr) const;
+    bool saveLastPlayerId(int playerId, QString *errorMessage = nullptr) const;
     QString settingsPath() const;
 
 private:

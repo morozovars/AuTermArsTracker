@@ -63,11 +63,13 @@ public slots:
 private slots:
 		void openSessionsFolder();
 		void onSessionNameClicked();
+		void onSessionTableCellClicked(int row, int column);
 		void onBackFromSessionDetails();
 		void onRescanSessionClicked();
 		void onProcessSessionClicked();
 		void onTeamFilterChanged();
 		void onSaveSessionTeamClicked();
+		void onDeleteSessionClicked();
 
 private:
 		void resizeEvent(QResizeEvent *event) override;
@@ -84,6 +86,12 @@ private:
 		void rebuildTeamFilterCombo(bool resetToDefaultSelection);
 		void applySessionsFilterAndRefreshTable();
 		void refreshSessionDetailsTeamUi();
+		bool validateSessionDeletePath(const QString &sessionName,
+																 const QString &sessionPath,
+																 QString *errorMessage) const;
+		bool deleteSessionDirectory(const QString &sessionName,
+																const QString &sessionPath,
+																QString *errorMessage) const;
 		void showSessionsListPage(bool forceReload = false);
 		void showSessionDetailsPage(const QString &sessionId);
 		void fillSessionsTable(const QList<LocalSessionInfo> &sessions);

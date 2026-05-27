@@ -27,6 +27,8 @@ SOURCES += \
     ars_tracker/ars_session_info_json.cpp \
     ars_tracker/ars_session_processing_loader.cpp \
     ars_tracker/ars_team_edit_dialog.cpp \
+    ars_tracker/ars_tracker_player_edit_dialog.cpp \
+    ars_tracker/ars_tracker_players_tab.cpp \
     ars_tracker/ars_tracker_team_tab.cpp \
     ars_trackers_session_download_coordinator.cpp \
     ars_tracker_bulk_fw_update_dialog.cpp \
@@ -71,6 +73,8 @@ HEADERS += \
     ars_tracker/ars_session_info_json.h \
     ars_tracker/ars_session_processing_loader.h \
     ars_tracker/ars_team_edit_dialog.h \
+    ars_tracker/ars_tracker_player_edit_dialog.h \
+    ars_tracker/ars_tracker_players_tab.h \
     ars_tracker/ars_tracker_team_tab.h \
     ars_trackers_session_download_coordinator.h \
     ars_tracker_bulk_fw_update_dialog.h \
@@ -102,7 +106,9 @@ HEADERS += \
     smp_uart_auterm.h \
     smp_group.h \
     smp_group_img_mgmt.h \
-    ../../src/ars/workspace/ArsAppSettings.h
+    ../../src/ars/workspace/ArsAppSettings.h \
+    ../../src/ars/workspace/ArsPlayer.h \
+    ../../src/ars/workspace/ArsPlayerRepository.h
 
 DISTFILES += plugin_mcumgr.json
 

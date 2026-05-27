@@ -25,7 +25,9 @@ SOURCES += \
     ars_tracker/ars_session_postprocessor.cpp \
     ars_tracker/ars_session_duration_scanner.cpp \
     ars_tracker/ars_session_info_json.cpp \
+    ars_tracker/ars_session_assignment_dialog.cpp \
     ars_tracker/ars_session_processing_loader.cpp \
+    ars_tracker/ars_tracker_assign_pair_dialog.cpp \
     ars_tracker/ars_team_edit_dialog.cpp \
     ars_tracker/ars_tracker_player_edit_dialog.cpp \
     ars_tracker/ars_tracker_players_tab.cpp \
@@ -59,6 +61,7 @@ SOURCES += \
     ../../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../../src/ars/workspace/ArsPlayerRepository.cpp \
     ../../src/ars/workspace/ArsAppSettings.cpp \
+    ../../src/ars/workspace/ArsSessionPlayerBindingResolver.cpp \
     ../../src/ars/workspace/ArsSessionRepository.cpp \
     ../../src/ars/workspace/ArsTeamRepository.cpp \
     ../../src/ars/workspace/ArsTrackerBindingRepository.cpp
@@ -71,7 +74,9 @@ HEADERS += \
     ars_tracker/ars_session_duration_scanner.h \
     ars_tracker/ars_session_info.h \
     ars_tracker/ars_session_info_json.h \
+    ars_tracker/ars_session_assignment_dialog.h \
     ars_tracker/ars_session_processing_loader.h \
+    ars_tracker/ars_tracker_assign_pair_dialog.h \
     ars_tracker/ars_team_edit_dialog.h \
     ars_tracker/ars_tracker_player_edit_dialog.h \
     ars_tracker/ars_tracker_players_tab.h \
@@ -108,7 +113,10 @@ HEADERS += \
     smp_group_img_mgmt.h \
     ../../src/ars/workspace/ArsAppSettings.h \
     ../../src/ars/workspace/ArsPlayer.h \
-    ../../src/ars/workspace/ArsPlayerRepository.h
+    ../../src/ars/workspace/ArsPlayerRepository.h \
+    ../../src/ars/workspace/ArsSessionPlayerBindingResolver.h \
+    ../../src/ars/workspace/ArsTrackerBinding.h \
+    ../../src/ars/workspace/ArsTrackerBindingRepository.h
 
 DISTFILES += plugin_mcumgr.json
 

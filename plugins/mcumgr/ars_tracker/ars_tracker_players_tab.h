@@ -2,6 +2,7 @@
 #define ARS_TRACKER_PLAYERS_TAB_H
 
 #include <QWidget>
+#include <QHash>
 
 #include "ars/workspace/ArsPlayer.h"
 #include "ars/workspace/ArsTeamRepository.h"
@@ -26,6 +27,7 @@ private slots:
     void onCreatePlayer();
     void onEditPlayer();
     void onDeletePlayer();
+    void onAssignTracker();
 
 private:
     QString workspacePath() const;
@@ -41,6 +43,7 @@ private:
     QString ageDisplay(const ArsPlayer &player) const;
     bool savePlayerAndLog(const ArsPlayer &player);
     bool validatePhotoExtension(const QString &sourcePath, QString *errorMessage) const;
+    QString boundPairForPlayer(const QString &playerId) const;
 
     QLabel *m_currentTeamLabel = nullptr;
     QComboBox *m_teamSelector = nullptr;
@@ -50,6 +53,7 @@ private:
 
     QList<ArsTeam> m_teams;
     QList<ArsPlayer> m_players;
+    QHash<QString, QString> m_playerPairByPlayerId;
 };
 
 #endif // ARS_TRACKER_PLAYERS_TAB_H

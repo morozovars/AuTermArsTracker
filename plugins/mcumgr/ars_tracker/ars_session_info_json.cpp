@@ -74,6 +74,34 @@ bool load_session_info_root(const QString &filePath,
 		*outRoot = doc.object();
 		return true;
 }
+
+QJsonObject assignment_to_json(const ArsSessionPairAssignment &assignment)
+{
+		QJsonObject o;
+		o["pairId"] = assignment.pairId;
+		o["leftTrackerSerial"] = assignment.leftTrackerSerial;
+		o["rightTrackerSerial"] = assignment.rightTrackerSerial;
+		o["playerId"] = assignment.playerId;
+		o["playerName"] = assignment.playerName;
+		o["teamId"] = assignment.teamId;
+		o["source"] = assignment.source;
+		o["isOverride"] = assignment.isOverride;
+		return o;
+}
+
+ArsSessionPairAssignment assignment_from_json(const QJsonObject &o)
+{
+		ArsSessionPairAssignment assignment;
+		assignment.pairId = o.value("pairId").toString().trimmed();
+		assignment.leftTrackerSerial = o.value("leftTrackerSerial").toString().trimmed();
+		assignment.rightTrackerSerial = o.value("rightTrackerSerial").toString().trimmed();
+		assignment.playerId = o.value("playerId").toString().trimmed();
+		assignment.playerName = o.value("playerName").toString().trimmed();
+		assignment.teamId = o.value("teamId").toInt(-1);
+		assignment.source = o.value("source").toString().trimmed();
+		assignment.isOverride = o.value("isOverride").toBool(false);
+		return assignment;
+}
 }
 
 bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
@@ -429,4 +457,103 @@ bool ArsSessionInfoJson::saveSessionTeamId(const QString &sessionPath, int teamI
 		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
 		file.close();
 		return true;
+}
+
+bool ArsSessionInfoJson::readSessionPairAssignments(const QString &sessionPath,
+																										QList<ArsSessionPairAssignment> *outAssignments,
+																										QString *errorMessage)
+{
+		if (outAssignments == nullptr)
+		{
+				if (errorMessage != nullptr) *errorMessage = "Output assignments pointer is null";
+				return false;
+		}
+		outAssignments->clear();
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QJsonObject root;
+		bool exists = false;
+		QString loadError;
+		if (!load_session_info_root(filePath, &exists, &root, &loadError))
+		{
+				if (errorMessage != nullptr) *errorMessage = loadError;
+				return false;
+		}
+		if (!exists)
+		{
+				return true;
+		}
+		const QJsonArray arr = root.value("trackerPlayerBindings").toArray();
+		for (const QJsonValue &value : arr)
+		{
+				if (!value.isObject()) continue;
+				const ArsSessionPairAssignment assignment = assignment_from_json(value.toObject());
+				if (assignment.pairId.trimmed().isEmpty()) continue;
+				outAssignments->append(assignment);
+		}
+		return true;
+}
+
+bool ArsSessionInfoJson::writeSessionPairAssignments(const QString &sessionPath,
+																										 const QList<ArsSessionPairAssignment> &assignments,
+																										 QString *errorMessage)
+{
+		const QString filePath = QDir(sessionPath).filePath("SessionInfo.json");
+		QJsonObject root;
+		bool exists = false;
+		QString loadError;
+		if (!load_session_info_root(filePath, &exists, &root, &loadError))
+		{
+				if (errorMessage != nullptr) *errorMessage = loadError;
+				qWarning() << "Session assignments write failed session=" << sessionPath << "error=" << loadError;
+				return false;
+		}
+
+		QJsonArray arr;
+		for (const ArsSessionPairAssignment &assignment : assignments)
+		{
+				arr.append(assignment_to_json(assignment));
+		}
+		root["trackerPlayerBindings"] = arr;
+
+		QFile file(filePath);
+		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+		{
+				if (errorMessage != nullptr) *errorMessage = QString("Failed to open file for write: %1").arg(filePath);
+				qWarning() << "Session assignments write failed session=" << sessionPath << "error=" << (errorMessage ? *errorMessage : QString());
+				return false;
+		}
+		file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+		file.close();
+		return true;
+}
+
+bool ArsSessionInfoJson::upsertManualSessionAssignment(const QString &sessionPath,
+																											 const ArsSessionPairAssignment &manualAssignment,
+																											 QString *errorMessage)
+{
+		QList<ArsSessionPairAssignment> assignments;
+		if (!readSessionPairAssignments(sessionPath, &assignments, errorMessage))
+		{
+				return false;
+		}
+		bool replaced = false;
+		for (ArsSessionPairAssignment &assignment : assignments)
+		{
+				if (assignment.pairId.compare(manualAssignment.pairId, Qt::CaseInsensitive) == 0)
+				{
+						assignment = manualAssignment;
+						assignment.source = "manual";
+						assignment.isOverride = true;
+						replaced = true;
+						break;
+				}
+		}
+		if (!replaced)
+		{
+				ArsSessionPairAssignment value = manualAssignment;
+				value.source = "manual";
+				value.isOverride = true;
+				assignments.append(value);
+		}
+		return writeSessionPairAssignments(sessionPath, assignments, errorMessage);
 }

@@ -1,8 +1,10 @@
 #include "ars_tracker_players_tab.h"
 
 #include "ars_tracker_player_edit_dialog.h"
+#include "ars_tracker_assign_pair_dialog.h"
 
 #include <QDate>
+#include <QDateTime>
 #include <QDebug>
 #include <QDialog>
 #include <QComboBox>
@@ -24,6 +26,7 @@
 #include "ars/workspace/ArsLocalWorkspace.h"
 #include "ars/workspace/ArsPlayerRepository.h"
 #include "ars/workspace/ArsTeamRepository.h"
+#include "ars/workspace/ArsTrackerBindingRepository.h"
 
 ArsTrackerPlayersTab::ArsTrackerPlayersTab(QWidget *parent)
     : QWidget(parent)
@@ -60,9 +63,9 @@ void ArsTrackerPlayersTab::buildUi()
     root->addLayout(top);
 
     m_table = new QTableWidget(this);
-    m_table->setColumnCount(6);
+    m_table->setColumnCount(7);
     m_table->setHorizontalHeaderLabels(QStringList() << "Photo" << QString::fromUtf8("Фамилия Имя") << QString::fromUtf8("Позиция")
-                                                      << QString::fromUtf8("Номер") << QString::fromUtf8("Возраст") << "Actions");
+                                                      << QString::fromUtf8("Номер") << QString::fromUtf8("Возраст") << "Tracker pair" << "Actions");
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -73,6 +76,7 @@ void ArsTrackerPlayersTab::buildUi()
     m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
     m_table->setColumnWidth(0, 72);
     m_table->verticalHeader()->setDefaultSectionSize(110);
     root->addWidget(m_table, 1);
@@ -243,7 +247,28 @@ void ArsTrackerPlayersTab::reloadCurrentTeamPlayers()
     const ArsTeam *team = findTeamById(currentTeamId());
     qDebug() << "Ars Players current team id=" << currentTeamId() << "name=" << (team != nullptr ? team->name : QString());
     qDebug() << "Ars Players loaded count=" << m_players.size() << "teamId=" << currentTeamId();
+
+    m_playerPairByPlayerId.clear();
+    ArsTrackerBindingRepository bindingRepository(workspace);
+    QStringList bindingWarnings;
+    const QList<ArsTrackerPlayerBinding> bindings = bindingRepository.bindingsForTeam(currentTeamId(), &bindingWarnings);
+    for (const QString &warning : bindingWarnings)
+    {
+        qWarning().noquote() << warning;
+    }
+    for (const ArsTrackerPlayerBinding &binding : bindings)
+    {
+        if (!binding.playerId.trimmed().isEmpty() && !binding.pairId.trimmed().isEmpty())
+        {
+            m_playerPairByPlayerId[binding.playerId] = binding.pairId;
+        }
+    }
     rebuildPlayersTable();
+}
+
+QString ArsTrackerPlayersTab::boundPairForPlayer(const QString &playerId) const
+{
+    return m_playerPairByPlayerId.value(playerId.trimmed());
 }
 
 void ArsTrackerPlayersTab::rebuildPlayersTable()
@@ -286,6 +311,8 @@ void ArsTrackerPlayersTab::rebuildPlayersTable()
         m_table->setItem(row, 2, new QTableWidgetItem(player.position));
         m_table->setItem(row, 3, new QTableWidgetItem(QString::number(player.number)));
         m_table->setItem(row, 4, new QTableWidgetItem(ageDisplay(player)));
+        m_table->setItem(row, 5, new QTableWidgetItem(boundPairForPlayer(player.playerId).trimmed().isEmpty() ? "not assigned"
+                                                                                                       : boundPairForPlayer(player.playerId)));
         m_table->setRowHeight(row, 110);
 
         QWidget *actionsWidget = new QWidget(m_table);
@@ -298,9 +325,13 @@ void ArsTrackerPlayersTab::rebuildPlayersTable()
         QPushButton *del = new QPushButton("Delete", actionsWidget);
         del->setProperty("playerId", player.playerId);
         connect(del, &QPushButton::clicked, this, &ArsTrackerPlayersTab::onDeletePlayer);
+        QPushButton *assign = new QPushButton("Assign tracker", actionsWidget);
+        assign->setProperty("playerId", player.playerId);
+        connect(assign, &QPushButton::clicked, this, &ArsTrackerPlayersTab::onAssignTracker);
         actionsLayout->addWidget(edit);
         actionsLayout->addWidget(del);
-        m_table->setCellWidget(row, 5, actionsWidget);
+        actionsLayout->addWidget(assign);
+        m_table->setCellWidget(row, 6, actionsWidget);
     }
 }
 
@@ -496,6 +527,113 @@ void ArsTrackerPlayersTab::onDeletePlayer()
     }
     qDebug() << "Ars Player delete done playerId=" << playerId;
     reloadPlayers("delete");
+}
+
+void ArsTrackerPlayersTab::onAssignTracker()
+{
+    QPushButton *button = qobject_cast<QPushButton *>(sender());
+    if (button == nullptr)
+    {
+        return;
+    }
+    const QString playerId = button->property("playerId").toString().trimmed();
+    ArsPlayer *player = findPlayerById(playerId);
+    const int teamId = currentTeamId();
+    if (player == nullptr || playerId.isEmpty() || teamId <= 0)
+    {
+        return;
+    }
+    qDebug() << "Players assign tracker requested playerId=" << playerId << "teamId=" << teamId;
+    const ArsTeam *team = findTeamById(teamId);
+
+    ArsTrackerAssignPairDialog dialog(this);
+    dialog.setPlayerContext(QString("%1 %2").arg(player->surname, player->name), team != nullptr ? team->name : QString());
+    dialog.setInitialPair(boundPairForPlayer(playerId), QString(), QString());
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    ArsTrackerBindingRepository repository(workspacePath());
+    QStringList warnings;
+    const QList<ArsTrackerPlayerBinding> teamBindings = repository.bindingsForTeam(teamId, &warnings);
+    for (const QString &warning : warnings)
+    {
+        qWarning().noquote() << warning;
+    }
+    for (const ArsTrackerPlayerBinding &binding : teamBindings)
+    {
+        if (binding.pairId.compare(dialog.pairId(), Qt::CaseInsensitive) == 0 &&
+            binding.playerId.compare(playerId, Qt::CaseInsensitive) != 0)
+        {
+            const QMessageBox::StandardButton answer = QMessageBox::question(
+                this,
+                "Assign tracker pair",
+                QString("Tracker pair %1 is already assigned to other player.\nReassign it to current player?")
+                    .arg(dialog.pairId()),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (answer != QMessageBox::Yes)
+            {
+                return;
+            }
+            break;
+        }
+    }
+
+    QString existingPlayerPair;
+    for (const ArsTrackerPlayerBinding &binding : teamBindings)
+    {
+        if (binding.playerId.compare(playerId, Qt::CaseInsensitive) == 0 &&
+            binding.pairId.compare(dialog.pairId(), Qt::CaseInsensitive) != 0)
+        {
+            existingPlayerPair = binding.pairId;
+            break;
+        }
+    }
+    if (!existingPlayerPair.isEmpty())
+    {
+        const QMessageBox::StandardButton answer = QMessageBox::question(
+            this,
+            "Assign tracker pair",
+            QString("Player already has tracker pair %1. Replace with %2?")
+                .arg(existingPlayerPair, dialog.pairId()),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (answer != QMessageBox::Yes)
+        {
+            return;
+        }
+
+        QList<ArsTrackerPlayerBinding> allBindings = repository.loadBindings(nullptr);
+        allBindings.erase(std::remove_if(allBindings.begin(), allBindings.end(), [teamId, playerId](const ArsTrackerPlayerBinding &binding) {
+                             return binding.teamId == teamId && binding.playerId.compare(playerId, Qt::CaseInsensitive) == 0;
+                         }),
+                         allBindings.end());
+        QString saveError;
+        if (!repository.saveBindings(allBindings, &saveError))
+        {
+            QMessageBox::warning(this, "Assign tracker pair", QString("Failed to replace player binding: %1").arg(saveError));
+            return;
+        }
+    }
+
+    ArsTrackerPlayerBinding upsert;
+    upsert.teamId = teamId;
+    upsert.playerId = playerId;
+    upsert.pairId = dialog.pairId();
+    upsert.leftTrackerSerial = dialog.leftTrackerSerial();
+    upsert.rightTrackerSerial = dialog.rightTrackerSerial();
+    upsert.updatedAt = QDateTime::currentDateTimeUtc();
+
+    QString error;
+    if (!repository.upsertBinding(upsert, &error))
+    {
+        QMessageBox::warning(this, "Assign tracker pair", QString("Failed to save binding: %1").arg(error));
+        return;
+    }
+    qDebug() << "Players assign tracker saved playerId=" << playerId << "teamId=" << teamId << "pairId=" << upsert.pairId;
+    reloadPlayers("assign-tracker");
 }
 
 void ArsTrackerPlayersTab::onTeamChanged()

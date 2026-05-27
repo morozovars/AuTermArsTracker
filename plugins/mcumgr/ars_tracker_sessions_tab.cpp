@@ -20,6 +20,7 @@
 #include <QMap>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -39,8 +40,11 @@
 #include "ars/workspace/ArsAppSettings.h"
 #include "ars/workspace/ArsTeamRepository.h"
 #include "ars/workspace/ArsLocalWorkspace.h"
+#include "ars/workspace/ArsPlayerRepository.h"
+#include "ars/workspace/ArsSessionPlayerBindingResolver.h"
 #include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_info_json.h"
+#include "ars_tracker/ars_session_assignment_dialog.h"
 
 namespace
 {
@@ -129,7 +133,7 @@ void ArsTrackerSessionsTab::buildListPage()
 
 		sessionsTable = new QTableWidget(listPage);
 		sessionsTable->setColumnCount(4);
-		sessionsTable->setHorizontalHeaderLabels(QStringList() << "Session" << "Team" << "Trackers" << "Actions");
+		sessionsTable->setHorizontalHeaderLabels(QStringList() << "Session" << "Team" << "Players-trackers" << "Actions");
 		sessionsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
 		sessionsTable->setSelectionMode(QAbstractItemView::SingleSelection);
 		sessionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -253,24 +257,31 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		sessionInfoColumns->addWidget(targetBox, 1);
 		layout->addWidget(sessionInfoBox, 1, 0, 1, 1);
 
-		sessionTrackersTable = new QTableWidget(detailsPage);
-		sessionTrackersTable->setColumnCount(3);
-		sessionTrackersTable->setHorizontalHeaderLabels(QStringList() << "Pair serial" << "Left tracker" << "Right tracker");
-		sessionTrackersTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-		sessionTrackersTable->setSelectionMode(QAbstractItemView::SingleSelection);
-		sessionTrackersTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-		sessionTrackersTable->verticalHeader()->setVisible(false);
-		sessionTrackersTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-		sessionTrackersTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-		sessionTrackersTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-		layout->addWidget(sessionTrackersTable, 2, 0, 1, 1);
-
-		sessionTrackersEmptyLabel = new QLabel("No trackers found", detailsPage);
-		sessionTrackersEmptyLabel->setVisible(false);
-		layout->addWidget(sessionTrackersEmptyLabel, 3, 0, 1, 1);
+		QGroupBox *assignmentsBox = new QGroupBox("Tracker/player assignments", detailsPage);
+		QVBoxLayout *assignmentsLayout = new QVBoxLayout(assignmentsBox);
+		sessionAssignmentsTable = new QTableWidget(assignmentsBox);
+		sessionAssignmentsTable->setColumnCount(6);
+		sessionAssignmentsTable->setHorizontalHeaderLabels(QStringList() << "Player photo" << "Player name" << "Pair" << "Left tracker" << "Right tracker" << "Actions");
+		sessionAssignmentsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+		sessionAssignmentsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+		sessionAssignmentsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+		sessionAssignmentsTable->verticalHeader()->setVisible(false);
+		sessionAssignmentsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+		sessionAssignmentsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+		sessionAssignmentsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+		sessionAssignmentsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+		sessionAssignmentsTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+		sessionAssignmentsTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+		sessionAssignmentsTable->setColumnWidth(0, 72);
+		sessionAssignmentsTable->verticalHeader()->setDefaultSectionSize(110);
+		assignmentsLayout->addWidget(sessionAssignmentsTable);
+		sessionAssignmentsEmptyLabel = new QLabel("No tracker pairs found", assignmentsBox);
+		sessionAssignmentsEmptyLabel->setVisible(false);
+		assignmentsLayout->addWidget(sessionAssignmentsEmptyLabel);
+		layout->addWidget(assignmentsBox, 2, 0, 1, 1);
 
 		detailsStatusLabel = new QLabel(detailsPage);
-		layout->addWidget(detailsStatusLabel, 4, 0, 1, 1);
+		layout->addWidget(detailsStatusLabel, 3, 0, 1, 1);
 
 		connect(backButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onBackFromSessionDetails);
 		connect(rescanButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onRescanSessionClicked);
@@ -336,13 +347,18 @@ QString ArsTrackerSessionsTab::formatSessionDisplayName(const QString &sessionFo
 QList<SessionTrackerPair> ArsTrackerSessionsTab::scanSessionTrackers(const QString &sessionPath) const
 {
 		QList<SessionTrackerPair> out;
-		const QDir sessionDir(sessionPath);
-		if (!sessionDir.exists())
+		QDir trackersRoot(sessionPath);
+		if (!trackersRoot.exists())
 		{
 				qWarning() << "Sessions tab: session path is not found" << sessionPath;
 				return out;
 		}
-		const QFileInfoList entries = sessionDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
+		const QString rawPath = QDir(sessionPath).filePath("raw");
+		if (QDir(rawPath).exists())
+		{
+				trackersRoot = QDir(rawPath);
+		}
+		const QFileInfoList entries = trackersRoot.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
 		QMap<QString, SessionTrackerPair> bySerial;
 		const QRegularExpression trackerRx("^(.+)([LlRr])$");
 		for (const QFileInfo &entry : entries)
@@ -400,6 +416,124 @@ QString ArsTrackerSessionsTab::buildTrackersDisplayText(const QList<SessionTrack
 		return parts.join(", ");
 }
 
+QString ArsTrackerSessionsTab::buildTrackersDisplayTextForSession(const QString &sessionPath,
+																																	const QList<SessionTrackerPair> &pairs,
+																																	const QList<ArsPlayer> &players) const
+{
+		struct SessionPairDisplayItem
+		{
+				QString pairId;
+				QString playerDisplay;
+				QString text;
+				bool hasAssignedPlayer = false;
+		};
+
+		QList<ArsSessionPairAssignment> assignments;
+		ArsSessionInfoJson::readSessionPairAssignments(sessionPath, &assignments, nullptr);
+
+		auto findAssignmentByPair = [&assignments](const QString &pairId) -> const ArsSessionPairAssignment * {
+				for (const ArsSessionPairAssignment &assignment : assignments)
+				{
+						if (assignment.pairId.compare(pairId, Qt::CaseInsensitive) == 0) return &assignment;
+				}
+				return nullptr;
+		};
+		auto findPlayerById = [&players](const QString &playerId) -> const ArsPlayer * {
+				for (const ArsPlayer &player : players)
+				{
+						if (player.playerId.compare(playerId, Qt::CaseInsensitive) == 0) return &player;
+				}
+				return nullptr;
+		};
+
+		QList<SessionPairDisplayItem> items;
+		for (const SessionTrackerPair &pair : pairs)
+		{
+				const QString leftText = (pair.leftTracker == "-" ? "missing L" : pair.leftTracker);
+				const QString rightText = (pair.rightTracker == "-" ? "missing R" : pair.rightTracker);
+				const QString pairText = QString("%1: %2 + %3").arg(pair.pairSerial, leftText, rightText);
+
+				QString playerDisplay = "not assigned";
+				bool hasAssignedPlayer = false;
+				const ArsSessionPairAssignment *assignment = findAssignmentByPair(pair.pairSerial);
+				if (assignment != nullptr)
+				{
+						if (!assignment->playerId.trimmed().isEmpty())
+						{
+								hasAssignedPlayer = true;
+								const ArsPlayer *player = findPlayerById(assignment->playerId);
+								if (player != nullptr)
+								{
+										playerDisplay = QString("%1 %2").arg(player->surname, player->name).trimmed();
+								}
+								else if (!assignment->playerName.trimmed().isEmpty())
+								{
+										playerDisplay = QString("%1 (missing)").arg(assignment->playerName);
+								}
+								else
+								{
+										playerDisplay = QString("missing player %1").arg(assignment->playerId);
+								}
+						}
+						else if (!assignment->playerName.trimmed().isEmpty())
+						{
+								hasAssignedPlayer = true;
+								playerDisplay = assignment->playerName.trimmed();
+						}
+				}
+
+				SessionPairDisplayItem item;
+				item.pairId = pair.pairSerial;
+				item.playerDisplay = playerDisplay;
+				item.hasAssignedPlayer = hasAssignedPlayer;
+				item.text = QString("%1 (%2)").arg(playerDisplay, pairText);
+				items.append(item);
+				qDebug() << "Sessions list tracker display row session=" << QFileInfo(sessionPath).fileName()
+								 << "pairId=" << pair.pairSerial
+								 << "playerDisplay=" << playerDisplay
+								 << "left=" << leftText
+								 << "right=" << rightText;
+		}
+
+		std::sort(items.begin(), items.end(), [](const SessionPairDisplayItem &a, const SessionPairDisplayItem &b) {
+				if (a.hasAssignedPlayer != b.hasAssignedPlayer)
+				{
+						return a.hasAssignedPlayer && !b.hasAssignedPlayer;
+				}
+				if (a.hasAssignedPlayer && b.hasAssignedPlayer)
+				{
+						const int nameCmp = QString::localeAwareCompare(a.playerDisplay, b.playerDisplay);
+						if (nameCmp != 0)
+						{
+								return nameCmp < 0;
+						}
+				}
+				return QString::compare(a.pairId, b.pairId, Qt::CaseInsensitive) < 0;
+		});
+
+		int assignedCount = 0;
+		int unassignedCount = 0;
+		QStringList parts;
+		for (const SessionPairDisplayItem &item : items)
+		{
+				parts.append(item.text);
+				if (item.hasAssignedPlayer)
+				{
+						++assignedCount;
+				}
+				else
+				{
+						++unassignedCount;
+				}
+		}
+		const QString inlineText = parts.join("; ");
+		qDebug() << "Sessions players-trackers display sorted session=" << QFileInfo(sessionPath).fileName()
+						 << "assignedCount=" << assignedCount
+						 << "unassignedCount=" << unassignedCount
+						 << "text=" << inlineText;
+		return inlineText;
+}
+
 QString ArsTrackerSessionsTab::teamDisplayName(const ArsTeam &team) const
 {
 		if (!team.ageCategory.trimmed().isEmpty())
@@ -443,6 +577,10 @@ void ArsTrackerSessionsTab::applyTeamContextToSession(LocalSessionInfo *session)
 QList<LocalSessionInfo> ArsTrackerSessionsTab::scanLocalSessions(const QString &sessionsPath) const
 {
 		QList<LocalSessionInfo> out;
+		ArsLocalWorkspace workspace;
+		const QString workspaceRootPath = workspace.initialize() ? workspace.rootPath() : QString();
+		ArsPlayerRepository playersRepository(workspaceRootPath);
+		const QList<ArsPlayer> allPlayers = playersRepository.loadPlayers(nullptr);
 		const QDir sessionsDir(sessionsPath);
 		if (!sessionsDir.exists())
 		{
@@ -458,7 +596,16 @@ QList<LocalSessionInfo> ArsTrackerSessionsTab::scanLocalSessions(const QString &
 				local.folderName = sessionInfo.fileName();
 				local.displayName = formatSessionDisplayName(local.folderName);
 				local.absolutePath = sessionInfo.absoluteFilePath();
-				local.trackersDisplayText = buildTrackersDisplayText(scanSessionTrackers(local.absolutePath));
+				const QList<SessionTrackerPair> pairs = scanSessionTrackers(local.absolutePath);
+				if (pairs.isEmpty())
+				{
+						local.trackersDisplayText = "no trackers";
+				}
+				else
+				{
+						local.trackersDisplayText = buildTrackersDisplayTextForSession(local.absolutePath, pairs, allPlayers);
+				}
+				qDebug() << "Sessions list trackers display session=" << local.folderName << "pairCount=" << pairs.size();
 				QString teamReadError;
 				int teamId = -1;
 				bool hasTeamId = false;
@@ -533,6 +680,7 @@ void ArsTrackerSessionsTab::fillSessionsTable(const QList<LocalSessionInfo> &ses
 				teamItem->setData(Qt::UserRole + 1, session.absolutePath);
 				sessionsTable->setItem(row, kSessionsColumnTeam, teamItem);
 				QTableWidgetItem *trackersItem = new QTableWidgetItem(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText);
+				trackersItem->setToolTip(session.trackersDisplayText.isEmpty() ? "-" : session.trackersDisplayText);
 				trackersItem->setData(Qt::UserRole, session.folderName);
 				trackersItem->setData(Qt::UserRole + 1, session.absolutePath);
 				sessionsTable->setItem(row, kSessionsColumnTrackers, trackersItem);
@@ -544,20 +692,273 @@ void ArsTrackerSessionsTab::fillSessionsTable(const QList<LocalSessionInfo> &ses
 				sessionsTable->setCellWidget(row, kSessionsColumnActions, deleteButton);
 				qDebug() << "Sessions session team display session=" << session.folderName << "display=" << session.teamDisplayText;
 		}
+		// Keep default compact row heights; no manual multiline formatting in Players-trackers column.
 }
 
-void ArsTrackerSessionsTab::fillSessionTrackersTable(const QList<SessionTrackerPair> &pairs)
+QList<ArsSessionTrackerPair> ArsTrackerSessionsTab::detectedSessionPairs(const QString &sessionPath) const
 {
-		sessionTrackersTable->setSortingEnabled(false);
-		sessionTrackersTable->clearContents();
-		sessionTrackersTable->setRowCount(pairs.size());
-		for (int row = 0; row < pairs.size(); ++row)
+		QList<ArsSessionTrackerPair> out;
+		const QList<SessionTrackerPair> pairs = scanSessionTrackers(sessionPath);
+		for (const SessionTrackerPair &pair : pairs)
 		{
-				sessionTrackersTable->setItem(row, 0, new QTableWidgetItem(pairs.at(row).pairSerial));
-				sessionTrackersTable->setItem(row, 1, new QTableWidgetItem(pairs.at(row).leftTracker));
-				sessionTrackersTable->setItem(row, 2, new QTableWidgetItem(pairs.at(row).rightTracker));
+				ArsSessionTrackerPair value;
+				value.pairId = pair.pairSerial;
+				value.leftTrackerSerial = (pair.leftTracker == "-" ? QString() : pair.leftTracker);
+				value.rightTrackerSerial = (pair.rightTracker == "-" ? QString() : pair.rightTracker);
+				out.append(value);
 		}
-		sessionTrackersEmptyLabel->setVisible(pairs.isEmpty());
+		return out;
+}
+
+int ArsTrackerSessionsTab::effectiveSessionTeamIdForPath(const QString &sessionPath) const
+{
+		bool hasTeamId = false;
+		int teamId = -1;
+		QString error;
+		if (!ArsSessionInfoJson::loadSessionTeamId(sessionPath, &hasTeamId, &teamId, &error))
+		{
+				qWarning() << "Session team read failed path=" << sessionPath << "error=" << error;
+		}
+		if (hasTeamId && teamId > 0)
+		{
+				return teamId;
+		}
+		if (m_defaultTeamId > 0)
+		{
+				return m_defaultTeamId;
+		}
+		return -1;
+}
+
+bool ArsTrackerSessionsTab::resolveAndPersistSessionAssignments(const QString &sessionPath,
+																														int sessionTeamId,
+																														const QList<ArsSessionTrackerPair> &pairs)
+{
+		QList<ArsSessionPairAssignment> existingAssignments;
+		QString readError;
+		if (!ArsSessionInfoJson::readSessionPairAssignments(sessionPath, &existingAssignments, &readError))
+		{
+				qWarning() << "Session assignments read failed session=" << sessionPath << "error=" << readError;
+				return false;
+		}
+
+		ArsLocalWorkspace workspace;
+		const QString workspaceRootPath = workspace.initialize() ? workspace.rootPath() : QString();
+		ArsSessionPlayerBindingResolver resolver(workspaceRootPath);
+		QStringList warnings;
+		const QList<ArsSessionPairAssignment> resolved = resolver.resolveAssignments(sessionPath,
+																																								 sessionTeamId,
+																																								 pairs,
+																																								 existingAssignments,
+																																								 &warnings);
+		for (const QString &warning : warnings)
+		{
+				qWarning().noquote() << warning;
+		}
+		QString writeError;
+		if (!ArsSessionInfoJson::writeSessionPairAssignments(sessionPath, resolved, &writeError))
+		{
+				qWarning() << "Session assignments write failed session=" << sessionPath << "error=" << writeError;
+				return false;
+		}
+		m_currentAssignments = resolved;
+		qDebug() << "Session assignments saved session=" << sessionPath << "count=" << resolved.size();
+		return true;
+}
+
+void ArsTrackerSessionsTab::rebuildCurrentPairRows()
+{
+		m_currentPairRows.clear();
+		ArsLocalWorkspace workspace;
+		const QString workspaceRootPath = workspace.initialize() ? workspace.rootPath() : QString();
+		ArsPlayerRepository playerRepository(workspaceRootPath);
+		const QList<ArsPlayer> players = playerRepository.loadPlayers(nullptr);
+
+		auto findAssignment = [this](const QString &pairId) -> const ArsSessionPairAssignment * {
+				for (const ArsSessionPairAssignment &assignment : m_currentAssignments)
+				{
+						if (assignment.pairId.compare(pairId, Qt::CaseInsensitive) == 0) return &assignment;
+				}
+				return nullptr;
+		};
+		auto findPlayer = [&players](const QString &playerId) -> const ArsPlayer * {
+				for (const ArsPlayer &player : players)
+				{
+						if (player.playerId.compare(playerId, Qt::CaseInsensitive) == 0) return &player;
+				}
+				return nullptr;
+		};
+
+		qDebug() << "Session detail unified tracker/player table reload begin session=" << currentSessionId;
+		for (const ArsSessionTrackerPair &pair : m_currentDetectedPairs)
+		{
+				SessionPairPlayerRow row;
+				row.pairId = pair.pairId;
+				row.leftTrackerSerial = pair.leftTrackerSerial;
+				row.rightTrackerSerial = pair.rightTrackerSerial;
+
+				const ArsSessionPairAssignment *assignment = findAssignment(pair.pairId);
+				if (assignment == nullptr || assignment->playerId.trimmed().isEmpty())
+				{
+						row.hasPlayer = false;
+						row.playerName = "not assigned";
+				}
+				else
+				{
+						row.playerId = assignment->playerId;
+						row.assignmentSource = assignment->source;
+						row.isOverride = assignment->isOverride;
+						row.hasPlayer = true;
+						const ArsPlayer *player = findPlayer(assignment->playerId);
+						if (player != nullptr)
+						{
+								row.playerName = QString("%1 %2").arg(player->surname, player->name).trimmed();
+								row.playerPhotoPath = player->photoPath;
+								row.playerMissing = false;
+						}
+						else
+						{
+								row.playerMissing = true;
+								if (!assignment->playerName.trimmed().isEmpty())
+								{
+										row.playerName = QString("%1 (missing)").arg(assignment->playerName);
+								}
+								else
+								{
+										row.playerName = QString("missing player %1").arg(assignment->playerId);
+								}
+						}
+				}
+				m_currentPairRows.append(row);
+				qDebug() << "Session detail unified row pairId=" << row.pairId
+								 << "playerId=" << row.playerId
+								 << "playerName=" << row.playerName
+								 << "left=" << row.leftTrackerSerial
+								 << "right=" << row.rightTrackerSerial;
+		}
+
+		auto isAssigned = [](const SessionPairPlayerRow &row) {
+				return row.hasPlayer || row.playerMissing || !row.playerId.trimmed().isEmpty() ||
+							 (!row.playerName.trimmed().isEmpty() && row.playerName.compare("not assigned", Qt::CaseInsensitive) != 0);
+		};
+		std::sort(m_currentPairRows.begin(), m_currentPairRows.end(), [isAssigned](const SessionPairPlayerRow &a, const SessionPairPlayerRow &b) {
+				const bool aAssigned = isAssigned(a);
+				const bool bAssigned = isAssigned(b);
+				if (aAssigned != bAssigned)
+				{
+						return aAssigned && !bAssigned;
+				}
+				if (aAssigned && bAssigned)
+				{
+						const int cmp = QString::localeAwareCompare(a.playerName, b.playerName);
+						if (cmp != 0)
+						{
+								return cmp < 0;
+						}
+				}
+				return QString::compare(a.pairId, b.pairId, Qt::CaseInsensitive) < 0;
+		});
+
+		int assignedCount = 0;
+		int unassignedCount = 0;
+		for (const SessionPairPlayerRow &row : m_currentPairRows)
+		{
+				if (isAssigned(row)) ++assignedCount;
+				else ++unassignedCount;
+		}
+		qDebug() << "Session detail assignments sorted assignedCount=" << assignedCount << "unassignedCount=" << unassignedCount;
+}
+
+void ArsTrackerSessionsTab::fillSessionAssignmentsTable()
+{
+		if (sessionAssignmentsTable == nullptr)
+		{
+				return;
+		}
+		sessionAssignmentsTable->setSortingEnabled(false);
+		sessionAssignmentsTable->clearContents();
+		sessionAssignmentsTable->setRowCount(m_currentPairRows.size());
+		ArsLocalWorkspace workspace;
+		const QString workspaceRootPath = workspace.initialize() ? workspace.rootPath() : QString();
+		ArsPlayerRepository playerRepository(workspaceRootPath);
+		for (int row = 0; row < m_currentPairRows.size(); ++row)
+		{
+				const SessionPairPlayerRow &pairRow = m_currentPairRows.at(row);
+				const bool assigned = pairRow.hasPlayer || pairRow.playerMissing || !pairRow.playerId.trimmed().isEmpty() ||
+															(!pairRow.playerName.trimmed().isEmpty() &&
+															 pairRow.playerName.compare("not assigned", Qt::CaseInsensitive) != 0);
+
+				QLabel *photo = new QLabel(sessionAssignmentsTable);
+				photo->setAlignment(Qt::AlignCenter);
+				if (!pairRow.hasPlayer)
+				{
+						photo->setText("No photo");
+				}
+				else if (pairRow.playerPhotoPath.trimmed().isEmpty())
+				{
+						photo->setText(pairRow.playerMissing ? "No photo" : "No photo");
+				}
+				else
+				{
+						const QString absolutePhotoPath = playerRepository.resolvePhotoAbsolutePath(pairRow.playerPhotoPath);
+						QPixmap pixmap(absolutePhotoPath);
+						if (!QFileInfo::exists(absolutePhotoPath))
+						{
+								qWarning() << "Session detail player photo missing playerId=" << pairRow.playerId << "path=" << absolutePhotoPath;
+								photo->setText("Missing photo");
+								photo->setToolTip(absolutePhotoPath);
+						}
+						else if (pixmap.isNull())
+						{
+								qWarning() << "Session detail player photo invalid playerId=" << pairRow.playerId << "path=" << absolutePhotoPath;
+								photo->setText("Invalid photo");
+								photo->setToolTip(absolutePhotoPath);
+						}
+						else
+						{
+								photo->setPixmap(pixmap.scaled(60, 100, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+						}
+				}
+				sessionAssignmentsTable->setCellWidget(row, 0, photo);
+
+				QTableWidgetItem *playerItem = new QTableWidgetItem(pairRow.playerName);
+				if (!pairRow.assignmentSource.trimmed().isEmpty())
+				{
+						playerItem->setToolTip(QString("source: %1\noverride: %2")
+																		 .arg(pairRow.assignmentSource,
+																					pairRow.isOverride ? "true" : "false"));
+				}
+				sessionAssignmentsTable->setItem(row, 1, playerItem);
+				sessionAssignmentsTable->setItem(row, 2, new QTableWidgetItem(pairRow.pairId.trimmed().isEmpty() ? "-" : pairRow.pairId));
+
+				QTableWidgetItem *leftItem = new QTableWidgetItem(pairRow.leftTrackerSerial.trimmed().isEmpty() ? "missing" : pairRow.leftTrackerSerial);
+				if (pairRow.leftTrackerSerial.trimmed().isEmpty())
+				{
+						leftItem->setToolTip("Left tracker data not found in this session");
+				}
+				sessionAssignmentsTable->setItem(row, 3, leftItem);
+				QTableWidgetItem *rightItem = new QTableWidgetItem(pairRow.rightTrackerSerial.trimmed().isEmpty() ? "missing" : pairRow.rightTrackerSerial);
+				if (pairRow.rightTrackerSerial.trimmed().isEmpty())
+				{
+						rightItem->setToolTip("Right tracker data not found in this session");
+				}
+				sessionAssignmentsTable->setItem(row, 4, rightItem);
+
+				QPushButton *change = new QPushButton(
+						(assigned ? "Change" : "Assign"),
+						sessionAssignmentsTable);
+				change->setProperty("pairId", pairRow.pairId);
+				connect(change, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onSessionAssignmentClicked);
+				sessionAssignmentsTable->setCellWidget(row, 5, change);
+				sessionAssignmentsTable->setRowHeight(row, 110);
+				qDebug() << "Session detail assignment row row=" << row << "pairId=" << pairRow.pairId
+								 << "playerName=" << pairRow.playerName << "assigned=" << assigned;
+		}
+		if (sessionAssignmentsEmptyLabel != nullptr)
+		{
+				sessionAssignmentsEmptyLabel->setVisible(m_currentPairRows.isEmpty());
+		}
+		qDebug() << "Session detail unified tracker/player table reloaded count=" << m_currentPairRows.size();
 }
 
 void ArsTrackerSessionsTab::reloadSessions(const QString &reason)
@@ -773,7 +1174,11 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 				}
 		}
 
-		fillSessionTrackersTable(scanSessionTrackers(sessionPath));
+		m_currentDetectedPairs = detectedSessionPairs(sessionPath);
+		const int effectiveTeamId = effectiveSessionTeamIdForPath(sessionPath);
+		resolveAndPersistSessionAssignments(sessionPath, effectiveTeamId, m_currentDetectedPairs);
+		rebuildCurrentPairRows();
+		fillSessionAssignmentsTable();
 		refreshSessionDetailsTeamUi();
 		detailsStatusLabel->setText("Ready to process");
 		pagesStack->setCurrentWidget(detailsPage);
@@ -982,6 +1387,11 @@ void ArsTrackerSessionsTab::onProcessSessionClicked()
 				detailsStatusLabel->setText("Session path is unavailable");
 				return;
 		}
+		m_currentDetectedPairs = detectedSessionPairs(sessionPath);
+		const int effectiveTeamId = effectiveSessionTeamIdForPath(sessionPath);
+		resolveAndPersistSessionAssignments(sessionPath, effectiveTeamId, m_currentDetectedPairs);
+		rebuildCurrentPairRows();
+		fillSessionAssignmentsTable();
 
 		processButton->setEnabled(false);
 		if (rescanButton != nullptr)
@@ -1896,8 +2306,105 @@ void ArsTrackerSessionsTab::onSaveSessionTeamClicked()
 		}
 		qDebug() << "Session detail save team done session=" << currentSessionId << "teamId=" << teamId
 						 << "path=" << QDir(sessionPath).filePath("SessionInfo.json");
+		m_currentDetectedPairs = detectedSessionPairs(sessionPath);
+		resolveAndPersistSessionAssignments(sessionPath, teamId, m_currentDetectedPairs);
+		rebuildCurrentPairRows();
+		fillSessionAssignmentsTable();
 		reloadSessions("session-team-saved");
 		refreshSessionDetailsTeamUi();
+}
+
+void ArsTrackerSessionsTab::onSessionAssignmentClicked()
+{
+		QPushButton *button = qobject_cast<QPushButton *>(sender());
+		if (button == nullptr || currentSessionId.trimmed().isEmpty())
+		{
+				return;
+		}
+		const QString pairId = button->property("pairId").toString().trimmed();
+		if (pairId.isEmpty())
+		{
+				return;
+		}
+		QString action = "Assign";
+		for (const SessionPairPlayerRow &row : m_currentPairRows)
+		{
+				if (row.pairId.compare(pairId, Qt::CaseInsensitive) == 0)
+				{
+						action = row.hasPlayer ? "Change" : "Assign";
+						break;
+				}
+		}
+		qDebug() << "Session detail assignment action clicked pairId=" << pairId << "action=" << action;
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
+		const int sessionTeamId = effectiveSessionTeamIdForPath(sessionPath);
+		if (sessionTeamId <= 0)
+		{
+				QMessageBox::warning(this, "Session assignment", "Set valid TeamId first.");
+				return;
+		}
+		ArsLocalWorkspace workspace;
+		const QString workspaceRootPath = workspace.initialize() ? workspace.rootPath() : QString();
+		ArsPlayerRepository playersRepository(workspaceRootPath);
+		QStringList warnings;
+		QList<ArsPlayer> players = playersRepository.loadPlayersForTeam(sessionTeamId, &warnings);
+		for (const QString &warning : warnings)
+		{
+				qWarning().noquote() << warning;
+		}
+		if (players.isEmpty())
+		{
+				QMessageBox::warning(this, "Session assignment", "No players in selected team.");
+				return;
+		}
+
+		QString selectedPlayerId;
+		for (const ArsSessionPairAssignment &assignment : m_currentAssignments)
+		{
+				if (assignment.pairId.compare(pairId, Qt::CaseInsensitive) == 0)
+				{
+						selectedPlayerId = assignment.playerId;
+						break;
+				}
+		}
+
+		ArsSessionAssignmentDialog dialog(this);
+		dialog.setPairId(pairId);
+		dialog.setPlayers(players);
+		dialog.setSelectedPlayerId(selectedPlayerId);
+		if (dialog.exec() != QDialog::Accepted)
+		{
+				return;
+		}
+
+		ArsSessionPairAssignment manual;
+		manual.pairId = pairId;
+		for (const ArsSessionTrackerPair &pair : m_currentDetectedPairs)
+		{
+				if (pair.pairId.compare(pairId, Qt::CaseInsensitive) == 0)
+				{
+						manual.leftTrackerSerial = pair.leftTrackerSerial;
+						manual.rightTrackerSerial = pair.rightTrackerSerial;
+						break;
+				}
+		}
+		manual.playerId = dialog.selectedPlayerId();
+		manual.playerName = dialog.selectedPlayerName();
+		manual.teamId = sessionTeamId;
+		manual.source = "manual";
+		manual.isOverride = true;
+
+		QString error;
+		if (!ArsSessionInfoJson::upsertManualSessionAssignment(sessionPath, manual, &error))
+		{
+				QMessageBox::warning(this, "Session assignment", QString("Failed to save assignment: %1").arg(error));
+				return;
+		}
+		qDebug() << "Session assignment manual saved pairId=" << pairId << "playerId=" << manual.playerId << "playerName=" << manual.playerName;
+		qDebug() << "Session detail assignment action done pairId=" << pairId << "playerId=" << manual.playerId;
+		resolveAndPersistSessionAssignments(sessionPath, sessionTeamId, m_currentDetectedPairs);
+		rebuildCurrentPairRows();
+		fillSessionAssignmentsTable();
 }
 
 void ArsTrackerSessionsTab::onSessionNameClicked()

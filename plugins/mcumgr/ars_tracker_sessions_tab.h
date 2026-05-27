@@ -13,6 +13,8 @@
 #include "ars_tracker/ars_session_processing_loader.h"
 #include "ars_tracker/ars_session_postprocessor.h"
 #include "ars/workspace/ArsTeamRepository.h"
+#include "ars/workspace/ArsPlayer.h"
+#include "ars/workspace/ArsSessionPlayerBindingResolver.h"
 
 class QPushButton;
 class QTableWidget;
@@ -29,6 +31,7 @@ class QDialog;
 class QProgressBar;
 class QGroupBox;
 class QResizeEvent;
+class ArsSessionAssignmentDialog;
 
 struct SessionTrackerPair
 {
@@ -48,6 +51,20 @@ struct LocalSessionInfo
 		int effectiveTeamId = -1;
 		QString teamDisplayText;
 		QString effectiveTeamDisplayText;
+};
+
+struct SessionPairPlayerRow
+{
+		QString pairId;
+		QString leftTrackerSerial;
+		QString rightTrackerSerial;
+		QString playerId;
+		QString playerName;
+		QString playerPhotoPath;
+		QString assignmentSource;
+		bool isOverride = false;
+		bool hasPlayer = false;
+		bool playerMissing = false;
 };
 
 class ArsTrackerSessionsTab : public QWidget
@@ -70,6 +87,7 @@ private slots:
 		void onTeamFilterChanged();
 		void onSaveSessionTeamClicked();
 		void onDeleteSessionClicked();
+		void onSessionAssignmentClicked();
 
 private:
 		void resizeEvent(QResizeEvent *event) override;
@@ -95,7 +113,16 @@ private:
 		void showSessionsListPage(bool forceReload = false);
 		void showSessionDetailsPage(const QString &sessionId);
 		void fillSessionsTable(const QList<LocalSessionInfo> &sessions);
-		void fillSessionTrackersTable(const QList<SessionTrackerPair> &pairs);
+		void fillSessionAssignmentsTable();
+		QList<ArsSessionTrackerPair> detectedSessionPairs(const QString &sessionPath) const;
+		bool resolveAndPersistSessionAssignments(const QString &sessionPath,
+																						 int sessionTeamId,
+																						 const QList<ArsSessionTrackerPair> &pairs);
+		int effectiveSessionTeamIdForPath(const QString &sessionPath) const;
+		void rebuildCurrentPairRows();
+		QString buildTrackersDisplayTextForSession(const QString &sessionPath,
+																							 const QList<SessionTrackerPair> &pairs,
+																							 const QList<ArsPlayer> &players) const;
 		ArsSessionTargetSettings readTargetSettingsFromUi() const;
 		ArsSessionInfo readSessionInfoFromUi() const;
 		void resetSessionInformationFieldsToDefaults();
@@ -155,8 +182,8 @@ private:
 		QTimeEdit *timeSessionFinish = nullptr;
 		QLineEdit *editSessionLocation = nullptr;
 		QPlainTextEdit *editSessionGoals = nullptr;
-		QTableWidget *sessionTrackersTable = nullptr;
-		QLabel *sessionTrackersEmptyLabel = nullptr;
+		QTableWidget *sessionAssignmentsTable = nullptr;
+		QLabel *sessionAssignmentsEmptyLabel = nullptr;
 		QLabel *statusLabel = nullptr;
 		QString currentSessionId;
 		QList<LocalSessionInfo> m_allSessions;
@@ -201,6 +228,9 @@ private:
 		bool m_scanIsInitial = false;
 		bool m_scanShouldRecommendPlannedPeriod = false;
 		bool m_scanForceRecommendation = false;
+		QList<ArsSessionPairAssignment> m_currentAssignments;
+		QList<ArsSessionTrackerPair> m_currentDetectedPairs;
+		QList<SessionPairPlayerRow> m_currentPairRows;
 };
 
 #endif // ARS_TRACKER_SESSIONS_TAB_H

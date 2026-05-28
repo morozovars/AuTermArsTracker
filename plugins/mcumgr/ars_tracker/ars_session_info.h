@@ -14,6 +14,9 @@ struct ArsSessionTargetSettings
 		int targetFootload10_3g = 0;
 		int targetTouchesCount = 0;
 		double targetFootloadPerMin = 0.0;
+		double targetMaxSpeedMps = 0.0;
+		int targetShotsCount = 0;
+		int targetPossessions = 0; // Stored as plannedMetrics.dribbles by current schema contract.
 };
 
 struct ArsSessionParameters

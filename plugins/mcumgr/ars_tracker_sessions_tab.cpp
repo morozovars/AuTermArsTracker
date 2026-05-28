@@ -314,6 +314,22 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		spinTargetFootloadPerMin->setDecimals(2);
 		spinTargetFootloadPerMin->setRange(0.0, 100000.0);
 		targetLayout->addRow("Target footload intensity footload/min", spinTargetFootloadPerMin);
+
+		spinTargetMaxSpeedMps = new QDoubleSpinBox(targetBox);
+		spinTargetMaxSpeedMps->setObjectName("spin_session_target_max_speed_mps");
+		spinTargetMaxSpeedMps->setDecimals(2);
+		spinTargetMaxSpeedMps->setRange(0.0, 100.0);
+		targetLayout->addRow("Max speed m/s", spinTargetMaxSpeedMps);
+
+		spinTargetShotsCount = new QSpinBox(targetBox);
+		spinTargetShotsCount->setObjectName("spin_session_target_shots_count");
+		spinTargetShotsCount->setRange(0, 100000);
+		targetLayout->addRow("Shots count", spinTargetShotsCount);
+
+		spinTargetPossessions = new QSpinBox(targetBox);
+		spinTargetPossessions->setObjectName("spin_session_target_possessions");
+		spinTargetPossessions->setRange(0, 100000);
+		targetLayout->addRow("Possessions", spinTargetPossessions);
 		sessionInfoColumns->addWidget(targetBox, 1);
 		layout->addWidget(sessionInfoBox, 1, 0, 1, 1);
 
@@ -1281,6 +1297,9 @@ ArsSessionTargetSettings ArsTrackerSessionsTab::readTargetSettingsFromUi() const
 		s.targetFootload10_3g = spinTargetFootload10_3g->value();
 		s.targetTouchesCount = spinTargetTouchesCount->value();
 		s.targetFootloadPerMin = spinTargetFootloadPerMin->value();
+		s.targetMaxSpeedMps = spinTargetMaxSpeedMps->value();
+		s.targetShotsCount = spinTargetShotsCount->value();
+		s.targetPossessions = spinTargetPossessions->value();
 		return s;
 }
 
@@ -1305,9 +1324,9 @@ ArsSessionInfo ArsTrackerSessionsTab::readSessionInfoFromUi() const
 		info.plannedMetrics.footloadPerLeg = t.targetFootload10_3g;
 		info.plannedMetrics.loadIntensityGPerMin = t.targetFootloadPerMin;
 		info.plannedMetrics.touches = t.targetTouchesCount;
-		info.plannedMetrics.maxSpeedMps = 0.0;
-		info.plannedMetrics.shots = 0;
-		info.plannedMetrics.dribbles = 0;
+		info.plannedMetrics.maxSpeedMps = t.targetMaxSpeedMps;
+		info.plannedMetrics.shots = t.targetShotsCount;
+		info.plannedMetrics.dribbles = t.targetPossessions;
 		return info;
 }
 
@@ -1336,6 +1355,9 @@ void ArsTrackerSessionsTab::resetSessionInformationFieldsToDefaults()
 		spinTargetFootload10_3g->setValue(0);
 		spinTargetTouchesCount->setValue(0);
 		spinTargetFootloadPerMin->setValue(0.0);
+		spinTargetMaxSpeedMps->setValue(0.0);
+		spinTargetShotsCount->setValue(0);
+		spinTargetPossessions->setValue(0);
 }
 
 void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
@@ -1369,6 +1391,9 @@ void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
 		spinTargetFootload10_3g->setValue(info.plannedMetrics.footloadPerLeg);
 		spinTargetTouchesCount->setValue(info.plannedMetrics.touches);
 		spinTargetFootloadPerMin->setValue(info.plannedMetrics.loadIntensityGPerMin);
+		spinTargetMaxSpeedMps->setValue(info.plannedMetrics.maxSpeedMps);
+		spinTargetShotsCount->setValue(info.plannedMetrics.shots);
+		spinTargetPossessions->setValue(info.plannedMetrics.dribbles);
 }
 
 bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath,

@@ -183,6 +183,9 @@ private:
 		QSpinBox *spinTargetFootload10_3g = nullptr;
 		QSpinBox *spinTargetTouchesCount = nullptr;
 		QDoubleSpinBox *spinTargetFootloadPerMin = nullptr;
+		QDoubleSpinBox *spinTargetMaxSpeedMps = nullptr;
+		QSpinBox *spinTargetShotsCount = nullptr;
+		QSpinBox *spinTargetPossessions = nullptr;
 		QComboBox *comboSessionType = nullptr;
 		QTimeEdit *timeSessionStart = nullptr;
 		QTimeEdit *timeSessionFinish = nullptr;

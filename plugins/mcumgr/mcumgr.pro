@@ -7,6 +7,8 @@ TEMPLATE = lib
 CONFIG += plugin
 CONFIG += c++17
 
+include(../../src/ars_tracker_reports/ars_reporter/ars_reporter_sources.pri)
+
 ARS_TRACKER_ALGA_ROOT = $$PWD/../../src/ars_tracker_alga
 
 INCLUDEPATH    += ../../AuTerm \

@@ -5,6 +5,8 @@ include(AuTerm-includes.pri)
 SUBDIRS += \
     AuTerm
 
+SUBDIRS += src/ars_tracker_reports/ars_reporter
+
 !contains(DEFINES, SKIPPLUGINS) {
     ars_tracker_alga_qt.subdir = src/ars_tracker_alga_qt
     SUBDIRS += ars_tracker_alga_qt

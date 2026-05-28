@@ -88,6 +88,7 @@ private slots:
 		void onSaveSessionTeamClicked();
 		void onDeleteSessionClicked();
 		void onSessionAssignmentClicked();
+		void onGeneratePdfClicked();
 
 private:
 		void resizeEvent(QResizeEvent *event) override;
@@ -164,6 +165,7 @@ private:
 		QPushButton *backButton = nullptr;
 		QPushButton *rescanButton = nullptr;
 		QPushButton *processButton = nullptr;
+		QPushButton *generatePdfButton = nullptr;
 		QPushButton *saveSessionTeamButton = nullptr;
 		QTableWidget *sessionsTable = nullptr;
 		QLabel *sessionTitleLabel = nullptr;

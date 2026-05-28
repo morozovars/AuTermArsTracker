@@ -22,6 +22,7 @@
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QProgressBar>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QResizeEvent>
@@ -45,6 +46,7 @@
 #include "ars_tracker/ars_session_duration_scanner.h"
 #include "ars_tracker/ars_session_info_json.h"
 #include "ars_tracker/ars_session_assignment_dialog.h"
+#include "ars_tracker/ars_report_session_data_builder.h"
 #include "../../src/ars_tracker_reports/ars_reporter/src/SessionDataWriter.h"
 #include "../../src/ars_tracker_reports/ars_reporter/src/DocxReportGenerator.h"
 
@@ -220,6 +222,8 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		rescanButton->setObjectName("button_session_rescan");
 		processButton = new QPushButton("Process", detailsPage);
 		generatePdfButton = new QPushButton("Generate pdf", detailsPage);
+		openReportButton = new QPushButton("Open report", detailsPage);
+		openReportButton->setEnabled(false);
 		generatePdfButton->setObjectName("ars_tracker_generate_pdf_button");
 		generatePdfButton->setToolTip("Generate PDF report for this session");
 		sessionTitleLabel = new QLabel(detailsPage);
@@ -227,6 +231,7 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		header->addWidget(rescanButton);
 		header->addWidget(processButton);
 		header->addWidget(generatePdfButton);
+		header->addWidget(openReportButton);
 		header->addWidget(sessionTitleLabel, 1);
 		layout->addLayout(header, 0, 0, 1, 1);
 
@@ -342,6 +347,7 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		connect(rescanButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onRescanSessionClicked);
 		connect(processButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onProcessSessionClicked);
 		connect(generatePdfButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onGeneratePdfClicked);
+		connect(openReportButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onOpenReportClicked);
 		connect(saveSessionTeamButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onSaveSessionTeamClicked);
 		connect(sessionTeamCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
 				if (saveSessionTeamButton == nullptr || sessionTeamCombo == nullptr)
@@ -1253,6 +1259,7 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 		rebuildCurrentPairRows();
 		fillSessionAssignmentsTable();
 		refreshSessionDetailsTeamUi();
+		updateOpenReportButtonState();
 		detailsStatusLabel->setText("Ready to process");
 		pagesStack->setCurrentWidget(detailsPage);
 
@@ -1532,7 +1539,8 @@ void ArsTrackerSessionsTab::onGeneratePdfClicked()
 				return;
 		}
 
-		const QString reportsDir = QDir(sessionPath).filePath("reports");
+		const QString outputPdfPath = reportPdfPathForSession(sessionPath);
+		const QString reportsDir = QFileInfo(outputPdfPath).absolutePath();
 		if (!QDir().mkpath(reportsDir))
 		{
 				QMessageBox::critical(this, "Generate PDF", QString("Failed to create reports folder:\n%1").arg(reportsDir));
@@ -1540,7 +1548,6 @@ void ArsTrackerSessionsTab::onGeneratePdfClicked()
 				return;
 		}
 
-		const QString outputPdfPath = QDir(reportsDir).filePath(QString("%1_report.pdf").arg(currentSessionId));
 		qDebug() << "Ars report generate output=" << outputPdfPath;
 		if (QFileInfo::exists(outputPdfPath))
 		{
@@ -1560,7 +1567,33 @@ void ArsTrackerSessionsTab::onGeneratePdfClicked()
 		if (generatePdfButton != nullptr) generatePdfButton->setEnabled(false);
 		QApplication::setOverrideCursor(Qt::BusyCursor);
 		if (detailsStatusLabel != nullptr) detailsStatusLabel->setText("Generating PDF...");
-		const QString sessionDataPath = QDir(sessionPath).filePath("postprocessed/SessionData.json");
+		QProgressDialog progressDialog("Generating PDF report...", QString(), 0, 0, this);
+		progressDialog.setWindowModality(Qt::ApplicationModal);
+		progressDialog.setCancelButton(nullptr);
+		progressDialog.setMinimumDuration(0);
+		progressDialog.setWindowTitle("Generate PDF");
+		progressDialog.show();
+		QApplication::processEvents();
+		const ArsReportSessionDataBuildResult buildResult = buildArsReportSessionDataJson(sessionPath);
+		if (!buildResult.ok)
+		{
+				progressDialog.close();
+				QApplication::restoreOverrideCursor();
+				if (generatePdfButton != nullptr) generatePdfButton->setEnabled(true);
+				if (detailsStatusLabel != nullptr) detailsStatusLabel->setText("PDF generation failed");
+				QMessageBox::critical(this, "Generate PDF", buildResult.error);
+				return;
+		}
+		const QString sessionDataPath = buildResult.sessionDataPath;
+		qDebug() << "Ars report generate builder"
+						 << "sessionPath=" << sessionPath
+						 << "sessionInfoPath=" << QDir(sessionPath).filePath("SessionInfo.json")
+						 << "sessionDataPath=" << sessionDataPath
+						 << "warningsCount=" << buildResult.warnings.size();
+		for (const QString &warning : buildResult.warnings)
+		{
+				qWarning().noquote() << "Ars report builder warning:" << warning;
+		}
 		qDebug() << "Ars report generate input sessionData=" << sessionDataPath;
 
 		QString errorMessage;
@@ -1573,7 +1606,10 @@ void ArsTrackerSessionsTab::onGeneratePdfClicked()
 				else
 				{
 						const SessionData data = readSessionData(sessionDataPath);
-						generatePdfReport(outputPdfPath, data, sessionPath);
+						QDir workspaceDir(sessionPath);
+						if (workspaceDir.cdUp()) workspaceDir.cdUp();
+						const QString assetRoot = workspaceDir.absolutePath();
+						generatePdfReport(outputPdfPath, data, assetRoot);
 						QFileInfo outInfo(outputPdfPath);
 						if (!outInfo.exists() || outInfo.size() <= 0)
 						{
@@ -1590,6 +1626,7 @@ void ArsTrackerSessionsTab::onGeneratePdfClicked()
 				errorMessage = "Unknown error during PDF generation.";
 		}
 
+		progressDialog.close();
 		QApplication::restoreOverrideCursor();
 		if (generatePdfButton != nullptr) generatePdfButton->setEnabled(true);
 
@@ -1601,7 +1638,62 @@ void ArsTrackerSessionsTab::onGeneratePdfClicked()
 		}
 
 		if (detailsStatusLabel != nullptr) detailsStatusLabel->setText(QString("PDF generated: %1").arg(outputPdfPath));
-		QMessageBox::information(this, "Generate PDF", QString("PDF report generated:\n%1").arg(outputPdfPath));
+		updateOpenReportButtonState();
+		QMessageBox successBox(this);
+		successBox.setIcon(QMessageBox::Information);
+		successBox.setWindowTitle("Generate PDF");
+		successBox.setText(QString("PDF report generated successfully:\n%1").arg(outputPdfPath));
+		QPushButton *openButton = successBox.addButton("Open", QMessageBox::AcceptRole);
+		successBox.addButton("Close", QMessageBox::RejectRole);
+		successBox.exec();
+		if (successBox.clickedButton() == openButton)
+		{
+				if (!QDesktopServices::openUrl(QUrl::fromLocalFile(outputPdfPath)))
+				{
+						QMessageBox::warning(this, "Generate PDF", "Could not open PDF file.");
+				}
+		}
+}
+
+QString ArsTrackerSessionsTab::reportPdfPathForSession(const QString &sessionPath) const
+{
+		return QDir(QDir(sessionPath).filePath("reports")).filePath(QString("%1_report.pdf").arg(QFileInfo(sessionPath).fileName()));
+}
+
+void ArsTrackerSessionsTab::updateOpenReportButtonState()
+{
+		if (openReportButton == nullptr)
+		{
+				return;
+		}
+		if (currentSessionId.trimmed().isEmpty())
+		{
+				openReportButton->setEnabled(false);
+				return;
+		}
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
+		const QString reportPath = reportPdfPathForSession(sessionPath);
+		openReportButton->setEnabled(QFileInfo(reportPath).isFile());
+}
+
+void ArsTrackerSessionsTab::onOpenReportClicked()
+{
+		if (currentSessionId.trimmed().isEmpty())
+		{
+				return;
+		}
+		const QString sessionPath = QDir(sessionsPath()).filePath(currentSessionId);
+		const QString reportPath = reportPdfPathForSession(sessionPath);
+		if (!QFileInfo(reportPath).isFile())
+		{
+				updateOpenReportButtonState();
+				QMessageBox::warning(this, "Open report", "PDF report file was not found.");
+				return;
+		}
+		if (!QDesktopServices::openUrl(QUrl::fromLocalFile(reportPath)))
+		{
+				QMessageBox::warning(this, "Open report", "Could not open PDF report.");
+		}
 }
 
 void ArsTrackerSessionsTab::onRescanSessionClicked()
@@ -1963,6 +2055,22 @@ void ArsTrackerSessionsTab::processNextSessionPair()
 		const bool hasRight = pair.right.has_value();
 		const int leftMalformed = hasLeft ? pair.left->data.malformedLines : 0;
 		const int rightMalformed = hasRight ? pair.right->data.malformedLines : 0;
+		const int leftIntegralRaw = hasLeft ? static_cast<int>(pair.left->data.integralStates.size()) : 0;
+		const int rightIntegralRaw = hasRight ? static_cast<int>(pair.right->data.integralStates.size()) : 0;
+		const int leftSplashRaw = hasLeft ? static_cast<int>(pair.left->data.splashRecords.size()) : 0;
+		const int rightSplashRaw = hasRight ? static_cast<int>(pair.right->data.splashRecords.size()) : 0;
+		qDebug().noquote()
+				<< QString("ArsPostProcessSplash pair=%1 files leftPath=%2 rightPath=%3")
+							 .arg(pairInput.pairSerial, pairInput.leftProcessedStrPath, pairInput.rightProcessedStrPath);
+		qDebug().noquote()
+				<< QString("ArsPostProcessSplash pair=%1 parsed leftIntegralRaw=%2 rightIntegralRaw=%3 leftSplashRaw=%4 rightSplashRaw=%5 leftMalformed=%6 rightMalformed=%7")
+							 .arg(pairInput.pairSerial)
+							 .arg(leftIntegralRaw)
+							 .arg(rightIntegralRaw)
+							 .arg(leftSplashRaw)
+							 .arg(rightSplashRaw)
+							 .arg(leftMalformed)
+							 .arg(rightMalformed);
 
 		if (hasLeft && !pair.left->data.integralStates.empty())
 		{

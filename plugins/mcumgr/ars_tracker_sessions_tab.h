@@ -89,6 +89,7 @@ private slots:
 		void onDeleteSessionClicked();
 		void onSessionAssignmentClicked();
 		void onGeneratePdfClicked();
+		void onOpenReportClicked();
 
 private:
 		void resizeEvent(QResizeEvent *event) override;
@@ -155,6 +156,8 @@ private:
 		LocalSessionInfo *findSessionById(const QString &sessionId);
 		const LocalSessionInfo *findSessionById(const QString &sessionId) const;
 		bool saveSessionTeamId(const QString &sessionPath, int teamId, QString *errorMessage) const;
+		QString reportPdfPathForSession(const QString &sessionPath) const;
+		void updateOpenReportButtonState();
 
 		QStackedWidget *pagesStack = nullptr;
 		QWidget *listPage = nullptr;
@@ -166,6 +169,7 @@ private:
 		QPushButton *rescanButton = nullptr;
 		QPushButton *processButton = nullptr;
 		QPushButton *generatePdfButton = nullptr;
+		QPushButton *openReportButton = nullptr;
 		QPushButton *saveSessionTeamButton = nullptr;
 		QTableWidget *sessionsTable = nullptr;
 		QLabel *sessionTitleLabel = nullptr;

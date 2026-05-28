@@ -29,6 +29,7 @@ SOURCES += \
     ars_tracker/ars_session_info_json.cpp \
     ars_tracker/ars_session_assignment_dialog.cpp \
     ars_tracker/ars_session_processing_loader.cpp \
+    ars_tracker/ars_report_session_data_builder.cpp \
     ars_tracker/ars_tracker_assign_pair_dialog.cpp \
     ars_tracker/ars_team_edit_dialog.cpp \
     ars_tracker/ars_tracker_player_edit_dialog.cpp \
@@ -78,6 +79,7 @@ HEADERS += \
     ars_tracker/ars_session_info_json.h \
     ars_tracker/ars_session_assignment_dialog.h \
     ars_tracker/ars_session_processing_loader.h \
+    ars_tracker/ars_report_session_data_builder.h \
     ars_tracker/ars_tracker_assign_pair_dialog.h \
     ars_tracker/ars_team_edit_dialog.h \
     ars_tracker/ars_tracker_player_edit_dialog.h \

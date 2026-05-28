@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <limits>
 
 #include "sources/soccer_insole/PostProcessing.h"
 
@@ -39,14 +40,14 @@ std::vector<IntegralState> filter_integral_by_timestamp(const std::vector<Integr
 }
 
 std::vector<SplashData> filter_splash_by_timestamp(const std::vector<SplashData> &input,
-                                                   uint32_t start100ms,
-                                                   uint32_t finish100ms)
+                                                   uint32_t startMs,
+                                                   uint32_t finishMs)
 {
     std::vector<SplashData> out;
     out.reserve(input.size());
     for (const SplashData &state : input)
     {
-        if (state.timestamp >= start100ms && state.timestamp < finish100ms)
+        if (state.timestamp >= startMs && state.timestamp < finishMs)
         {
             out.push_back(state);
         }
@@ -110,6 +111,24 @@ QJsonObject summary_to_json(const PostProcessingSummary &summary)
     o["moreThanThreeTouchDribbles"] = summary.moreThanThreeTouchDribbles;
     return o;
 }
+
+template <typename T, typename F>
+QString range_to_text(const std::vector<T> &items, F valueFn)
+{
+    if (items.empty())
+    {
+        return "empty";
+    }
+    uint64_t minValue = std::numeric_limits<uint64_t>::max();
+    uint64_t maxValue = 0;
+    for (const T &item : items)
+    {
+        const uint64_t value = static_cast<uint64_t>(valueFn(item));
+        minValue = std::min(minValue, value);
+        maxValue = std::max(maxValue, value);
+    }
+    return QString("[%1..%2]").arg(minValue).arg(maxValue);
+}
 }
 
 ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPostprocessRequest &request,
@@ -127,14 +146,34 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
     const ArsProcessedStrData &leftData = pairData.left->data;
     const ArsProcessedStrData &rightData = pairData.right->data;
 
+    // Time unit contract in Process path:
+    // - planned window in request is kept in timestamp100ms (session-relative),
+    // - integralState.timestamp is timestamp100ms,
+    // - splash.timestamp/tPeak is milliseconds (session-relative), same as ALGA splash logic expects.
+    // Therefore splash filtering must use ms window derived from 100ms request bounds.
+    const uint32_t splashWindowStartMs = request.timeRange.startTimestamp100ms * 100u;
+    const uint32_t splashWindowFinishMs = request.timeRange.finishTimestamp100ms * 100u;
+
     const std::vector<IntegralState> leftFiltered =
         filter_integral_by_timestamp(leftData.integralStates, request.timeRange.startTimestamp100ms, request.timeRange.finishTimestamp100ms);
     const std::vector<IntegralState> rightFiltered =
         filter_integral_by_timestamp(rightData.integralStates, request.timeRange.startTimestamp100ms, request.timeRange.finishTimestamp100ms);
     const std::vector<SplashData> leftSplashFiltered =
-        filter_splash_by_timestamp(leftData.splashRecords, request.timeRange.startTimestamp100ms, request.timeRange.finishTimestamp100ms);
+        filter_splash_by_timestamp(leftData.splashRecords, splashWindowStartMs, splashWindowFinishMs);
     const std::vector<SplashData> rightSplashFiltered =
-        filter_splash_by_timestamp(rightData.splashRecords, request.timeRange.startTimestamp100ms, request.timeRange.finishTimestamp100ms);
+        filter_splash_by_timestamp(rightData.splashRecords, splashWindowStartMs, splashWindowFinishMs);
+
+    qDebug().noquote()
+        << QString("ArsPostProcessSplash pair=%1 window100ms=[%2,%3) windowMs=[%4,%5) leftIntegralRange100ms=%6 rightIntegralRange100ms=%7 leftSplashRangeMs=%8 rightSplashRangeMs=%9")
+               .arg(pairData.pairSerial)
+               .arg(request.timeRange.startTimestamp100ms)
+               .arg(request.timeRange.finishTimestamp100ms)
+               .arg(splashWindowStartMs)
+               .arg(splashWindowFinishMs)
+               .arg(range_to_text(leftData.integralStates, [](const IntegralState &s) { return s.timestamp; }))
+               .arg(range_to_text(rightData.integralStates, [](const IntegralState &s) { return s.timestamp; }))
+               .arg(range_to_text(leftData.splashRecords, [](const SplashData &s) { return s.timestamp; }))
+               .arg(range_to_text(rightData.splashRecords, [](const SplashData &s) { return s.timestamp; }));
 
     qDebug() << "Sessions tab postprocessing pair filtered"
              << "serial=" << pairData.pairSerial
@@ -154,6 +193,14 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
     std::vector<IntegralState> rightIntegralRun = rightFiltered;
     std::vector<SplashData> leftSplashRun = leftSplashFiltered;
     std::vector<SplashData> rightSplashRun = rightSplashFiltered;
+
+    qDebug().noquote()
+        << QString("ArsPostProcessSplash pair=%1 passedToPostProcessing leftIntegral=%2 rightIntegral=%3 leftSplash=%4 rightSplash=%5")
+               .arg(pairData.pairSerial)
+               .arg(leftIntegralRun.size())
+               .arg(rightIntegralRun.size())
+               .arg(leftSplashRun.size())
+               .arg(rightSplashRun.size());
 
     PostProcessing pp;
     try
@@ -179,6 +226,30 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
 
     const PostProcessingSummary summary = pp.buildSummary();
     const std::vector<TouchIntensityPoint> touchIntensity = pp.buildTouchIntensityPerMinute();
+
+    qDebug().noquote()
+        << QString("ArsPostProcessSplash pair=%1 result touchesL=%2 touchesR=%3 touchesT=%4 kicksL=%5 kicksR=%6 kicksT=%7 light=%8 medium=%9 strong=%10 maxKickG=%11 possessions=%12 highSpeedDribbles=%13 dribblesFinish=%14 dribblesFinishPct=%15 ballDistanceM=%16 ballTimeSec=%17 oneTouch=%18 twoThree=%19 moreThanThree=%20 touchIntensitySamples=%21")
+               .arg(pairData.pairSerial)
+               .arg(summary.touchesLeft)
+               .arg(summary.touchesRight)
+               .arg(summary.touchesTotal)
+               .arg(summary.kicksPassesLeft)
+               .arg(summary.kicksPassesRight)
+               .arg(summary.kicksPassesTotal)
+               .arg(summary.lightKicksCount)
+               .arg(summary.mediumKicksCount)
+               .arg(summary.strongKicksCount)
+               .arg(summary.maxKickForceG, 0, 'f', 3)
+               .arg(summary.possessions)
+               .arg(summary.highSpeedDribblesCount)
+               .arg(summary.dribblesWithFinalKickCount)
+               .arg(summary.dribblesWithFinalKickPercent, 0, 'f', 3)
+               .arg(summary.ballDistanceM, 0, 'f', 3)
+               .arg(summary.ballTimeSec, 0, 'f', 3)
+               .arg(summary.oneTouchPlays)
+               .arg(summary.twoThreeTouchPossessions)
+               .arg(summary.moreThanThreeTouchDribbles)
+               .arg(touchIntensity.size());
 
     QJsonObject root;
     root["pairSerial"] = pairData.pairSerial;

@@ -1,5 +1,6 @@
 #include "ArsTeamRepository.h"
 #include "ArsAppSettings.h"
+#include "ArsTargetsByPosition.h"
 
 #include <QDebug>
 #include <QDir>
@@ -14,34 +15,6 @@
 
 namespace
 {
-QJsonObject planned_metrics_to_json(const ArsPlannedMetrics &m)
-{
-    QJsonObject o;
-    o["accelerationDistanceM"] = m.accelerationDistanceM;
-    o["distanceKm"] = m.distanceKm;
-    o["dribbles"] = m.dribbles;
-    o["footloadPerLeg"] = m.footloadPerLeg;
-    o["loadIntensityGPerMin"] = m.loadIntensityGPerMin;
-    o["maxSpeedMps"] = m.maxSpeedMps;
-    o["shots"] = m.shots;
-    o["touches"] = m.touches;
-    return o;
-}
-
-ArsPlannedMetrics planned_metrics_from_json(const QJsonObject &o)
-{
-    ArsPlannedMetrics m;
-    m.accelerationDistanceM = o.value("accelerationDistanceM").toInt(0);
-    m.distanceKm = o.value("distanceKm").toDouble(0.0);
-    m.dribbles = o.value("dribbles").toInt(0);
-    m.footloadPerLeg = o.value("footloadPerLeg").toInt(0);
-    m.loadIntensityGPerMin = o.value("loadIntensityGPerMin").toDouble(0.0);
-    m.maxSpeedMps = o.value("maxSpeedMps").toDouble(0.0);
-    m.shots = o.value("shots").toInt(0);
-    m.touches = o.value("touches").toInt(0);
-    return m;
-}
-
 QStringList coaches_from_json(const QJsonValue &v)
 {
     QStringList out;
@@ -160,7 +133,12 @@ QList<ArsTeam> ArsTeamRepository::loadTeams(QStringList *warnings) const
         t.ageCategory = o.value("age_category").toString();
         t.defaultCoaches = coaches_from_json(o.value("default_coaches"));
         const QJsonObject thresholds = o.value("default_thresholds").toObject();
-        t.defaultPlannedMetrics = planned_metrics_from_json(thresholds.value("plannedMetrics").toObject());
+        t.defaultPlannedMetrics = arsPlannedMetricsFromJson(thresholds.value("plannedMetrics").toObject());
+        t.targetsByPosition = arsTargetsByPositionFromJson(o.value("targetsByPosition").toObject());
+        if (t.targetsByPosition.isEmpty())
+        {
+            t.targetsByPosition = arsTargetsByPositionFromLegacy(t.defaultPlannedMetrics);
+        }
         const QJsonObject logo = o.value("team_logo").toObject();
         t.teamLogoPath = logo.value("path").toString();
         if (t.teamLogoPath.trimmed().isEmpty())
@@ -241,8 +219,9 @@ bool ArsTeamRepository::saveTeam(const ArsTeam &team, QString *errorMessage) con
     o["default_coaches"] = coaches;
 
     QJsonObject thresholds;
-    thresholds["plannedMetrics"] = planned_metrics_to_json(team.defaultPlannedMetrics);
+    thresholds["plannedMetrics"] = arsPlannedMetricsToJson(team.defaultPlannedMetrics);
     o["default_thresholds"] = thresholds;
+    o["targetsByPosition"] = arsTargetsByPositionToJson(team.targetsByPosition);
 
     QJsonObject logo;
     logo["path"] = team.teamLogoPath;

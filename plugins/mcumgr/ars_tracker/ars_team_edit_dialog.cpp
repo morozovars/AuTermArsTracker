@@ -4,7 +4,6 @@
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -12,7 +11,6 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
-#include <QDoubleSpinBox>
 #include <QVBoxLayout>
 #include <QDebug>
 
@@ -38,7 +36,7 @@ ArsTeamEditDialog::ArsTeamEditDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle("Team");
-    resize(680, 620);
+    resize(680, 420);
 
     QVBoxLayout *root = new QVBoxLayout(this);
     QFormLayout *main = new QFormLayout();
@@ -71,37 +69,6 @@ ArsTeamEditDialog::ArsTeamEditDialog(QWidget *parent)
     main->addRow("team_logo.path", logoRow);
     root->addLayout(main);
 
-    QGroupBox *thresholdsBox = new QGroupBox("Default thresholds", this);
-    QFormLayout *thresholds = new QFormLayout(thresholdsBox);
-    m_accelerationDistanceM = new QSpinBox(thresholdsBox);
-    m_accelerationDistanceM->setRange(0, 1000000);
-    thresholds->addRow("accelerationDistanceM", m_accelerationDistanceM);
-    m_distanceKm = new QDoubleSpinBox(thresholdsBox);
-    m_distanceKm->setRange(0.0, 100000.0);
-    m_distanceKm->setDecimals(3);
-    thresholds->addRow("distanceKm", m_distanceKm);
-    m_dribbles = new QSpinBox(thresholdsBox);
-    m_dribbles->setRange(0, 1000000);
-    thresholds->addRow("dribbles", m_dribbles);
-    m_footloadPerLeg = new QSpinBox(thresholdsBox);
-    m_footloadPerLeg->setRange(0, 1000000);
-    thresholds->addRow("footloadPerLeg", m_footloadPerLeg);
-    m_loadIntensity = new QDoubleSpinBox(thresholdsBox);
-    m_loadIntensity->setRange(0.0, 100000.0);
-    m_loadIntensity->setDecimals(3);
-    thresholds->addRow("loadIntensityGPerMin", m_loadIntensity);
-    m_maxSpeed = new QDoubleSpinBox(thresholdsBox);
-    m_maxSpeed->setRange(0.0, 1000.0);
-    m_maxSpeed->setDecimals(3);
-    thresholds->addRow("maxSpeedMps", m_maxSpeed);
-    m_shots = new QSpinBox(thresholdsBox);
-    m_shots->setRange(0, 1000000);
-    thresholds->addRow("shots", m_shots);
-    m_touches = new QSpinBox(thresholdsBox);
-    m_touches->setRange(0, 1000000);
-    thresholds->addRow("touches", m_touches);
-    root->addWidget(thresholdsBox);
-
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
     root->addWidget(buttons);
 
@@ -119,6 +86,7 @@ void ArsTeamEditDialog::setCreateMode()
     m_selectedLogoSourcePath.clear();
     m_logoSelectionChanged = false;
     m_logoPath->clear();
+    m_existingDefaultPlannedMetrics = ArsPlannedMetrics{};
     m_teamIdLabel->setText("will be assigned automatically");
     setWindowTitle("Create Team");
 }
@@ -133,16 +101,9 @@ void ArsTeamEditDialog::setEditMode(const ArsTeam &team)
     m_ageCategory->setText(team.ageCategory);
     m_coaches->setPlainText(team.defaultCoaches.join('\n'));
     m_logoPath->setText(team.teamLogoPath);
+    m_existingDefaultPlannedMetrics = team.defaultPlannedMetrics;
     m_selectedLogoSourcePath.clear();
     m_logoSelectionChanged = false;
-    m_accelerationDistanceM->setValue(team.defaultPlannedMetrics.accelerationDistanceM);
-    m_distanceKm->setValue(team.defaultPlannedMetrics.distanceKm);
-    m_dribbles->setValue(team.defaultPlannedMetrics.dribbles);
-    m_footloadPerLeg->setValue(team.defaultPlannedMetrics.footloadPerLeg);
-    m_loadIntensity->setValue(team.defaultPlannedMetrics.loadIntensityGPerMin);
-    m_maxSpeed->setValue(team.defaultPlannedMetrics.maxSpeedMps);
-    m_shots->setValue(team.defaultPlannedMetrics.shots);
-    m_touches->setValue(team.defaultPlannedMetrics.touches);
     setWindowTitle("Edit Team");
 }
 
@@ -155,14 +116,7 @@ ArsTeam ArsTeamEditDialog::teamFromUi() const
     team.ageCategory = m_ageCategory->text().trimmed();
     team.defaultCoaches = coaches_from_text(m_coaches->toPlainText());
     team.teamLogoPath = m_logoPath->text().trimmed();
-    team.defaultPlannedMetrics.accelerationDistanceM = m_accelerationDistanceM->value();
-    team.defaultPlannedMetrics.distanceKm = m_distanceKm->value();
-    team.defaultPlannedMetrics.dribbles = m_dribbles->value();
-    team.defaultPlannedMetrics.footloadPerLeg = m_footloadPerLeg->value();
-    team.defaultPlannedMetrics.loadIntensityGPerMin = m_loadIntensity->value();
-    team.defaultPlannedMetrics.maxSpeedMps = m_maxSpeed->value();
-    team.defaultPlannedMetrics.shots = m_shots->value();
-    team.defaultPlannedMetrics.touches = m_touches->value();
+    team.defaultPlannedMetrics = m_existingDefaultPlannedMetrics;
     return team;
 }
 

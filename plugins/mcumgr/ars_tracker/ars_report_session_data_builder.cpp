@@ -16,6 +16,7 @@
 #include "ars/workspace/ArsLocalWorkspace.h"
 #include "ars/workspace/ArsSessionPlayerBindingResolver.h"
 #include "ars/workspace/ArsTeamRepository.h"
+#include "ars/workspace/ArsTargetsByPosition.h"
 #include "ars/workspace/ArsTrackerBindingRepository.h"
 #include "ars_tracker/ars_session_info_json.h"
 
@@ -249,6 +250,21 @@ QJsonObject buildSessionObject(const QString &sessionPath,
     }
     session["plannedMetrics"] = planned;
 
+    ArsTargetsByPosition sessionOverrides = arsTargetsByPositionFromJson(sessionInfoRoot.value("targetsByPosition").toObject());
+    ArsTargetsByPosition teamDefaults;
+    if (teamForDefaults != nullptr)
+    {
+        teamDefaults = teamForDefaults->targetsByPosition;
+    }
+    const ArsPlannedMetrics legacyFallback = arsPlannedMetricsFromJson(planned);
+    QJsonObject effectiveTargets;
+    for (const QString &key : arsTargetPositionKeys())
+    {
+        const ArsPlannedMetrics m = arsResolveEffectiveTargets(sessionOverrides, teamDefaults, key, legacyFallback);
+        effectiveTargets.insert(key, arsPlannedMetricsToJson(m));
+    }
+    session["targetsByPosition"] = effectiveTargets;
+
     QJsonObject settings = sessionInfoRoot.value("calculationSettings").toObject();
     if (settings.isEmpty()) settings = defaultCalculationSettings();
     if (!settings.value("shotZonesG").isObject()) settings["shotZonesG"] = defaultCalculationSettings().value("shotZonesG").toObject();
@@ -308,6 +324,7 @@ QJsonObject playerToReporter(const ArsPlayer &player, const QString &fallbackNam
         {"birthDate", player.birthDate.isValid() ? player.birthDate.toString(Qt::ISODate) : QString()},
         {"age", player.birthDate.isValid() ? player.birthDate.daysTo(QDate::currentDate()) / 365 : 0},
         {"position", player.position},
+        {"targetPositionKey", arsNormalizePlayerPositionToTargetKey(player.position)},
         {"dominantFoot", player.dominantFoot},
         {"heightCm", player.heightCm},
         {"weightKg", player.weightKg},
@@ -591,6 +608,9 @@ ArsReportSessionDataBuildResult buildArsReportSessionDataJson(const QString sess
                 playerObj = playerToReporter(fallbackPlayer, fallbackPlayerName.isEmpty() ? QString("Игрок %1").arg(playerId) : fallbackPlayerName);
             }
             playersById.insert(playerId, playerObj);
+            qDebug() << "ArsReport: player=" << playerObj.value("fullName").toString()
+                     << "position=" << playerObj.value("position").toString()
+                     << "targetKey=" << playerObj.value("targetPositionKey").toString();
         }
         else
         {

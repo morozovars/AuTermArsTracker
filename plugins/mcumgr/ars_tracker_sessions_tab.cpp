@@ -288,6 +288,13 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 
 		QGroupBox *targetBox = new QGroupBox("Target", sessionInfoBox);
 		QFormLayout *targetLayout = new QFormLayout(targetBox);
+		comboTargetPosition = new QComboBox(targetBox);
+		comboTargetPosition->setObjectName("combo_target_position");
+		for (const QString &key : arsTargetPositionKeys())
+		{
+				comboTargetPosition->addItem(arsTargetPositionLabel(key), key);
+		}
+		targetLayout->addRow("Target position", comboTargetPosition);
 		spinTargetDistanceKm = new QDoubleSpinBox(targetBox);
 		spinTargetDistanceKm->setObjectName("spin_session_target_distance_km");
 		spinTargetDistanceKm->setDecimals(3);
@@ -364,6 +371,16 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		connect(processButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onProcessSessionClicked);
 		connect(generatePdfButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onGeneratePdfClicked);
 		connect(openReportButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onOpenReportClicked);
+		connect(comboTargetPosition, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ArsTrackerSessionsTab::onTargetPositionChanged);
+		auto onTargetEdited = [this]() { onTargetValueEdited(); };
+		connect(spinTargetDistanceKm, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, onTargetEdited);
+		connect(spinTargetAccelerationDistanceM, QOverload<int>::of(&QSpinBox::valueChanged), this, onTargetEdited);
+		connect(spinTargetFootload10_3g, QOverload<int>::of(&QSpinBox::valueChanged), this, onTargetEdited);
+		connect(spinTargetTouchesCount, QOverload<int>::of(&QSpinBox::valueChanged), this, onTargetEdited);
+		connect(spinTargetFootloadPerMin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, onTargetEdited);
+		connect(spinTargetMaxSpeedMps, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, onTargetEdited);
+		connect(spinTargetShotsCount, QOverload<int>::of(&QSpinBox::valueChanged), this, onTargetEdited);
+		connect(spinTargetPossessions, QOverload<int>::of(&QSpinBox::valueChanged), this, onTargetEdited);
 		connect(saveSessionTeamButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onSaveSessionTeamClicked);
 		connect(sessionTeamCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
 				if (saveSessionTeamButton == nullptr || sessionTeamCombo == nullptr)
@@ -1275,6 +1292,7 @@ void ArsTrackerSessionsTab::showSessionDetailsPage(const QString &sessionId)
 		rebuildCurrentPairRows();
 		fillSessionAssignmentsTable();
 		refreshSessionDetailsTeamUi();
+		refreshTargetsForSelectedPosition();
 		updateOpenReportButtonState();
 		detailsStatusLabel->setText("Ready to process");
 		pagesStack->setCurrentWidget(detailsPage);
@@ -1303,6 +1321,105 @@ ArsSessionTargetSettings ArsTrackerSessionsTab::readTargetSettingsFromUi() const
 		return s;
 }
 
+ArsPlannedMetrics ArsTrackerSessionsTab::targetsFromUi() const
+{
+		ArsPlannedMetrics m;
+		m.distanceKm = spinTargetDistanceKm->value();
+		m.accelerationDistanceM = spinTargetAccelerationDistanceM->value();
+		m.footloadPerLeg = spinTargetFootload10_3g->value();
+		m.touches = spinTargetTouchesCount->value();
+		m.loadIntensityGPerMin = spinTargetFootloadPerMin->value();
+		m.maxSpeedMps = spinTargetMaxSpeedMps->value();
+		m.shots = spinTargetShotsCount->value();
+		m.dribbles = spinTargetPossessions->value();
+		return m;
+}
+
+void ArsTrackerSessionsTab::applyTargetsToUi(const ArsPlannedMetrics &targets)
+{
+		m_targetUiApplying = true;
+		spinTargetDistanceKm->setValue(targets.distanceKm);
+		spinTargetAccelerationDistanceM->setValue(targets.accelerationDistanceM);
+		spinTargetFootload10_3g->setValue(targets.footloadPerLeg);
+		spinTargetTouchesCount->setValue(targets.touches);
+		spinTargetFootloadPerMin->setValue(targets.loadIntensityGPerMin);
+		spinTargetMaxSpeedMps->setValue(targets.maxSpeedMps);
+		spinTargetShotsCount->setValue(targets.shots);
+		spinTargetPossessions->setValue(targets.dribbles);
+		m_targetUiApplying = false;
+		m_targetValuesDirty = false;
+}
+
+ArsPlannedMetrics ArsTrackerSessionsTab::effectiveTargetsForPosition(const QString &positionKey) const
+{
+		ArsPlannedMetrics fallback{};
+		if (!currentSessionId.trimmed().isEmpty())
+		{
+				const LocalSessionInfo *session = findSessionById(currentSessionId);
+				if (session != nullptr)
+				{
+						const int teamId = session->effectiveTeamId > 0 ? session->effectiveTeamId : session->explicitTeamId;
+						if (teamId > 0 && m_teamsById.contains(teamId))
+						{
+								fallback = m_teamsById.value(teamId).defaultPlannedMetrics;
+						}
+				}
+		}
+		QMap<QString, ArsPlannedMetrics> teamTargets;
+		if (!currentSessionId.trimmed().isEmpty())
+		{
+				const LocalSessionInfo *session = findSessionById(currentSessionId);
+				if (session != nullptr)
+				{
+						const int teamId = session->effectiveTeamId > 0 ? session->effectiveTeamId : session->explicitTeamId;
+						if (teamId > 0 && m_teamsById.contains(teamId))
+						{
+								teamTargets = m_teamsById.value(teamId).targetsByPosition;
+						}
+				}
+		}
+		return arsResolveEffectiveTargets(m_sessionTargetOverrides, teamTargets, positionKey, fallback);
+}
+
+void ArsTrackerSessionsTab::persistCurrentTargetPositionEdits()
+{
+		if (!m_targetValuesDirty || m_currentTargetPositionKey.trimmed().isEmpty())
+		{
+				return;
+		}
+		m_sessionTargetOverrides.insert(m_currentTargetPositionKey, targetsFromUi());
+		qDebug() << "ArsSession: saved session target override position=" << m_currentTargetPositionKey;
+		m_targetValuesDirty = false;
+}
+
+void ArsTrackerSessionsTab::onTargetValueEdited()
+{
+		if (m_targetUiApplying)
+		{
+				return;
+		}
+		m_targetValuesDirty = true;
+}
+
+void ArsTrackerSessionsTab::refreshTargetsForSelectedPosition()
+{
+		const ArsPlannedMetrics effective = effectiveTargetsForPosition(m_currentTargetPositionKey);
+		applyTargetsToUi(effective);
+}
+
+void ArsTrackerSessionsTab::onTargetPositionChanged(int index)
+{
+		Q_UNUSED(index);
+		persistCurrentTargetPositionEdits();
+		if (comboTargetPosition != nullptr)
+		{
+				m_currentTargetPositionKey = comboTargetPosition->currentData().toString().trimmed();
+				if (m_currentTargetPositionKey.isEmpty()) m_currentTargetPositionKey = "midfielder";
+		}
+		qDebug() << "ArsSession: selected target position" << m_currentTargetPositionKey;
+		refreshTargetsForSelectedPosition();
+}
+
 ArsSessionInfo ArsTrackerSessionsTab::readSessionInfoFromUi() const
 {
 		ArsSessionInfo info;
@@ -1327,6 +1444,8 @@ ArsSessionInfo ArsTrackerSessionsTab::readSessionInfoFromUi() const
 		info.plannedMetrics.maxSpeedMps = t.targetMaxSpeedMps;
 		info.plannedMetrics.shots = t.targetShotsCount;
 		info.plannedMetrics.dribbles = t.targetPossessions;
+		const_cast<ArsTrackerSessionsTab*>(this)->persistCurrentTargetPositionEdits();
+		info.targetsByPosition = m_sessionTargetOverrides;
 		return info;
 }
 
@@ -1358,6 +1477,14 @@ void ArsTrackerSessionsTab::resetSessionInformationFieldsToDefaults()
 		spinTargetMaxSpeedMps->setValue(0.0);
 		spinTargetShotsCount->setValue(0);
 		spinTargetPossessions->setValue(0);
+		m_sessionTargetOverrides.clear();
+		m_currentTargetPositionKey = "midfielder";
+		if (comboTargetPosition != nullptr)
+		{
+				const int idx = comboTargetPosition->findData(m_currentTargetPositionKey);
+				if (idx >= 0) comboTargetPosition->setCurrentIndex(idx);
+		}
+		m_targetValuesDirty = false;
 }
 
 void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
@@ -1386,14 +1513,39 @@ void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
 		editSessionLocation->setText(info.parameters.location);
 		editSessionGoals->setPlainText(info.parameters.goals.join("\n"));
 
-		spinTargetDistanceKm->setValue(info.plannedMetrics.distanceKm);
-		spinTargetAccelerationDistanceM->setValue(info.plannedMetrics.accelerationDistanceM);
-		spinTargetFootload10_3g->setValue(info.plannedMetrics.footloadPerLeg);
-		spinTargetTouchesCount->setValue(info.plannedMetrics.touches);
-		spinTargetFootloadPerMin->setValue(info.plannedMetrics.loadIntensityGPerMin);
-		spinTargetMaxSpeedMps->setValue(info.plannedMetrics.maxSpeedMps);
-		spinTargetShotsCount->setValue(info.plannedMetrics.shots);
-		spinTargetPossessions->setValue(info.plannedMetrics.dribbles);
+		m_sessionTargetOverrides.clear();
+		for (auto it = info.targetsByPosition.cbegin(); it != info.targetsByPosition.cend(); ++it)
+		{
+				ArsPlannedMetrics m;
+				m.distanceKm = it.value().distanceKm;
+				m.accelerationDistanceM = it.value().accelerationDistanceM;
+				m.footloadPerLeg = it.value().footloadPerLeg;
+				m.touches = it.value().touches;
+				m.loadIntensityGPerMin = it.value().loadIntensityGPerMin;
+				m.maxSpeedMps = it.value().maxSpeedMps;
+				m.shots = it.value().shots;
+				m.dribbles = it.value().dribbles;
+				m_sessionTargetOverrides.insert(it.key(), m);
+		}
+		if (m_sessionTargetOverrides.isEmpty())
+		{
+				ArsPlannedMetrics legacy;
+				legacy.distanceKm = info.plannedMetrics.distanceKm;
+				legacy.accelerationDistanceM = info.plannedMetrics.accelerationDistanceM;
+				legacy.footloadPerLeg = info.plannedMetrics.footloadPerLeg;
+				legacy.touches = info.plannedMetrics.touches;
+				legacy.loadIntensityGPerMin = info.plannedMetrics.loadIntensityGPerMin;
+				legacy.maxSpeedMps = info.plannedMetrics.maxSpeedMps;
+				legacy.shots = info.plannedMetrics.shots;
+				legacy.dribbles = info.plannedMetrics.dribbles;
+				m_sessionTargetOverrides = arsTargetsByPositionFromLegacy(legacy);
+		}
+		if (comboTargetPosition != nullptr)
+		{
+				const int idx = comboTargetPosition->findData(m_currentTargetPositionKey);
+				if (idx >= 0) comboTargetPosition->setCurrentIndex(idx);
+		}
+		refreshTargetsForSelectedPosition();
 }
 
 bool ArsTrackerSessionsTab::loadSessionInfoJsonIntoUi(const QString &sessionPath,

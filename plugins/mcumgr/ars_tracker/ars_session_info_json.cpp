@@ -8,6 +8,8 @@
 #include <QJsonObject>
 #include <QDebug>
 
+#include "ars/workspace/ArsTargetsByPosition.h"
+
 namespace
 {
 QTime parse_time_value(const QJsonValue &value, bool *ok = nullptr)
@@ -137,6 +139,7 @@ bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
 		}
 
 		root["plannedMetrics"] = planned;
+		root["targetsByPosition"] = arsTargetsByPositionToJson(info.targetsByPosition);
 		root["startTime"] = info.parameters.startTime.toString("HH:mm:ss");
 		root["endTime"] = info.parameters.endTime.toString("HH:mm:ss");
 		// TODO: rename root startTime/endTime to plannedStartTime/plannedEndTime in a future schema migration.
@@ -283,6 +286,33 @@ bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
 		info.plannedMetrics.touches = planned.value("touches").toInt(0);
 		info.plannedMetrics.shots = planned.value("shots").toInt(0);
 		info.plannedMetrics.dribbles = planned.value("dribbles").toInt(0);
+		info.targetsByPosition = arsTargetsByPositionFromJson(root.value("targetsByPosition").toObject());
+		if (info.targetsByPosition.isEmpty())
+		{
+				ArsPlannedMetrics legacy;
+				legacy.accelerationDistanceM = info.plannedMetrics.accelerationDistanceM;
+				legacy.distanceKm = info.plannedMetrics.distanceKm;
+				legacy.dribbles = info.plannedMetrics.dribbles;
+				legacy.footloadPerLeg = info.plannedMetrics.footloadPerLeg;
+				legacy.loadIntensityGPerMin = info.plannedMetrics.loadIntensityGPerMin;
+				legacy.maxSpeedMps = info.plannedMetrics.maxSpeedMps;
+				legacy.shots = info.plannedMetrics.shots;
+				legacy.touches = info.plannedMetrics.touches;
+				const ArsTargetsByPosition fallback = arsTargetsByPositionFromLegacy(legacy);
+				for (auto it = fallback.cbegin(); it != fallback.cend(); ++it)
+				{
+						ArsSessionPlannedMetrics m;
+						m.accelerationDistanceM = it.value().accelerationDistanceM;
+						m.distanceKm = it.value().distanceKm;
+						m.dribbles = it.value().dribbles;
+						m.footloadPerLeg = it.value().footloadPerLeg;
+						m.loadIntensityGPerMin = it.value().loadIntensityGPerMin;
+						m.maxSpeedMps = it.value().maxSpeedMps;
+						m.shots = it.value().shots;
+						m.touches = it.value().touches;
+						info.targetsByPosition.insert(it.key(), m);
+				}
+		}
 
 		const QJsonObject actual = root.value("actualTime").toObject();
 		const QString actualStart = actual.value("startTime").toString().trimmed();

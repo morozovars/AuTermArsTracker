@@ -8,6 +8,7 @@
 class QLabel;
 class QPushButton;
 class QTableWidget;
+class QGroupBox;
 
 class ArsTrackerTeamTab : public QWidget
 {
@@ -24,12 +25,15 @@ private slots:
     void onEditTeam();
     void onDeleteTeam();
     void onSetDefaultTeam();
+    void onEditTargets();
 
 private:
     QString workspacePath() const;
     void buildUi();
     void updateDefaultTeamLabel();
     void rebuildTeamsTable();
+    void rebuildDefaultTeamDetails();
+    void rebuildDefaultTeamTargetsTable(const ArsTeam *team);
     QString coachesDisplay(const ArsTeam &team) const;
     bool saveTeamWithLog(const ArsTeam &team);
     bool saveTeamWithLogoSelection(const ArsTeam &team,
@@ -41,6 +45,13 @@ private:
     bool hasDuplicateTeamNum(int teamNum, int excludeTeamId) const;
 
     QLabel *m_defaultLabel = nullptr;
+    QLabel *m_defaultTeamLogo = nullptr;
+    QLabel *m_defaultTeamName = nullptr;
+    QLabel *m_defaultTeamAge = nullptr;
+    QLabel *m_defaultTeamCoaches = nullptr;
+    QPushButton *m_editTargetsButton = nullptr;
+    QTableWidget *m_defaultTargetsTable = nullptr;
+    QGroupBox *m_defaultTeamBox = nullptr;
     QPushButton *m_reloadButton = nullptr;
     QPushButton *m_createButton = nullptr;
     QTableWidget *m_table = nullptr;

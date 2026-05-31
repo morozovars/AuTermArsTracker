@@ -32,6 +32,7 @@ SOURCES += \
     ars_tracker/ars_report_session_data_builder.cpp \
     ars_tracker/ars_tracker_assign_pair_dialog.cpp \
     ars_tracker/ars_team_edit_dialog.cpp \
+    ars_tracker/ars_team_targets_dialog.cpp \
     ars_tracker/ars_tracker_player_edit_dialog.cpp \
     ars_tracker/ars_tracker_players_tab.cpp \
     ars_tracker/ars_tracker_team_tab.cpp \
@@ -64,6 +65,7 @@ SOURCES += \
     ../../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../../src/ars/workspace/ArsPlayerRepository.cpp \
     ../../src/ars/workspace/ArsAppSettings.cpp \
+    ../../src/ars/workspace/ArsTargetsByPosition.cpp \
     ../../src/ars/workspace/ArsSessionPlayerBindingResolver.cpp \
     ../../src/ars/workspace/ArsSessionRepository.cpp \
     ../../src/ars/workspace/ArsTeamRepository.cpp \
@@ -82,6 +84,7 @@ HEADERS += \
     ars_tracker/ars_report_session_data_builder.h \
     ars_tracker/ars_tracker_assign_pair_dialog.h \
     ars_tracker/ars_team_edit_dialog.h \
+    ars_tracker/ars_team_targets_dialog.h \
     ars_tracker/ars_tracker_player_edit_dialog.h \
     ars_tracker/ars_tracker_players_tab.h \
     ars_tracker/ars_tracker_team_tab.h \
@@ -116,6 +119,7 @@ HEADERS += \
     smp_group.h \
     smp_group_img_mgmt.h \
     ../../src/ars/workspace/ArsAppSettings.h \
+    ../../src/ars/workspace/ArsTargetsByPosition.h \
     ../../src/ars/workspace/ArsPlayer.h \
     ../../src/ars/workspace/ArsPlayerRepository.h \
     ../../src/ars/workspace/ArsSessionPlayerBindingResolver.h \

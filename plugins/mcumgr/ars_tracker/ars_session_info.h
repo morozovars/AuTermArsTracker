@@ -6,6 +6,8 @@
 #include <QStringList>
 #include <QtGlobal>
 #include <cstdint>
+#include <QMap>
+#include "ars/workspace/ArsTargetsByPosition.h"
 
 struct ArsSessionTargetSettings
 {
@@ -28,22 +30,14 @@ struct ArsSessionParameters
 		QStringList goals;
 };
 
-struct ArsSessionPlannedMetrics
-{
-		double distanceKm = 0.0;
-		int accelerationDistanceM = 0;
-		int footloadPerLeg = 0;
-		double loadIntensityGPerMin = 0.0;
-		double maxSpeedMps = 0.0;
-		int touches = 0;
-		int shots = 0;
-		int dribbles = 0;
-};
+using ArsSessionPlannedMetrics = ArsPlannedMetrics;
+using ArsSessionTargetsByPosition = ArsTargetsByPosition;
 
 struct ArsSessionInfo
 {
 		ArsSessionParameters parameters;
 		ArsSessionPlannedMetrics plannedMetrics;
+		ArsSessionTargetsByPosition targetsByPosition;
 		bool hasPlannedSessionPeriod = false;
 		struct ArsSessionActualTime
 		{

@@ -9,6 +9,8 @@
 #include <QDialog>
 #include <QPushButton>
 #include <QPixmap>
+#include <QFormLayout>
+#include <QGroupBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -17,7 +19,9 @@
 #include "ars/workspace/ArsLocalWorkspace.h"
 #include "ars/workspace/ArsAppSettings.h"
 #include "ars/workspace/ArsTeamRepository.h"
+#include "ars/workspace/ArsTargetsByPosition.h"
 #include "ars_team_edit_dialog.h"
+#include "ars_team_targets_dialog.h"
 
 namespace
 {
@@ -69,6 +73,47 @@ void ArsTrackerTeamTab::buildUi()
     top->addWidget(m_createButton);
     root->addLayout(top);
 
+    m_defaultTeamBox = new QGroupBox("Default team", this);
+    QVBoxLayout *defaultRoot = new QVBoxLayout(m_defaultTeamBox);
+    QHBoxLayout *defaultHead = new QHBoxLayout();
+    m_defaultTeamLogo = new QLabel("No logo", m_defaultTeamBox);
+    m_defaultTeamLogo->setMinimumSize(72, 72);
+    m_defaultTeamLogo->setAlignment(Qt::AlignCenter);
+    defaultHead->addWidget(m_defaultTeamLogo, 0);
+    QFormLayout *metaForm = new QFormLayout();
+    m_defaultTeamName = new QLabel("-", m_defaultTeamBox);
+    m_defaultTeamAge = new QLabel("-", m_defaultTeamBox);
+    m_defaultTeamCoaches = new QLabel("-", m_defaultTeamBox);
+    m_defaultTeamCoaches->setWordWrap(true);
+    metaForm->addRow("Name", m_defaultTeamName);
+    metaForm->addRow("Age category", m_defaultTeamAge);
+    metaForm->addRow("Coaches", m_defaultTeamCoaches);
+    defaultHead->addLayout(metaForm, 1);
+    defaultRoot->addLayout(defaultHead);
+
+    m_defaultTargetsTable = new QTableWidget(m_defaultTeamBox);
+    m_defaultTargetsTable->setColumnCount(9);
+    m_defaultTargetsTable->setHorizontalHeaderLabels(QStringList()
+                                                     << "Position"
+                                                     << "Distance km"
+                                                     << "Accel dist m"
+                                                     << "Footload"
+                                                     << "Touches"
+                                                     << "Intensity"
+                                                     << "Max speed m/s"
+                                                     << "Shots"
+                                                     << "Possessions");
+    m_defaultTargetsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_defaultTargetsTable->setSelectionMode(QAbstractItemView::NoSelection);
+    m_defaultTargetsTable->verticalHeader()->setVisible(false);
+    m_defaultTargetsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    for (int i = 1; i < 9; ++i) m_defaultTargetsTable->horizontalHeader()->setSectionResizeMode(i, QHeaderView::Stretch);
+    defaultRoot->addWidget(m_defaultTargetsTable);
+
+    m_editTargetsButton = new QPushButton("Edit targets", m_defaultTeamBox);
+    defaultRoot->addWidget(m_editTargetsButton, 0, Qt::AlignRight);
+    root->addWidget(m_defaultTeamBox);
+
     m_table = new QTableWidget(this);
     m_table->setColumnCount(8);
     m_table->setHorizontalHeaderLabels(
@@ -92,6 +137,7 @@ void ArsTrackerTeamTab::buildUi()
 
     connect(m_reloadButton, &QPushButton::clicked, this, [this]() { reloadTeams("reload-click"); });
     connect(m_createButton, &QPushButton::clicked, this, &ArsTrackerTeamTab::onCreateTeam);
+    connect(m_editTargetsButton, &QPushButton::clicked, this, &ArsTrackerTeamTab::onEditTargets);
 }
 
 void ArsTrackerTeamTab::reloadTeams(const QString &reason)
@@ -143,6 +189,7 @@ void ArsTrackerTeamTab::reloadTeams(const QString &reason)
     }
 
     updateDefaultTeamLabel();
+    rebuildDefaultTeamDetails();
     rebuildTeamsTable();
 }
 
@@ -160,6 +207,64 @@ void ArsTrackerTeamTab::updateDefaultTeamLabel()
         return;
     }
     m_defaultLabel->setText(QString("Default team: %1 (%2)").arg(team->name, team->ageCategory));
+}
+
+void ArsTrackerTeamTab::rebuildDefaultTeamTargetsTable(const ArsTeam *team)
+{
+    m_defaultTargetsTable->clearContents();
+    const QStringList keys = arsTargetPositionKeys();
+    m_defaultTargetsTable->setRowCount(keys.size());
+    for (int row = 0; row < keys.size(); ++row)
+    {
+        const QString key = keys.at(row);
+        const ArsPlannedMetrics m = team != nullptr
+                                        ? team->targetsByPosition.value(key, team->defaultPlannedMetrics)
+                                        : ArsPlannedMetrics{};
+        m_defaultTargetsTable->setItem(row, 0, new QTableWidgetItem(arsTargetPositionLabel(key)));
+        m_defaultTargetsTable->setItem(row, 1, new QTableWidgetItem(QString::number(m.distanceKm, 'f', 2)));
+        m_defaultTargetsTable->setItem(row, 2, new QTableWidgetItem(QString::number(m.accelerationDistanceM)));
+        m_defaultTargetsTable->setItem(row, 3, new QTableWidgetItem(QString::number(m.footloadPerLeg)));
+        m_defaultTargetsTable->setItem(row, 4, new QTableWidgetItem(QString::number(m.touches)));
+        m_defaultTargetsTable->setItem(row, 5, new QTableWidgetItem(QString::number(m.loadIntensityGPerMin, 'f', 2)));
+        m_defaultTargetsTable->setItem(row, 6, new QTableWidgetItem(QString::number(m.maxSpeedMps, 'f', 2)));
+        m_defaultTargetsTable->setItem(row, 7, new QTableWidgetItem(QString::number(m.shots)));
+        m_defaultTargetsTable->setItem(row, 8, new QTableWidgetItem(QString::number(m.dribbles)));
+    }
+}
+
+void ArsTrackerTeamTab::rebuildDefaultTeamDetails()
+{
+    const ArsTeam *team = findTeamById(m_defaultTeamId);
+    if (team == nullptr)
+    {
+        m_defaultTeamName->setText("-");
+        m_defaultTeamAge->setText("-");
+        m_defaultTeamCoaches->setText("-");
+        m_defaultTeamLogo->setText("No logo");
+        m_defaultTeamLogo->setPixmap(QPixmap());
+        m_editTargetsButton->setEnabled(false);
+        rebuildDefaultTeamTargetsTable(nullptr);
+        return;
+    }
+
+    m_defaultTeamName->setText(team->name);
+    m_defaultTeamAge->setText(team->ageCategory);
+    m_defaultTeamCoaches->setText(coachesDisplay(*team));
+    const QString root = workspacePath();
+    const QString absoluteLogoPath = resolve_team_logo_absolute_path(root, team->teamLogoPath);
+    QPixmap pixmap(absoluteLogoPath);
+    if (team->teamLogoPath.trimmed().isEmpty() || pixmap.isNull())
+    {
+        m_defaultTeamLogo->setPixmap(QPixmap());
+        m_defaultTeamLogo->setText("No logo");
+    }
+    else
+    {
+        m_defaultTeamLogo->setText(QString());
+        m_defaultTeamLogo->setPixmap(pixmap.scaled(72, 72, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+    m_editTargetsButton->setEnabled(true);
+    rebuildDefaultTeamTargetsTable(team);
 }
 
 QString ArsTrackerTeamTab::coachesDisplay(const ArsTeam &team) const
@@ -482,6 +587,37 @@ void ArsTrackerTeamTab::onSetDefaultTeam()
         return;
     }
     reloadTeams("set-default");
+}
+
+void ArsTrackerTeamTab::onEditTargets()
+{
+    ArsTeam *team = findTeamById(m_defaultTeamId);
+    if (team == nullptr)
+    {
+        QMessageBox::warning(this, "Team", "Default team is not selected.");
+        return;
+    }
+
+    ArsTeamTargetsDialog dialog(this);
+    QMap<QString, ArsPlannedMetrics> current = team->targetsByPosition;
+    if (current.isEmpty())
+    {
+        current = arsTargetsByPositionFromLegacy(team->defaultPlannedMetrics);
+    }
+    dialog.setTargetsByPosition(current);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    team->targetsByPosition = dialog.targetsByPosition();
+    qDebug() << "ArsTeamTargets: saved targetsByPosition for team" << team->teamId;
+    if (!saveTeamWithLog(*team))
+    {
+        return;
+    }
+    rebuildDefaultTeamDetails();
+    rebuildTeamsTable();
 }
 
 void ArsTrackerTeamTab::onDeleteTeam()

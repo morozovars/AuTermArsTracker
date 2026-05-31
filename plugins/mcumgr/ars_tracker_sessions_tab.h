@@ -13,6 +13,7 @@
 #include "ars_tracker/ars_session_processing_loader.h"
 #include "ars_tracker/ars_session_postprocessor.h"
 #include "ars/workspace/ArsTeamRepository.h"
+#include "ars/workspace/ArsTargetsByPosition.h"
 #include "ars/workspace/ArsPlayer.h"
 #include "ars/workspace/ArsSessionPlayerBindingResolver.h"
 
@@ -158,6 +159,13 @@ private:
 		bool saveSessionTeamId(const QString &sessionPath, int teamId, QString *errorMessage) const;
 		QString reportPdfPathForSession(const QString &sessionPath) const;
 		void updateOpenReportButtonState();
+		void onTargetPositionChanged(int index);
+		void onTargetValueEdited();
+		void persistCurrentTargetPositionEdits();
+		ArsPlannedMetrics effectiveTargetsForPosition(const QString &positionKey) const;
+		void applyTargetsToUi(const ArsPlannedMetrics &targets);
+		ArsPlannedMetrics targetsFromUi() const;
+		void refreshTargetsForSelectedPosition();
 
 		QStackedWidget *pagesStack = nullptr;
 		QWidget *listPage = nullptr;
@@ -179,6 +187,7 @@ private:
 		QLabel *sessionTeamStatusLabel = nullptr;
 		QComboBox *sessionTeamCombo = nullptr;
 		QDoubleSpinBox *spinTargetDistanceKm = nullptr;
+		QComboBox *comboTargetPosition = nullptr;
 		QSpinBox *spinTargetAccelerationDistanceM = nullptr;
 		QSpinBox *spinTargetFootload10_3g = nullptr;
 		QSpinBox *spinTargetTouchesCount = nullptr;
@@ -240,6 +249,10 @@ private:
 		QList<ArsSessionPairAssignment> m_currentAssignments;
 		QList<ArsSessionTrackerPair> m_currentDetectedPairs;
 		QList<SessionPairPlayerRow> m_currentPairRows;
+		ArsTargetsByPosition m_sessionTargetOverrides;
+		QString m_currentTargetPositionKey = "midfielder";
+		bool m_targetValuesDirty = false;
+		bool m_targetUiApplying = false;
 };
 
 #endif // ARS_TRACKER_SESSIONS_TAB_H

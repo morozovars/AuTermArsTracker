@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
@@ -24,6 +25,7 @@ struct ArsTeam
     QString ageCategory;
     QStringList defaultCoaches;
     ArsPlannedMetrics defaultPlannedMetrics;
+    QMap<QString, ArsPlannedMetrics> targetsByPosition;
     QString teamLogoPath;
 };
 

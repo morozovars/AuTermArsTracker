@@ -36,14 +36,7 @@ private:
     QLineEdit *m_ageCategory = nullptr;
     QPlainTextEdit *m_coaches = nullptr;
     QLineEdit *m_logoPath = nullptr;
-    QSpinBox *m_accelerationDistanceM = nullptr;
-    QDoubleSpinBox *m_distanceKm = nullptr;
-    QSpinBox *m_dribbles = nullptr;
-    QSpinBox *m_footloadPerLeg = nullptr;
-    QDoubleSpinBox *m_loadIntensity = nullptr;
-    QDoubleSpinBox *m_maxSpeed = nullptr;
-    QSpinBox *m_shots = nullptr;
-    QSpinBox *m_touches = nullptr;
+    ArsPlannedMetrics m_existingDefaultPlannedMetrics;
     QString m_selectedLogoSourcePath;
     bool m_logoSelectionChanged = false;
 };

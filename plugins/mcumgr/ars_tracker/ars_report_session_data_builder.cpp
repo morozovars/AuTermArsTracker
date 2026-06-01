@@ -176,13 +176,14 @@ QJsonArray parseGoals(const QJsonValue &goalsValue)
 
 QJsonObject defaultCalculationSettings()
 {
-    return QJsonObject{
-        {"accelerationThresholdG", 2.5},
-        {"dribbleSpeedThresholdMps", 1.5},
-        {"shotZonesG", QJsonObject{{"lightMax", 20.0}, {"mediumMax", 40.0}, {"strongMin", 40.0}}},
-        {"allowedFootloadImbalancePercent", 15.0},
-        {"allowedTouchesImbalancePercent", 20.0},
-        {"allowedShotsPassesImbalancePercent", 20.0}};
+    return QJsonObject{ { "accelerationThresholdG", 2.5 },
+                        { "dribbleSpeedThresholdMps", 4 },
+                        { "shotZonesG", QJsonObject{ { "lightMax", 100.0 },
+                                                     { "mediumMax", 200.0 },
+                                                     { "strongMin", 200.0 } } },
+                        { "allowedFootloadImbalancePercent", 15.0 },
+                        { "allowedTouchesImbalancePercent", 20.0 },
+                        { "allowedShotsPassesImbalancePercent", 20.0 } };
 }
 
 QJsonObject buildSessionObject(const QString &sessionPath,

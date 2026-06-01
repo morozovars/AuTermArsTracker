@@ -1,6 +1,6 @@
-#include "ArsTargetsByPosition.h"
+﻿#include "ArsTargetsByPosition.h"
 
-#include <QSet>
+#include "ArsPlayerPosition.h"
 
 namespace
 {
@@ -12,59 +12,17 @@ ArsPlannedMetrics emptyMetrics()
 
 QStringList arsTargetPositionKeys()
 {
-    return {"goalkeeper", "defender", "midfielder", "forward"};
+    return arsPlayerPositionKeys();
 }
 
 QString arsTargetPositionLabel(const QString &key)
 {
-    if (key == "goalkeeper") return QString::fromUtf8("Вратарь");
-    if (key == "defender") return QString::fromUtf8("Защитник");
-    if (key == "midfielder") return QString::fromUtf8("Полузащитник");
-    if (key == "forward") return QString::fromUtf8("Нападающий");
-    return key;
+    return arsPlayerPositionDisplayName(key);
 }
 
 QString arsNormalizePlayerPositionToTargetKey(const QString &position)
 {
-    const QString p = position.trimmed().toLower();
-    if (p.isEmpty())
-    {
-        return "midfielder";
-    }
-
-    static const QStringList goalkeeperTokens = {
-        QString::fromUtf8("вратарь"), "goalkeeper", "keeper", "goalie"
-    };
-    static const QStringList defenderTokens = {
-        QString::fromUtf8("защитник"), QString::fromUtf8("центрбек"), QString::fromUtf8("левый защитник"),
-        QString::fromUtf8("правый защитник"), "defender", "centre-back", "center-back", "fullback", "back"
-    };
-    static const QStringList midfielderTokens = {
-        QString::fromUtf8("полузащитник"), QString::fromUtf8("опорный"), QString::fromUtf8("атакующий полузащитник"),
-        QString::fromUtf8("центральный полузащитник"), "midfielder", "midfield", "dm", "cm", "am"
-    };
-    static const QStringList forwardTokens = {
-        QString::fromUtf8("нападающий"), QString::fromUtf8("форвард"), QString::fromUtf8("вингер"),
-        QString::fromUtf8("центральный нападающий"), "forward", "striker", "winger", "fw", "st"
-    };
-
-    auto containsToken = [&p](const QStringList &tokens) {
-        for (const QString &token : tokens)
-        {
-            if (!token.trimmed().isEmpty() && p.contains(token.toLower()))
-            {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    if (containsToken(goalkeeperTokens)) return "goalkeeper";
-    if (containsToken(defenderTokens)) return "defender";
-    if (containsToken(forwardTokens)) return "forward";
-    if (containsToken(midfielderTokens)) return "midfielder";
-
-    return "midfielder";
+    return arsNormalizePlayerPositionKey(position);
 }
 
 QJsonObject arsPlannedMetricsToJson(const ArsPlannedMetrics &m)
@@ -103,26 +61,36 @@ QJsonObject arsTargetsByPositionToJson(const ArsTargetsByPosition &targets)
         const ArsPlannedMetrics m = targets.value(key, emptyMetrics());
         out.insert(key, arsPlannedMetricsToJson(m));
     }
-    for (auto it = targets.cbegin(); it != targets.cend(); ++it)
-    {
-        if (!out.contains(it.key()))
-        {
-            out.insert(it.key(), arsPlannedMetricsToJson(it.value()));
-        }
-    }
     return out;
 }
 
 ArsTargetsByPosition arsTargetsByPositionFromJson(const QJsonObject &obj)
 {
     ArsTargetsByPosition out;
-    for (auto it = obj.begin(); it != obj.end(); ++it)
+
+    for (const QString &key : arsTargetPositionKeys())
     {
-        if (it.value().isObject())
+        const QJsonValue value = obj.value(key);
+        if (value.isObject())
         {
-            out.insert(it.key(), arsPlannedMetricsFromJson(it.value().toObject()));
+            out.insert(key, arsPlannedMetricsFromJson(value.toObject()));
         }
     }
+
+    if (obj.value("defender").isObject())
+    {
+        const ArsPlannedMetrics m = arsPlannedMetricsFromJson(obj.value("defender").toObject());
+        if (!out.contains("wide_defender")) out.insert("wide_defender", m);
+        if (!out.contains("central_defender")) out.insert("central_defender", m);
+    }
+
+    if (obj.value("midfielder").isObject())
+    {
+        const ArsPlannedMetrics m = arsPlannedMetricsFromJson(obj.value("midfielder").toObject());
+        if (!out.contains("wide_midfielder")) out.insert("wide_midfielder", m);
+        if (!out.contains("central_midfielder")) out.insert("central_midfielder", m);
+    }
+
     return out;
 }
 
@@ -141,14 +109,14 @@ ArsPlannedMetrics arsResolveEffectiveTargets(const ArsTargetsByPosition &session
                                              const QString &positionKey,
                                              const ArsPlannedMetrics &legacyFallback)
 {
-    const QString key = positionKey.trimmed().isEmpty() ? QString("midfielder") : positionKey.trimmed();
-    if (sessionOverrides.contains(key))
+    const QString normalizedKey = arsNormalizePlayerPositionToTargetKey(positionKey);
+    if (sessionOverrides.contains(normalizedKey))
     {
-        return sessionOverrides.value(key);
+        return sessionOverrides.value(normalizedKey);
     }
-    if (teamDefaults.contains(key))
+    if (teamDefaults.contains(normalizedKey))
     {
-        return teamDefaults.value(key);
+        return teamDefaults.value(normalizedKey);
     }
     return legacyFallback;
 }

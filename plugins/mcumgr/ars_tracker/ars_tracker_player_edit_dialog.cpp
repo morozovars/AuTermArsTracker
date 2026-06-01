@@ -19,26 +19,20 @@
 #include <QPixmap>
 #include <QDebug>
 
+#include "ars/workspace/ArsPlayerPosition.h"
+
 namespace
 {
-QStringList positions()
+QString defaultPositionDisplayName()
 {
-    return QStringList()
-           << QString::fromUtf8("Нападающий")
-           << QString::fromUtf8("Атакующий полузащитник")
-           << QString::fromUtf8("Фланговый полузащитник")
-           << QString::fromUtf8("Центральный полузащитник")
-           << QString::fromUtf8("Опорный полузащитник")
-           << QString::fromUtf8("Фланговый защитник")
-           << QString::fromUtf8("Центральный защитник")
-           << QString::fromUtf8("Вратарь");
+    return arsPlayerPositionDisplayName(QStringLiteral("central_midfielder"));
 }
 
 QString normalize_foot(const QString &value)
 {
     const QString v = value.trimmed();
     if (v.compare("L", Qt::CaseInsensitive) == 0 || v.compare("Left", Qt::CaseInsensitive) == 0 ||
-        v.compare(QString::fromUtf8("Левая"), Qt::CaseInsensitive) == 0)
+        v.compare(QString::fromUtf8("Р вЂєР ВµР Р†Р В°РЎРЏ"), Qt::CaseInsensitive) == 0)
     {
         return "L";
     }
@@ -56,10 +50,10 @@ ArsTrackerPlayerEditDialog::ArsTrackerPlayerEditDialog(QWidget *parent)
     QFormLayout *form = new QFormLayout();
 
     m_surname = new QLineEdit(this);
-    form->addRow(QString::fromUtf8("Фамилия*"), m_surname);
+    form->addRow(QString::fromUtf8("Р В¤Р В°Р СР С‘Р В»Р С‘РЎРЏ*"), m_surname);
 
     m_name = new QLineEdit(this);
-    form->addRow(QString::fromUtf8("Имя*"), m_name);
+    form->addRow(QString::fromUtf8("Р ВР СРЎРЏ*"), m_name);
 
     QWidget *photoRow = new QWidget(this);
     QHBoxLayout *photoLayout = new QHBoxLayout(photoRow);
@@ -88,12 +82,15 @@ ArsTrackerPlayerEditDialog::ArsTrackerPlayerEditDialog(QWidget *parent)
     form->addRow("birthDate", m_birthDate);
 
     m_position = new QComboBox(this);
-    m_position->addItems(positions());
+    for (const ArsPlayerPositionInfo &position : arsPlayerPositions())
+    {
+        m_position->addItem(position.displayName, position.key);
+    }
     form->addRow(QString::fromUtf8("position*"), m_position);
 
     m_dominantFoot = new QComboBox(this);
-    m_dominantFoot->addItem(QString::fromUtf8("Правая"), "R");
-    m_dominantFoot->addItem(QString::fromUtf8("Левая"), "L");
+    m_dominantFoot->addItem(QString::fromUtf8("Р СџРЎР‚Р В°Р Р†Р В°РЎРЏ"), "R");
+    m_dominantFoot->addItem(QString::fromUtf8("Р вЂєР ВµР Р†Р В°РЎРЏ"), "L");
     form->addRow(QString::fromUtf8("dominantFoot"), m_dominantFoot);
 
     m_heightCm = new QSpinBox(this);
@@ -153,7 +150,8 @@ void ArsTrackerPlayerEditDialog::setCreateMode(int defaultTeamId)
     m_photoPath->clear();
     m_number->setValue(0);
     m_birthDate->setDate(QDate::currentDate());
-    m_position->setCurrentIndex(0);
+    const int defaultPositionIndex = m_position->findText(defaultPositionDisplayName());
+    m_position->setCurrentIndex(defaultPositionIndex >= 0 ? defaultPositionIndex : 0);
     m_dominantFoot->setCurrentIndex(0);
     m_heightCm->setValue(0);
     m_weightKg->setValue(0);
@@ -176,7 +174,8 @@ void ArsTrackerPlayerEditDialog::setEditMode(const ArsPlayer &player)
     m_photoPath->setText(player.photoPath);
     m_number->setValue(player.number);
     m_birthDate->setDate(player.birthDate.isValid() ? player.birthDate : QDate::currentDate());
-    const int positionIndex = m_position->findText(player.position);
+    const QString displayPosition = arsPlayerPositionDisplayNameFromAny(player.position);
+    const int positionIndex = m_position->findText(displayPosition);
     m_position->setCurrentIndex(positionIndex >= 0 ? positionIndex : 0);
     const QString foot = normalize_foot(player.dominantFoot);
     const int footIndex = m_dominantFoot->findData(foot);
@@ -197,7 +196,7 @@ ArsPlayer ArsTrackerPlayerEditDialog::playerFromUi() const
     player.name = m_name->text().trimmed();
     player.number = m_number->value();
     player.birthDate = m_birthDate->date();
-    player.position = m_position->currentText().trimmed();
+    player.position = arsPlayerPositionDisplayNameFromAny(m_position->currentText().trimmed());
     player.dominantFoot = m_dominantFoot->currentData().toString();
     player.heightCm = m_heightCm->value();
     player.weightKg = m_weightKg->value();

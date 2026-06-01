@@ -65,6 +65,7 @@ SOURCES += \
     ../../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../../src/ars/workspace/ArsPlayerRepository.cpp \
     ../../src/ars/workspace/ArsAppSettings.cpp \
+    ../../src/ars/workspace/ArsPlayerPosition.cpp \
     ../../src/ars/workspace/ArsTargetsByPosition.cpp \
     ../../src/ars/workspace/ArsSessionPlayerBindingResolver.cpp \
     ../../src/ars/workspace/ArsSessionRepository.cpp \
@@ -119,6 +120,7 @@ HEADERS += \
     smp_group.h \
     smp_group_img_mgmt.h \
     ../../src/ars/workspace/ArsAppSettings.h \
+    ../../src/ars/workspace/ArsPlayerPosition.h \
     ../../src/ars/workspace/ArsTargetsByPosition.h \
     ../../src/ars/workspace/ArsPlayer.h \
     ../../src/ars/workspace/ArsPlayerRepository.h \

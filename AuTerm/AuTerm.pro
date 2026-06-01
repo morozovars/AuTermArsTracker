@@ -37,6 +37,7 @@ SOURCES += main.cpp\
     ../src/ars/workspace/ArsAppSettings.cpp \
     ../src/ars/workspace/ArsLocalWorkspace.cpp \
     ../src/ars/workspace/ArsPlayerRepository.cpp \
+    ../src/ars/workspace/ArsPlayerPosition.cpp \
     ../src/ars/workspace/ArsSessionRepository.cpp \
     ../src/ars/workspace/ArsTargetsByPosition.cpp \
     ../src/ars/workspace/ArsTeamRepository.cpp \
@@ -51,6 +52,7 @@ HEADERS  += \
     ../src/ars/workspace/ArsAppSettings.h \
     ../src/ars/workspace/ArsLocalWorkspace.h \
     ../src/ars/workspace/ArsPlayerRepository.h \
+    ../src/ars/workspace/ArsPlayerPosition.h \
     ../src/ars/workspace/ArsSessionRepository.h \
     ../src/ars/workspace/ArsTargetsByPosition.h \
     ../src/ars/workspace/ArsTeamRepository.h \

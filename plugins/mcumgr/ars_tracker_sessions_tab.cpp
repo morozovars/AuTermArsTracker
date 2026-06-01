@@ -1414,7 +1414,7 @@ void ArsTrackerSessionsTab::onTargetPositionChanged(int index)
 		if (comboTargetPosition != nullptr)
 		{
 				m_currentTargetPositionKey = comboTargetPosition->currentData().toString().trimmed();
-				if (m_currentTargetPositionKey.isEmpty()) m_currentTargetPositionKey = "midfielder";
+				if (m_currentTargetPositionKey.isEmpty()) m_currentTargetPositionKey = "central_midfielder";
 		}
 		qDebug() << "ArsSession: selected target position" << m_currentTargetPositionKey;
 		refreshTargetsForSelectedPosition();
@@ -1478,7 +1478,7 @@ void ArsTrackerSessionsTab::resetSessionInformationFieldsToDefaults()
 		spinTargetShotsCount->setValue(0);
 		spinTargetPossessions->setValue(0);
 		m_sessionTargetOverrides.clear();
-		m_currentTargetPositionKey = "midfielder";
+		m_currentTargetPositionKey = "central_midfielder";
 		if (comboTargetPosition != nullptr)
 		{
 				const int idx = comboTargetPosition->findData(m_currentTargetPositionKey);
@@ -1525,7 +1525,7 @@ void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
 				m.maxSpeedMps = it.value().maxSpeedMps;
 				m.shots = it.value().shots;
 				m.dribbles = it.value().dribbles;
-				m_sessionTargetOverrides.insert(it.key(), m);
+				m_sessionTargetOverrides.insert(arsNormalizePlayerPositionToTargetKey(it.key()), m);
 		}
 		if (m_sessionTargetOverrides.isEmpty())
 		{

@@ -25,6 +25,7 @@
 #include "ars/workspace/ArsAppSettings.h"
 #include "ars/workspace/ArsLocalWorkspace.h"
 #include "ars/workspace/ArsPlayerRepository.h"
+#include "ars/workspace/ArsPlayerPosition.h"
 #include "ars/workspace/ArsTeamRepository.h"
 #include "ars/workspace/ArsTrackerBindingRepository.h"
 
@@ -64,8 +65,8 @@ void ArsTrackerPlayersTab::buildUi()
 
     m_table = new QTableWidget(this);
     m_table->setColumnCount(7);
-    m_table->setHorizontalHeaderLabels(QStringList() << "Photo" << QString::fromUtf8("Фамилия Имя") << QString::fromUtf8("Позиция")
-                                                      << QString::fromUtf8("Номер") << QString::fromUtf8("Возраст") << "Tracker pair" << "Actions");
+    m_table->setHorizontalHeaderLabels(QStringList() << "Photo" << QString::fromUtf8("Р¤Р°РјРёР»РёСЏ РРјСЏ") << QString::fromUtf8("РџРѕР·РёС†РёСЏ")
+                                                      << QString::fromUtf8("РќРѕРјРµСЂ") << QString::fromUtf8("Р’РѕР·СЂР°СЃС‚") << "Tracker pair" << "Actions");
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -175,31 +176,12 @@ void ArsTrackerPlayersTab::updateCurrentTeamLabel()
 
 int ArsTrackerPlayersTab::positionGroup(const QString &position) const
 {
-    static const QSet<QString> midfielders = {
-        QString::fromUtf8("Атакующий полузащитник"),
-        QString::fromUtf8("Фланговый полузащитник"),
-        QString::fromUtf8("Центральный полузащитник"),
-        QString::fromUtf8("Опорный полузащитник")};
-    static const QSet<QString> defenders = {
-        QString::fromUtf8("Фланговый защитник"),
-        QString::fromUtf8("Центральный защитник")};
-    if (position == QString::fromUtf8("Нападающий"))
-    {
-        return 0;
-    }
-    if (midfielders.contains(position))
-    {
-        return 1;
-    }
-    if (defenders.contains(position))
-    {
-        return 2;
-    }
-    if (position == QString::fromUtf8("Вратарь"))
-    {
-        return 3;
-    }
-    return 99;
+    const QString key = arsNormalizePlayerPositionKey(position);
+    if (key == "forward") return 0;
+    if (key == "wide_midfielder" || key == "central_midfielder") return 1;
+    if (key == "wide_defender" || key == "central_defender") return 2;
+    if (key == "goalkeeper") return 3;
+    return 4;
 }
 
 QString ArsTrackerPlayersTab::ageDisplay(const ArsPlayer &player) const
@@ -308,7 +290,7 @@ void ArsTrackerPlayersTab::rebuildPlayersTable()
         }
         m_table->setCellWidget(row, 0, photoLabel);
         m_table->setItem(row, 1, new QTableWidgetItem(QString("%1 %2").arg(player.surname, player.name)));
-        m_table->setItem(row, 2, new QTableWidgetItem(player.position));
+        m_table->setItem(row, 2, new QTableWidgetItem(arsPlayerPositionDisplayNameFromAny(player.position)));
         m_table->setItem(row, 3, new QTableWidgetItem(QString::number(player.number)));
         m_table->setItem(row, 4, new QTableWidgetItem(ageDisplay(player)));
         m_table->setItem(row, 5, new QTableWidgetItem(boundPairForPlayer(player.playerId).trimmed().isEmpty() ? "not assigned"

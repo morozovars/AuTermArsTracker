@@ -250,7 +250,7 @@ private:
 		QList<ArsSessionTrackerPair> m_currentDetectedPairs;
 		QList<SessionPairPlayerRow> m_currentPairRows;
 		ArsTargetsByPosition m_sessionTargetOverrides;
-		QString m_currentTargetPositionKey = "midfielder";
+		QString m_currentTargetPositionKey = "central_midfielder";
 		bool m_targetValuesDirty = false;
 		bool m_targetUiApplying = false;
 };

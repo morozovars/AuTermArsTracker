@@ -89,8 +89,8 @@ ArsTrackerPlayerEditDialog::ArsTrackerPlayerEditDialog(QWidget *parent)
     form->addRow(QString::fromUtf8("position*"), m_position);
 
     m_dominantFoot = new QComboBox(this);
-    m_dominantFoot->addItem(QString::fromUtf8("Р СџРЎР‚Р В°Р Р†Р В°РЎРЏ"), "R");
-    m_dominantFoot->addItem(QString::fromUtf8("Р вЂєР ВµР Р†Р В°РЎРЏ"), "L");
+    m_dominantFoot->addItem(QString::fromUtf8("Правая"), "R");
+    m_dominantFoot->addItem(QString::fromUtf8("Левая"), "L");
     form->addRow(QString::fromUtf8("dominantFoot"), m_dominantFoot);
 
     m_heightCm = new QSpinBox(this);

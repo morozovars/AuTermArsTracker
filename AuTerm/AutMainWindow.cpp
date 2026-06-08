@@ -408,9 +408,9 @@ AutMainWindow::AutMainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::
 		gimEmptyCircleImage = QImage(":/images/EmptyCircle.png");
 		gimRedCircleImage = QImage(":/images/RedCircle.png");
 		gimGreenCircleImage = QImage(":/images/GreenCircle.png");
-		gimUw16Image = QImage(":/images/AuTerm16.png");
+		gimUw16Image = QImage(":/images/Ars16.png");
 #if 0
-		gimUw32Image = QImage(":/images/AuTerm32.png");
+		gimUw32Image = QImage(":/images/Ars32.png");
 #endif
 
 		//Create pixmaps
@@ -5568,7 +5568,7 @@ void AutMainWindow::plugin_get_image_pixmap(QString name, QPixmap **pixmap)
 		{
 				*pixmap = gpGreenCirclePixmap;
 		}
-		else if (name == "AuTerm16")
+		else if (name == "Ars16")
 		{
 				*pixmap = gpUw16Pixmap;
 		}

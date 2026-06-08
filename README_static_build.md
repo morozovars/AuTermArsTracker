@@ -76,13 +76,13 @@ Open a compiler-ready command prompt:
 Point the scripts at static Qt:
 
 ```bat
-set AUTERM_STATIC_QT_DIR=C:\Qt\5.15.2-static-msvc2019_64
+set AUTERM_STATIC_QT_DIR=C:\Qt\st_msvc3
 ```
 
 Or set qmake explicitly:
 
 ```bat
-set QMAKE=C:\Qt\5.15.2-static-msvc2019_64\bin\qmake.exe
+set QMAKE=C:\Qt\st_msvc3_install\bin\qmake.exe
 ```
 
 Build the release static configuration:

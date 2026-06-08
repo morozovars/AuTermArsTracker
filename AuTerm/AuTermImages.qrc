@@ -9,5 +9,9 @@
         <file>images/AuTerm32.png</file>
         <file>error_codes.ini</file>
         <file alias="licenses">../THIRD_PARTY_LICENSES</file>
+        <file>images/Ars16.ico</file>
+        <file>images/Ars16.png</file>
+        <file>images/Ars32.ico</file>
+        <file>images/Ars32.png</file>
     </qresource>
 </RCC>

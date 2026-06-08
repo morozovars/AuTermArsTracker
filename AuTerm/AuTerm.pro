@@ -125,7 +125,7 @@ RESOURCES += \
 win32:RC_FILE = version.rc
 
 # Windows application icon
-win32:RC_ICONS = images/AuTerm32.ico
+win32:RC_ICONS = images/Ars32.ico
 
 # Mac application icon
 ICON = MacAuTermIcon.icns
@@ -158,6 +158,18 @@ CONFIG(release, debug|release) {
     HEADERS += AutPlugin.h
 
     contains(CONFIG, static) {
+        CONFIG(release, debug|release) {
+            ARS_TRACKER_ALGA_LIBDIR = ../release
+            win32-g++|win32-clang-g++: ARS_TRACKER_ALGA_LIBFILE = ../release/libars_tracker_alga.a
+            else:win32: ARS_TRACKER_ALGA_LIBFILE = ../release/ars_tracker_alga.lib
+            else: ARS_TRACKER_ALGA_LIBFILE = ../release/libars_tracker_alga.a
+        } else {
+            ARS_TRACKER_ALGA_LIBDIR = ../debug
+            win32-g++|win32-clang-g++: ARS_TRACKER_ALGA_LIBFILE = ../debug/libars_tracker_alga.a
+            else:win32: ARS_TRACKER_ALGA_LIBFILE = ../debug/ars_tracker_alga.lib
+            else: ARS_TRACKER_ALGA_LIBFILE = ../debug/libars_tracker_alga.a
+        }
+
         QT += $$ADDITIONAL_MODULES
 
         !contains(DEFINES, SKIPPLUGIN_MCUMGR) {
@@ -170,6 +182,11 @@ CONFIG(release, debug|release) {
                 win32-g++: PRE_TARGETDEPS += $$DESTDIR/libplugin_mcumgr.a
                 else:win32:!win32-g++: PRE_TARGETDEPS += $$DESTDIR/plugin_mcumgr.lib
                 else: PRE_TARGETDEPS += $$DESTDIR/libplugin_mcumgr.a
+
+                # plugin_mcumgr static objects reference PostProcessing symbols from ars_tracker_alga.
+                # In static builds, AuTerm must link the alga static library explicitly.
+                LIBS += $$ARS_TRACKER_ALGA_LIBFILE
+                PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBFILE
 
                 contains(DEFINES, PLUGIN_MCUMGR_TRANSPORT_BLUETOOTH) {
                     macx: QMAKE_INFO_PLIST = Info.plist

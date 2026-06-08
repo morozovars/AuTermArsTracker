@@ -17,6 +17,10 @@ INCLUDEPATH    += ../../AuTerm \
 DEPENDPATH += $$ARS_TRACKER_ALGA_ROOT
 TARGET          = $$qtLibraryTarget(plugin_mcumgr)
 
+!exists($$ARS_TRACKER_ALGA_ROOT/Algorithms.h) {
+    error("Missing ars_tracker_alga sources at $$ARS_TRACKER_ALGA_ROOT. Initialize/update submodule src/ars_tracker_alga before building plugin_mcumgr.")
+}
+
 # You can make your code fail to compile if it uses deprecated APIs.
 # In order to do so, uncomment the following line.
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
@@ -141,10 +145,16 @@ CONFIG += install_ok  # Do not cargo-cult this!
 # Common build location
 CONFIG(release, debug|release) {
     DESTDIR = ../../release
-    ARS_TRACKER_ALGA_LIBDIR = $$PWD/../../release
+    ARS_TRACKER_ALGA_LIBDIR = ../../release
+    win32-g++|win32-clang-g++: ARS_TRACKER_ALGA_LIBFILE = ../../release/libars_tracker_alga.a
+    else:win32: ARS_TRACKER_ALGA_LIBFILE = ../../release/ars_tracker_alga.lib
+    else: ARS_TRACKER_ALGA_LIBFILE = ../../release/libars_tracker_alga.a
 } else {
     DESTDIR = ../../debug
-    ARS_TRACKER_ALGA_LIBDIR = $$PWD/../../debug
+    ARS_TRACKER_ALGA_LIBDIR = ../../debug
+    win32-g++|win32-clang-g++: ARS_TRACKER_ALGA_LIBFILE = ../../debug/libars_tracker_alga.a
+    else:win32: ARS_TRACKER_ALGA_LIBFILE = ../../debug/ars_tracker_alga.lib
+    else: ARS_TRACKER_ALGA_LIBFILE = ../../debug/libars_tracker_alga.a
 
 
     # The following form is only used for creating the GUI in Qt Creator, it is
@@ -160,10 +170,14 @@ CONFIG(release, debug|release) {
         form.ui
 }
 
-LIBS += -L$$ARS_TRACKER_ALGA_LIBDIR -lars_tracker_alga
-win32-msvc*: PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBDIR/ars_tracker_alga.lib
-win32-g++: PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBDIR/libars_tracker_alga.a
-unix:!macx: PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBDIR/libars_tracker_alga.a
+win32-g++|win32-clang-g++ {
+    # Force ld.lld to pull the PostProcessing object from ars_tracker_alga even when archive
+    # extraction is sensitive to the current Windows/llvm-mingw static-lib setup.
+    LIBS += -Wl,--whole-archive $$ARS_TRACKER_ALGA_LIBFILE -Wl,--no-whole-archive
+} else {
+    LIBS += $$ARS_TRACKER_ALGA_LIBFILE
+}
+PRE_TARGETDEPS += $$ARS_TRACKER_ALGA_LIBFILE
 
 # Do not prefix with lib for non-static builds
 !contains(CONFIG, static) {

@@ -222,7 +222,10 @@ public slots:
     void plugin_save_setting(QString name, QVariant data);
     /* Used to load a plugin-specific setting, name is the value of the configuration item (unique per transport), if found then data will be updated with the value and found will be set true, otherwise found will be false */
     void plugin_load_setting(QString name, QVariant *data, bool *found);
-    /* Used to get an image pixmap from the resources file, supported names = EmptyCircle, RedCircle, GreenCircle, AuTerm16. If found, pixmap will be updated with the pointer to the pixmap data, note: this is pixmap data as used by the main window, do not delete it when cleaning up as the main window will do that */
+    /* Used to get an image pixmap from the resources file, supported names = EmptyCircle,
+     * RedCircle, GreenCircle, Ars16. If found, pixmap will be updated with the pointer to the
+     * pixmap data, note: this is pixmap data as used by the main window, do not delete it when
+     * cleaning up as the main window will do that */
     void plugin_get_image_pixmap(QString name, QPixmap **pixmap);
     /* Used to force an update of the pinout status in the GUI (useful for transports that require time to open after they have opened successfully) */
     void plugin_force_image_update();

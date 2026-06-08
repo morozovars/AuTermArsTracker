@@ -10,6 +10,7 @@ SUBDIRS += src/ars_tracker_reports/ars_reporter
 !contains(DEFINES, SKIPPLUGINS) {
     ars_tracker_alga_qt.subdir = src/ars_tracker_alga_qt
     SUBDIRS += ars_tracker_alga_qt
+    AuTerm.depends += ars_tracker_alga_qt
 
     !contains(DEFINES, SKIPPLUGIN_MCUMGR) {
         mcumgr.subdir = plugins/mcumgr

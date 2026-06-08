@@ -65,8 +65,11 @@ void ArsTrackerPlayersTab::buildUi()
 
     m_table = new QTableWidget(this);
     m_table->setColumnCount(7);
-    m_table->setHorizontalHeaderLabels(QStringList() << "Photo" << QString::fromUtf8("Р¤Р°РјРёР»РёСЏ РРјСЏ") << QString::fromUtf8("РџРѕР·РёС†РёСЏ")
-                                                      << QString::fromUtf8("РќРѕРјРµСЂ") << QString::fromUtf8("Р’РѕР·СЂР°СЃС‚") << "Tracker pair" << "Actions");
+    m_table->setHorizontalHeaderLabels(QStringList()
+                                       << "Photo" << QString::fromUtf8("Фамилия Имя")
+                                       << QString::fromUtf8("Амплуа") << QString::fromUtf8("Номер")
+                                       << QString::fromUtf8("Возраст") << "Tracker pair"
+                                       << "Actions");
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);

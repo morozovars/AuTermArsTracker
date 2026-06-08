@@ -70,7 +70,7 @@ void plugin_logger::setup(QMainWindow *main_window)
 
 const QString plugin_logger::plugin_about()
 {
-    return "AuTerm logger plugin\r\nCopyright 2023 Jamie M.\r\n\r\nPlugin and application logging system.\r\n\r\nBuilt using Qt " QT_VERSION_STR;
+    return "Ars Tracker logger plugin\r\nCopyright 2023 Jamie M.\r\n\r\nPlugin and application logging system.\r\n\r\nBuilt using Qt " QT_VERSION_STR;
 }
 
 bool plugin_logger::plugin_configuration()

@@ -1,14 +1,14 @@
-# AuTerm
+# Ars Tracker Desktop
 
 ## Preface
 
-Note that AuTerm is currently in the process of being developed for an initial release, the code is not considered stable and only pre-release test versions are available for download.
+Note that Ars Tracker Desktop is currently in the process of being developed for an initial release, the code is not considered stable and only pre-release test versions are available for download.
 
 ## About
 
-AuTerm is a cross-platform terminal utility, designed for communicating with embedded devices and systems (with a primary focus on Zephyr devices, but supports any device be it embedded or not), created in Qt 6 (and supporting Qt 5, though Qt 6 is recommended).
+Ars Tracker Desktop is a cross-platform terminal utility, designed for communicating with embedded devices and systems (with a primary focus on Zephyr devices, but supports any device be it embedded or not), created in Qt 6 (and supporting Qt 5, though Qt 6 is recommended).
 
-If looking for a command-line interface MCUmgr tool then see [qtmgmt](https://github.com/thedjnK/qtmgmt) which uses the MCUmgr library from AuTerm.
+If looking for a command-line interface MCUmgr tool then see [qtmgmt](https://github.com/thedjnK/qtmgmt) which uses the MCUmgr library from this project.
 
 ## Features
 
@@ -39,7 +39,7 @@ If looking for a command-line interface MCUmgr tool then see [qtmgmt](https://gi
 * Logger plugin
 * NUS (Nordic UART Service) transport plugin
 
-Functionality can be disabled in custom builds by uncommenting the SKIP lines in ``AuTerm-includes.pri``, which allows for lean and reduced size builds.
+Functionality can be disabled in custom builds by uncommenting the SKIP lines in the project include configuration, which allows for lean and reduced size builds.
 
 ## Screenshots
 
@@ -53,7 +53,7 @@ Test release on Windows:
 
 ## Downloading
 
-Source code and pre-release test builds are provided, builds can be downloaded from [the releases page](https://github.com/thedjnK/AuTerm/releases).
+Source code and pre-release test builds are provided, builds can be downloaded from the project releases page.
 
 ## Setup
 
@@ -61,9 +61,9 @@ Source code and pre-release test builds are provided, builds can be downloaded f
 
 **Note:** Only 64-bit x86_64 Windows builds are officially provided, 32-bit x86 builds can be built from source.
 
-Release name: `AuTerm_test_Win_x64_<version>.7z`
+Release name: desktop Windows release archive
 
-Download and open the 7zip file, extract the files to a folder on your computer and double click 'AuTerm.exe' to run AuTerm.
+Download and open the 7zip file, extract the files to a folder on your computer and run Ars Tracker Desktop.
 
 The Visual Studio 2022 runtime files are required which are available on the [Microsoft site](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
@@ -73,15 +73,15 @@ The Visual Studio 2022 runtime files are required which are available on the [Mi
 
 **Note:** Only 64-bit x86_64 Linux builds are officially provided, 32-bit x86 builds can be built from source.
 
-Release name: `AuTerm_test_Lin_x64_<version>.tar.gz`
+Release name: desktop Linux release archive
 
 Download the tar file and extract it's contents to a location on your computer, this can be done using a graphical utility or from the command line using:
 
-	tar xf AuTerm_test_Lin_x64_<version>.tar.gz -C ~/
+	tar xf <linux_release_archive>.tar.gz -C ~/
 
-Where '\~/' is the location of where you want it extracted to, '\~/' will extract to the home directory of your local user account). To launch AuTerm, either double click on the executable and click the 'run' button (if asked), or execute it from a terminal as so:
+Where '\~/' is the location of where you want it extracted to, '\~/' will extract to the home directory of your local user account). To launch Ars Tracker Desktop, either double click on the executable and click the 'run' button (if asked), or execute it from a terminal as so:
 
-	./AuTerm
+	./ArsTrackerDesktop
 
 Before running, you may need to install some additional libraries, please see https://github.com/LairdCP/UwTerminalX/wiki/Installing for further details. You may also be required to add a udev rule to grant non-root users access to USB devices, please see https://github.com/LairdCP/UwTerminalX/wiki/Granting-non-root-USB-device-access-(Linux) for details.
 
@@ -93,13 +93,13 @@ ARM versions must be built from source using Qt 6.x. Pre-compiled release versio
 
 **Note:** No support for this build/os is provided, no hardware is available for testing, it is built on github CI only. Use at own risk.
 
-Release name: `AuTerm_test_Mac_x64_arm64_<version>.tar.gz`
+Release name: desktop macOS release archive
 
 Download the tar file and extract it's contents to a location on your computer, this can be done using a graphical utility or from the command line using:
 
-	tar xf AuTerm_test_Mac_x64_arm64_<version>.tar.gz -C ~/
+	tar xf <macos_release_archive>.tar.gz -C ~/
 
-Where '\~/' is the location of where you want it extracted to, '\~/' will extract to the home directory of your local user account). To launch AuTerm, either double click on the executable and click the 'run' button (if asked). It is possible that gatekeeper might prevent running of it until system security settings are changed.
+Where '\~/' is the location of where you want it extracted to, '\~/' will extract to the home directory of your local user account). To launch Ars Tracker Desktop, either double click on the executable and click the 'run' button (if asked). It is possible that gatekeeper might prevent running of it until system security settings are changed.
 
 ## Help and contributing
 
@@ -107,7 +107,7 @@ Users are welcome to open issues and submit pull requests to have features merge
 
 ## Speed/Throughput testing
 
-There is a quick guide available giving an overview of the speed testing feature of AuTerm, https://github.com/LairdCP/UwTerminalX/wiki/Using-the-Speed-Test-feature
+There is a quick guide available giving an overview of the speed testing feature, https://github.com/LairdCP/UwTerminalX/wiki/Using-the-Speed-Test-feature
 
 ## Compiling
 
@@ -115,4 +115,4 @@ For details on compiling, please refer to [the wiki](https://github.com/LairdCP/
 
 ## License
 
-AuTerm is released under the [GPLv3 license](https://github.com/thedjnK/AuTerm/blob/master/LICENSE).
+Ars Tracker Desktop is released under the GPLv3 license.

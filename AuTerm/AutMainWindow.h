@@ -113,11 +113,14 @@
 /******************************************************************************/
 //Constants for version and functions
 const QString UwVersion                         = "0.36a"; //Version string
+const QString ProductShortName                  = "Ars Tracker";
+const QString ProductDesktopName                = "Ars Tracker Desktop";
+const QString LegacySettingsAppName             = "AuTerm";
 //Constants for timeouts and streaming
 const qint16 FileReadBlock                      = 512;     //Number of bytes to read per block when streaming files
 const qint16 StreamProgress                     = 10000;   //Number of bytes between streaming progress updates
 //Constants for default config values
-const QString DefaultLogFileName                = "AuTerm.log";
+const QString DefaultLogFileName                = "ArsTracker.log";
 const bool DefaultLogMode                       = 0;
 const bool DefaultLogEnable                     = 0;
 const bool DefaultSysTrayIcon                   = 1;
@@ -134,7 +137,7 @@ const bool DefaultReconnectAfterDisconnect      = false;
 const bool DefaultSplitTerminal                 = false;
 #endif
 //Constants for URLs
-const QString URLLinuxNonRootSetup = "https://github.com/LairdCP/AuTerm/wiki/Granting-non-root-USB-device-access-(Linux)";
+const QString URLLinuxNonRootSetup = "https://github.com/LairdCP/UwTerminalX/wiki/Granting-non-root-USB-device-access-(Linux)";
 const qint8 FilenameIndexScripting              = 0;
 const qint8 FilenameIndexOthers                 = 1;
 //Constants for balloon (notification area) icon options

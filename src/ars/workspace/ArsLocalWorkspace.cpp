@@ -4,6 +4,8 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QDebug>
+#include <QFileInfo>
+#include <QSettings>
 
 namespace
 {
@@ -54,6 +56,47 @@ bool ensureJsonFileExists(const QString &filePath, const QByteArray &defaultCont
 
     return true;
 }
+
+QString legacyWorkspaceRootPath()
+{
+    QSettings legacySettings(QSettings::IniFormat, QSettings::UserScope, "AuTerm", "settings");
+    return QDir(QFileInfo(legacySettings.fileName()).dir().absolutePath()).filePath("ars_workspace");
+}
+
+bool copyDirectoryRecursively(const QString &sourcePath, const QString &targetPath)
+{
+    QDir sourceDir(sourcePath);
+    if (sourceDir.exists() == false)
+    {
+        return false;
+    }
+
+    if (QDir().mkpath(targetPath) == false)
+    {
+        return false;
+    }
+
+    const QFileInfoList entries =
+        sourceDir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries);
+    for (const QFileInfo &entry : entries)
+    {
+        const QString targetEntryPath = QDir(targetPath).filePath(entry.fileName());
+        if (entry.isDir())
+        {
+            if (copyDirectoryRecursively(entry.absoluteFilePath(), targetEntryPath) == false)
+            {
+                return false;
+            }
+        }
+        else if (QFile::exists(targetEntryPath) == false &&
+                 QFile::copy(entry.absoluteFilePath(), targetEntryPath) == false)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
 }
 
 ArsLocalWorkspace::ArsLocalWorkspace()
@@ -74,6 +117,15 @@ bool ArsLocalWorkspace::initialize()
     m_teamFilePath = QDir::cleanPath(m_rootPath + QDir::separator() + "team.json");
     m_playersFilePath = QDir::cleanPath(m_rootPath + QDir::separator() + "players.json");
     m_trackerBindingsFilePath = QDir::cleanPath(m_rootPath + QDir::separator() + "tracker_bindings.json");
+
+    const QString legacyRootPath = QDir::cleanPath(legacyWorkspaceRootPath());
+    if (QDir(m_rootPath).exists() == false && QDir(legacyRootPath).exists())
+    {
+        if (QDir().rename(legacyRootPath, m_rootPath) == false)
+        {
+            copyDirectoryRecursively(legacyRootPath, m_rootPath);
+        }
+    }
 
     qDebug().noquote() << "ArsLocalWorkspace root path:" << m_rootPath;
     qDebug().noquote() << "ArsLocalWorkspace team file:" << m_teamFilePath;

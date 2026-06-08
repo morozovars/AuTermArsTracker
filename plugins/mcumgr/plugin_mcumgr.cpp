@@ -3743,7 +3743,7 @@ bool plugin_mcumgr::eventFilter(QObject *, QEvent *event)
 
 const QString plugin_mcumgr::plugin_about()
 {
-		return "AuTerm MCUmgr plugin\r\nCopyright 2021-2023 Jamie M.\r\n\r\nCan be used to communicate with Zephyr devices with the serial"
+		return "Ars Tracker MCUmgr plugin\r\nCopyright 2021-2023 Jamie M.\r\n\r\nCan be used to communicate with Zephyr devices with the serial"
 #if defined(PLUGIN_MCUMGR_TRANSPORT_UDP)
 					 "/UDP"
 #endif
@@ -10569,7 +10569,7 @@ void plugin_mcumgr::begin_next_ars_tracker_port_probe()
 				{
 						complete_ars_tracker_port_probe(
 								false, QString(),
-								"Port is already open in AuTerm and cannot be probed without interfering");
+								"Port is already open in Ars Tracker Desktop and cannot be probed without interfering");
 				}
 				return;
 		}

@@ -186,7 +186,7 @@ static void auterm_debug_message_handler(QtMsgType type, const QMessageLogContex
         const double bytes_per_sec = (1000.0 * double(g_log_stats_bytes)) / double(elapsed_ms);
         const double flushes_per_sec = (1000.0 * double(g_log_stats_flushes)) / double(elapsed_ms);
         const QString stats_line =
-            QString("[AUTERM_LOG_STATS] window_ms=%1 msgs_per_sec=%2 bytes_per_sec=%3 flushes_per_sec=%4\n")
+            QString("[ARS_TRACKER_LOG_STATS] window_ms=%1 msgs_per_sec=%2 bytes_per_sec=%3 flushes_per_sec=%4\n")
                 .arg(elapsed_ms)
                 .arg(QString::number(msgs_per_sec, 'f', 1))
                 .arg(QString::number(bytes_per_sec, 'f', 1))
@@ -224,7 +224,7 @@ static void installApplicationMessageHandler()
     g_log_flush_every_line = qEnvironmentVariableIntValue("AUTERM_LOG_FLUSH_EVERY_LINE") == 1;
     g_log_stats_enabled = qEnvironmentVariableIntValue("AUTERM_LOG_STATS") == 1;
     QString log_path =
-        QFileInfo(QDir(QCoreApplication::applicationDirPath()).filePath("auterm_debug.txt"))
+        QFileInfo(QDir(QCoreApplication::applicationDirPath()).filePath("ars_tracker_desktop_debug.txt"))
             .absoluteFilePath();
 
     debug_log_file = new QFile(log_path, qApp);
@@ -232,7 +232,7 @@ static void installApplicationMessageHandler()
     if (debug_log_file->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text) == false)
     {
 #if defined(QT_DEBUG)
-        std::fprintf(stderr, "Could not open AuTerm debug log file: %s\n",
+        std::fprintf(stderr, "Could not open Ars Tracker Desktop debug log file: %s\n",
                      qPrintable(log_path));
         std::fflush(stderr);
 #endif
@@ -242,7 +242,7 @@ static void installApplicationMessageHandler()
     else
     {
         QByteArray banner =
-            QString("\n===== AuTerm started %1 =====\n"
+            QString("\n===== Ars Tracker Desktop started %1 =====\n"
                     "Log file: %2\n")
                 .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz"),
                      log_path)
@@ -256,7 +256,7 @@ static void installApplicationMessageHandler()
 #if defined(QT_DEBUG)
     if (debug_log_file != nullptr && debug_log_file->isOpen())
     {
-        std::fprintf(stderr, "AuTerm debug log file: %s\n", qPrintable(log_path));
+        std::fprintf(stderr, "Ars Tracker Desktop debug log file: %s\n", qPrintable(log_path));
         std::fflush(stderr);
     }
 #endif
@@ -265,6 +265,8 @@ static void installApplicationMessageHandler()
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+    a.setApplicationName(ProductDesktopName);
+    a.setApplicationDisplayName(ProductDesktopName);
     installApplicationMessageHandler();
     qInfo().noquote() << "Application message handler installed";
 

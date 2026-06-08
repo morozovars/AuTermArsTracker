@@ -16,7 +16,7 @@ INCLUDEPATH += ../src
     QT += network
 }
 
-TARGET = AuTerm
+TARGET = ArsTrackerDesktop
 TEMPLATE = app
 
 win32:CONFIG(debug, debug|release) {

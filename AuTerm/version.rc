@@ -17,15 +17,15 @@
         BEGIN
             BLOCK   "040904b0"
             BEGIN
-                VALUE   "FileDescription",  "AuTerm\0"
+                VALUE   "FileDescription",  "Ars Tracker Desktop\0"
                 VALUE   "FileVersion",      "0.36.1.0\0"
-                VALUE   "InternalName",     "AuTerm\0"
+                VALUE   "InternalName",     "ArsTrackerDesktop\0"
                 VALUE   "LegalCopyright",   "Copyright 2023-2025 Jamie McCrae\0"
-                VALUE   "OriginalFilename", "AuTerm.exe\0"
-                VALUE   "ProductName",      "AuTerm\0"
+                VALUE   "OriginalFilename", "ArsTrackerDesktop.exe\0"
+                VALUE   "ProductName",      "Ars Tracker\0"
                 VALUE   "ProductVersion",   "0.36.1.0\0"
             END
         END
     END
 
-    IDI_ICON1               ICON    DISCARDABLE     "images\\AuTerm32.ico"
+    IDI_ICON1               ICON    DISCARDABLE     "images\\Ars32.ico"

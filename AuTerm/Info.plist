@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>${PRODUCT_NAME}</string>
+	<string>Ars Tracker Desktop</string>
 	<key>CFBundleExecutable</key>
 	<string>${EXECUTABLE_NAME}</string>
 	<key>CFBundleIconFile</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>${PRODUCT_NAME}</string>
+	<string>Ars Tracker Desktop</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -23,6 +23,6 @@
 	<key>CFBundleVersion</key>
 	<string>${QMAKE_FULL_VERSION}</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>AuTerm MCUmgr Bluetooth transport needs Bluetooth access</string>
+	<string>Ars Tracker MCUmgr Bluetooth transport needs Bluetooth access</string>
 </dict>
 </plist>

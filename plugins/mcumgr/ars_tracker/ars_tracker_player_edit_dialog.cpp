@@ -50,10 +50,10 @@ ArsTrackerPlayerEditDialog::ArsTrackerPlayerEditDialog(QWidget *parent)
     QFormLayout *form = new QFormLayout();
 
     m_surname = new QLineEdit(this);
-    form->addRow(QString::fromUtf8("Р В¤Р В°Р СР С‘Р В»Р С‘РЎРЏ*"), m_surname);
+    form->addRow(QString::fromUtf8("Фамилия*"), m_surname);
 
     m_name = new QLineEdit(this);
-    form->addRow(QString::fromUtf8("Р ВР СРЎРЏ*"), m_name);
+    form->addRow(QString::fromUtf8("Имя*"), m_name);
 
     QWidget *photoRow = new QWidget(this);
     QHBoxLayout *photoLayout = new QHBoxLayout(photoRow);

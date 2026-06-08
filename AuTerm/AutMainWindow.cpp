@@ -29,6 +29,77 @@
 #include "ui_AutMainWindow.h"
 #include <QDebug>
 
+namespace
+{
+const QString kProjectHomeUrl = "https://github.com/morozovars";
+const QString kLegacyReleaseFeedUrl = "https://raw.githubusercontent.com/thedjnK/AuTerm/main/version.txt";
+
+QString legacySettingsProbePath(const QString &settingsName)
+{
+    QSettings legacySettings(QSettings::IniFormat, QSettings::UserScope, LegacySettingsAppName, settingsName);
+    return legacySettings.fileName();
+}
+
+QString legacyAppDataDirPath()
+{
+    return QFileInfo(legacySettingsProbePath("settings")).dir().absolutePath();
+}
+
+bool ensureDirectoryPath(const QString &path)
+{
+    return QDir(path).exists() || QDir().mkpath(path);
+}
+
+void copyFileIfMissing(const QString &sourcePath, const QString &targetPath)
+{
+    if (sourcePath.isEmpty() || targetPath.isEmpty() || QFile::exists(sourcePath) == false || QFile::exists(targetPath))
+    {
+        return;
+    }
+
+    const QFileInfo targetInfo(targetPath);
+    if (ensureDirectoryPath(targetInfo.dir().absolutePath()) == false)
+    {
+        return;
+    }
+
+    QFile::copy(sourcePath, targetPath);
+}
+
+QString migrateLegacyLogFilePath(const QString &configuredPath, const QString &legacyDir, const QString &newDir)
+{
+    if (configuredPath.isEmpty())
+    {
+        return configuredPath;
+    }
+
+    QString candidatePath = QDir::cleanPath(QDir::fromNativeSeparators(configuredPath));
+    if (QFileInfo(candidatePath).fileName().compare("AuTerm.log", Qt::CaseInsensitive) == 0)
+    {
+        const QString renamedPath = QDir(QFileInfo(candidatePath).dir()).filePath(DefaultLogFileName);
+        copyFileIfMissing(candidatePath, renamedPath);
+        candidatePath = QDir::cleanPath(renamedPath);
+    }
+
+    const QString cleanLegacyDir = QDir::cleanPath(legacyDir);
+    if (cleanLegacyDir.isEmpty() == false &&
+        candidatePath.startsWith(cleanLegacyDir, Qt::CaseInsensitive))
+    {
+        QString suffix = candidatePath.mid(cleanLegacyDir.length());
+        while (suffix.startsWith('/') || suffix.startsWith('\\'))
+        {
+            suffix.remove(0, 1);
+        }
+
+        const QString migratedPath = QDir(newDir).filePath(suffix);
+        copyFileIfMissing(candidatePath, migratedPath);
+        candidatePath = QDir::cleanPath(migratedPath);
+    }
+
+    return candidatePath;
+}
+}
+
 /******************************************************************************/
 // Conditional Compile Defines
 /******************************************************************************/
@@ -163,7 +234,7 @@ AutMainWindow::AutMainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::
 						}
 						else
 						{
-								qDebug() << "Not an AuTerm plugin";
+								qDebug() << "Not a compatible plugin";
 						}
 				}
 
@@ -254,7 +325,7 @@ AutMainWindow::AutMainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::
 						}
 						else
 						{
-								qDebug() << "Not an AuTerm plugin: " << lib_dir.path().append("/").append(plugin_names.at(i));
+								qDebug() << "Not a compatible plugin: " << lib_dir.path().append("/").append(plugin_names.at(i));
 								delete plugin.plugin_loader;
 						}
 				}
@@ -496,7 +567,7 @@ AutMainWindow::AutMainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::
 		connect(&gtmrSpeedTestStats10s, SIGNAL(timeout()), this, SLOT(OutputSpeedTestStats()));
 #endif
 		//Display version
-		ui->statusBar->showMessage(QString("AuTerm version ").append(UwVersion).append(" (").append(OS).append("), Built ").append(__DATE__).append(" Using QT ").append(QT_VERSION_STR)
+		ui->statusBar->showMessage(QString(ProductDesktopName).append(" version ").append(UwVersion).append(" (").append(OS).append("), Built ").append(__DATE__).append(" Using QT ").append(QT_VERSION_STR)
 #ifndef SKIPONLINE
 #ifndef QT_NO_SSL
 #ifdef TARGET_OS_MAC
@@ -541,7 +612,7 @@ AutMainWindow::AutMainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::
 
 		//Create balloon menu items
 		gpBalloonMenu = new QMenu(this);
-		gpBalloonMenu->addAction("Show AuTerm")->setData(BalloonActionShow);
+		gpBalloonMenu->addAction(QString("Show %1").arg(ProductShortName))->setData(BalloonActionShow);
 		gpBalloonMenu->addAction("Exit")->setData(BalloonActionExit);
 
 #ifndef SKIPSPEEDTEST
@@ -2573,7 +2644,7 @@ void AutMainWindow::OpenDevice(bool from_plugin)
 								}
 								gpMainLog->WriteLogData(tr("-").repeated(31));
 								gpMainLog->WriteLogData(tr("\n Log opened ").append(QDate::currentDate().toString("dd/MM/yyyy")).append(" @ ").append(QTime::currentTime().toString("hh:mm")).append(" \n"));
-								gpMainLog->WriteLogData(tr(" AuTerm ").append(UwVersion).append(" \n"));
+								gpMainLog->WriteLogData(QString(" %1 ").arg(ProductDesktopName).append(UwVersion).append(" \n"));
 								if (plugin_active_transport == nullptr)
 								{
 										gpMainLog->WriteLogData(QString(" Port: ").append(ui->combo_COM->currentText()).append("\n"));
@@ -3280,11 +3351,11 @@ void AutMainWindow::dropEvent(QDropEvent *dropEvent)
 
 void AutMainWindow::on_btn_Github_clicked()
 {
-		//Open webpage at the AuTerm github page)
-		if (QDesktopServices::openUrl(QUrl("https://github.com/thedjnK/AuTerm")) == false)
+		//Open project homepage
+		if (QDesktopServices::openUrl(QUrl(kProjectHomeUrl)) == false)
 		{
 				//Failed to open URL
-				QString strMessage = tr("An error occured whilst attempting to open a web browser, please ensure you have a web browser installed and configured. URL: https://github.com/thedjnK/AuTerm");
+				QString strMessage = tr("An error occured whilst attempting to open a web browser, please ensure you have a web browser installed and configured.");
 				gpmErrorForm->SetMessage(&strMessage);
 				gpmErrorForm->show();
 
@@ -3370,13 +3441,13 @@ void AutMainWindow::replyFinished(QNetworkReply* nrReply)
 
 								if (is_newer(&newest_version, &UwVersion) == true)
 								{
-										ui->label_version_update->setText(QString("<a href=\"https://github.com/thedjnK/AuTerm/releases\">update available: %1</a>").arg(newest_version));
-										ui->statusBar->showMessage(QString("AuTerm update to version %1 available").arg(newest_version));
+										ui->label_version_update->setText(QString("<a href=\"%1\">update available: %2</a>").arg(kProjectHomeUrl, newest_version));
+										ui->statusBar->showMessage(QString("%1 update to version %2 available").arg(ProductShortName, newest_version));
 								}
 								else
 								{
 										ui->label_version_update->setText("no updates.");
-										ui->statusBar->showMessage("No AuTerm update available");
+										ui->statusBar->showMessage(QString("No %1 update available").arg(ProductShortName));
 								}
 						}
 				}
@@ -3637,7 +3708,7 @@ void AutMainWindow::on_check_LogAppend_stateChanged(int)
 
 void AutMainWindow::on_btn_Help_clicked()
 {
-		QString strMessage = "Command line options are:-\r\n\r\nPORT=n\r\n    Windows: COM[1..255] specifies a TTY device\r\n    GNU/Linux: /dev/tty[device] specifies a TTY device\r\n    Mac: /dev/[device] specifies a TTY device\r\n\r\nBAUD=n\r\n    [1200..5000000] (limited to 115200 for traditional UARTs)\r\n\r\nSTOP=n\r\n    [1..2]\r\n\r\nDATA=n\r\n    [7..8]\r\n\r\nPAR=n\r\n    [0=None; 1=Odd; 2=Even]\r\n\r\nFLOW=n\r\n    [0=None; 1=Cts/Rts; 2=Xon/Xoff]\r\n\r\nENDCHR=n\r\n    [line termination character :: 0=\\r, 1=\\n, 2=\\r\\n]\r\n\r\nNOCONNECT\r\n    Do not connect to device on startup\r\n\r\nLOCALECHO=n\r\n    [0=Disabled; 1=Enabled]\r\n\r\nLINEMODE=n\r\n    [0=Disabled; 1=Enabled]\r\n\r\nLOG\r\n    Write screen activity to new file '<appname>.log' (Cannot be used with LOG+, LOG+ will take priority)\r\n\r\nLOG+\r\n    Append screen activity to file '<appname>.log' (Cannot be used with LOG, LOG+ will take priority)\r\n\r\nLOG=filename\r\n    File to write the log data to this file (supply extension)\r\n\r\nSHOWCRLF\r\n    When displaying a TX or RX text on screen, show \\t,\\r,\\n as well\r\n\r\nAUTOMATION\r\n    Will initialise and open the automation form\r\n\r\nAUTOMATIONFILE=filename\r\n    Provided that the file exists, it will be loaded into the automation form.\r\n\r\nSCRIPTING\r\n    Will initialise and open the scripting form\r\n\r\nSCRIPTFILE=filename\r\n    Provided that the file exists, it will be opened in the scripting form (SCRIPTING must be provided before this argument)\r\n\r\nSCRIPTACTION=n\r\n    [1=Run script after serial port has been opened] (SCRIPTING and SCRIPTFILE must be provided before this argument)\r\n\r\nTITLE=title\r\n    Will append to the window title (and system tray icon tooltip) the provided text\r\n\r\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\r\n\r\nCharacter escape codes: These are supported in the Automation, Scripting and Speed Test features and allow non-printable ASCII characters to be used. The format of character escape codes is \\HH whereby H represents a hex character (0-9 and A-F), additionally \\r, \\n and \\t can be used to represent a carriage return, new line and tab character individually.\r\nThis function is enabled/disabled in the Automation and Speed Test features by checking the 'Un-escape strings' checkbox to enable it. It cannot be disabled for the Scripting functionality.\r\nFor example: \\00 can be used to represent a null character and \\4C can be used to represent an 'L' ASCII character.\r\n\r\nAdapted from UwTerminalX code, copyright © Laird Connectivity 2015-2022\r\nCopyright © Jamie M. 2023-2024\r\nFor updates and source code licensed under GPLv3, check https://github.com/thedjnK/AuTerm or the 'Update' tab.\r\n\r\nThis program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.\r\nThis program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.\r\nYou should have received a copy of the GNU General Public License along with this program.  If not, see http://www.gnu.org/licenses/";
+		QString strMessage = "Command line options are:-\r\n\r\nPORT=n\r\n    Windows: COM[1..255] specifies a TTY device\r\n    GNU/Linux: /dev/tty[device] specifies a TTY device\r\n    Mac: /dev/[device] specifies a TTY device\r\n\r\nBAUD=n\r\n    [1200..5000000] (limited to 115200 for traditional UARTs)\r\n\r\nSTOP=n\r\n    [1..2]\r\n\r\nDATA=n\r\n    [7..8]\r\n\r\nPAR=n\r\n    [0=None; 1=Odd; 2=Even]\r\n\r\nFLOW=n\r\n    [0=None; 1=Cts/Rts; 2=Xon/Xoff]\r\n\r\nENDCHR=n\r\n    [line termination character :: 0=\\r, 1=\\n, 2=\\r\\n]\r\n\r\nNOCONNECT\r\n    Do not connect to device on startup\r\n\r\nLOCALECHO=n\r\n    [0=Disabled; 1=Enabled]\r\n\r\nLINEMODE=n\r\n    [0=Disabled; 1=Enabled]\r\n\r\nLOG\r\n    Write screen activity to new file '<appname>.log' (Cannot be used with LOG+, LOG+ will take priority)\r\n\r\nLOG+\r\n    Append screen activity to file '<appname>.log' (Cannot be used with LOG, LOG+ will take priority)\r\n\r\nLOG=filename\r\n    File to write the log data to this file (supply extension)\r\n\r\nSHOWCRLF\r\n    When displaying a TX or RX text on screen, show \\t,\\r,\\n as well\r\n\r\nAUTOMATION\r\n    Will initialise and open the automation form\r\n\r\nAUTOMATIONFILE=filename\r\n    Provided that the file exists, it will be loaded into the automation form.\r\n\r\nSCRIPTING\r\n    Will initialise and open the scripting form\r\n\r\nSCRIPTFILE=filename\r\n    Provided that the file exists, it will be opened in the scripting form (SCRIPTING must be provided before this argument)\r\n\r\nSCRIPTACTION=n\r\n    [1=Run script after serial port has been opened] (SCRIPTING and SCRIPTFILE must be provided before this argument)\r\n\r\nTITLE=title\r\n    Will append to the window title (and system tray icon tooltip) the provided text\r\n\r\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\r\n\r\nCharacter escape codes: These are supported in the Automation, Scripting and Speed Test features and allow non-printable ASCII characters to be used. The format of character escape codes is \\HH whereby H represents a hex character (0-9 and A-F), additionally \\r, \\n and \\t can be used to represent a carriage return, new line and tab character individually.\r\nThis function is enabled/disabled in the Automation and Speed Test features by checking the 'Un-escape strings' checkbox to enable it. It cannot be disabled for the Scripting functionality.\r\nFor example: \\00 can be used to represent a null character and \\4C can be used to represent an 'L' ASCII character.\r\n\r\nAdapted from UwTerminalX code, copyright © Laird Connectivity 2015-2022\r\nCopyright © Jamie M. 2023-2024\r\nFor updates and source code licensed under GPLv3, check the project page or the 'Update' tab.\r\n\r\nThis program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.\r\nThis program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.\r\nYou should have received a copy of the GNU General Public License along with this program.  If not, see http://www.gnu.org/licenses/";
 		gpmErrorForm->SetMessage(&strMessage);
 		gpmErrorForm->show();
 
@@ -3831,9 +3902,27 @@ void AutMainWindow::on_btn_EditExternal_clicked()
 
 void AutMainWindow::LoadSettings()
 {
-		gpTermSettings = new QSettings(QSettings::IniFormat, QSettings::UserScope, "AuTerm", "settings"); //Handle to settings
-		gpPredefinedDevice = new QSettings(QSettings::IniFormat, QSettings::UserScope, "AuTerm", "devices"); //Handle to predefined devices
+		const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+		const QString legacyAppDataDir = legacyAppDataDirPath();
+		const QString settingsFilePath = QDir(appDataDir).filePath("settings.ini");
+		const QString devicesFilePath = QDir(appDataDir).filePath("devices.ini");
+		const QString legacySettingsPath = legacySettingsProbePath("settings");
+		const QString legacyDevicesPath = legacySettingsProbePath("devices");
+
+		ensureDirectoryPath(appDataDir);
+		copyFileIfMissing(legacySettingsPath, settingsFilePath);
+		copyFileIfMissing(legacyDevicesPath, devicesFilePath);
+
+		gpTermSettings = new QSettings(settingsFilePath, QSettings::IniFormat); //Handle to settings
+		gpPredefinedDevice = new QSettings(devicesFilePath, QSettings::IniFormat); //Handle to predefined devices
 		gpErrorMessages = new QSettings(":/error_codes.ini", QSettings::IniFormat); //Handle to error codes
+
+		const QString storedLogFile = gpTermSettings->value("LogFile").toString();
+		const QString migratedLogFile = migrateLegacyLogFilePath(storedLogFile, legacyAppDataDir, appDataDir);
+		if (migratedLogFile.isEmpty() == false && migratedLogFile != storedLogFile)
+		{
+				gpTermSettings->setValue("LogFile", migratedLogFile);
+		}
 
 		//Check if error code file is included
 		if (!gpErrorMessages->allKeys().isEmpty())
@@ -4586,7 +4675,8 @@ void AutMainWindow::on_btn_SpeedCopy_clicked()
 				append(QString::number(ui->edit_SpeedBytesRecAvg->text().toUInt()*(gintSpeedTestDataBits + gintSpeedTestStartStopParityBits)));
 		}
 		AutEscape::escape_characters(&baTmpBA);
-		QApplication::clipboard()->setText(QString("=================================\r\n  AuTerm ").
+		QApplication::clipboard()->setText(QString("=================================\r\n  %1 ").
+				arg(ProductDesktopName).
 				append(UwVersion).append(" Speed Test\r\n       ").
 				append(QDate::currentDate().toString("dd/MM/yyyy")).
 				append(" @ ").append(QTime::currentTime().toString("hh:mm")).
@@ -5211,12 +5301,12 @@ void AutMainWindow::SetLoopBackMode(bool bNewMode)
 #ifndef SKIPONLINE
 void AutMainWindow::AuTermUpdateCheck()
 {
-		//Send request to check for AuTerm updates
+		//Send request to check for updates
 		gbTermBusy = true;
 		gchTermMode = mode_check_for_update;
 		ui->btn_Cancel->setEnabled(true);
-		gnmrReply = gnmManager->get(QNetworkRequest(QUrl("https://raw.githubusercontent.com/thedjnK/AuTerm/main/version.txt")));
-		ui->statusBar->showMessage("Checking for AuTerm updates...");
+		gnmrReply = gnmManager->get(QNetworkRequest(QUrl(kLegacyReleaseFeedUrl)));
+		ui->statusBar->showMessage(QString("Checking for %1 updates...").arg(ProductShortName));
 }
 #endif
 
@@ -6400,7 +6490,7 @@ void AutMainWindow::update_split_terminal_state()
 
 void AutMainWindow::update_window_title(bool transport_closing)
 {
-		QString strWindowTitle = "AuTerm (v" % UwVersion % ")";
+		QString strWindowTitle = ProductDesktopName % " (v" % UwVersion % ")";
 
 		if (transport_closing == false && transport_isOpen()) {
 				strWindowTitle.append(" [" % transport_display_name() % "]");

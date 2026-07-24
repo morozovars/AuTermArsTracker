@@ -55,6 +55,10 @@ namespace
 constexpr int kMaxMalformedLinesToLog = 10;
 const QTime kDefaultPlannedStart(10, 0, 0);
 const QTime kDefaultPlannedFinish(11, 30, 0);
+constexpr int kSegmentColumnName = 0;
+constexpr int kSegmentColumnStart = 1;
+constexpr int kSegmentColumnFinish = 2;
+constexpr int kDefaultSegmentDurationMin = 15;
 constexpr int kSessionsColumnSession = 0;
 constexpr int kSessionsColumnTeam = 1;
 constexpr int kSessionsColumnTrackers = 2;
@@ -338,6 +342,34 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		spinTargetPossessions->setRange(0, 100000);
 		targetLayout->addRow("Possessions", spinTargetPossessions);
 		sessionInfoColumns->addWidget(targetBox, 1);
+
+		QGroupBox *segmentsBox = new QGroupBox("Session segments", sessionInfoBox);
+		QVBoxLayout *segmentsLayout = new QVBoxLayout(segmentsBox);
+		sessionSegmentsTable = new QTableWidget(segmentsBox);
+		sessionSegmentsTable->setObjectName("table_session_segments");
+		sessionSegmentsTable->setColumnCount(3);
+		sessionSegmentsTable->setHorizontalHeaderLabels(QStringList() << "Name" << "Start" << "Finish");
+		sessionSegmentsTable->verticalHeader()->setVisible(false);
+		sessionSegmentsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+		sessionSegmentsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+		sessionSegmentsTable->horizontalHeader()->setSectionResizeMode(kSegmentColumnName, QHeaderView::Stretch);
+		sessionSegmentsTable->horizontalHeader()->setSectionResizeMode(kSegmentColumnStart, QHeaderView::ResizeToContents);
+		sessionSegmentsTable->horizontalHeader()->setSectionResizeMode(kSegmentColumnFinish, QHeaderView::ResizeToContents);
+		segmentsLayout->addWidget(sessionSegmentsTable);
+
+		QHBoxLayout *segmentsButtonsRow = new QHBoxLayout();
+		addSessionSegmentButton = new QPushButton("Add", segmentsBox);
+		removeSessionSegmentButton = new QPushButton("Remove", segmentsBox);
+		segmentsButtonsRow->addWidget(addSessionSegmentButton);
+		segmentsButtonsRow->addWidget(removeSessionSegmentButton);
+		segmentsButtonsRow->addStretch(1);
+		segmentsLayout->addLayout(segmentsButtonsRow);
+
+		sessionSegmentsStatusLabel = new QLabel(segmentsBox);
+		sessionSegmentsStatusLabel->setWordWrap(true);
+		segmentsLayout->addWidget(sessionSegmentsStatusLabel);
+		sessionInfoColumns->addWidget(segmentsBox, 1);
+
 		layout->addWidget(sessionInfoBox, 1, 0, 1, 1);
 
 		QGroupBox *assignmentsBox = new QGroupBox("Tracker/player assignments", detailsPage);
@@ -381,6 +413,9 @@ void ArsTrackerSessionsTab::buildDetailsPage()
 		connect(spinTargetMaxSpeedMps, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, onTargetEdited);
 		connect(spinTargetShotsCount, QOverload<int>::of(&QSpinBox::valueChanged), this, onTargetEdited);
 		connect(spinTargetPossessions, QOverload<int>::of(&QSpinBox::valueChanged), this, onTargetEdited);
+		connect(addSessionSegmentButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onAddSessionSegmentClicked);
+		connect(removeSessionSegmentButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onRemoveSessionSegmentClicked);
+		connect(sessionSegmentsTable, &QTableWidget::itemChanged, this, [this]() { updateSessionSegmentsSummary(); });
 		connect(saveSessionTeamButton, &QPushButton::clicked, this, &ArsTrackerSessionsTab::onSaveSessionTeamClicked);
 		connect(sessionTeamCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
 				if (saveSessionTeamButton == nullptr || sessionTeamCombo == nullptr)
@@ -1420,6 +1455,234 @@ void ArsTrackerSessionsTab::onTargetPositionChanged(int index)
 		refreshTargetsForSelectedPosition();
 }
 
+void ArsTrackerSessionsTab::addSessionSegmentRow(const ArsSessionSegment &segment)
+{
+		if (sessionSegmentsTable == nullptr)
+		{
+				return;
+		}
+		const QSignalBlocker blocker(sessionSegmentsTable);
+		const int row = sessionSegmentsTable->rowCount();
+		sessionSegmentsTable->insertRow(row);
+		sessionSegmentsTable->setItem(row, kSegmentColumnName, new QTableWidgetItem(segment.name));
+
+		QTimeEdit *startEdit = new QTimeEdit(sessionSegmentsTable);
+		startEdit->setDisplayFormat("HH:mm");
+		startEdit->setTime(segment.startTime);
+		sessionSegmentsTable->setCellWidget(row, kSegmentColumnStart, startEdit);
+
+		QTimeEdit *finishEdit = new QTimeEdit(sessionSegmentsTable);
+		finishEdit->setDisplayFormat("HH:mm");
+		finishEdit->setTime(segment.endTime);
+		sessionSegmentsTable->setCellWidget(row, kSegmentColumnFinish, finishEdit);
+
+		connect(startEdit, &QTimeEdit::timeChanged, this, [this]() { updateSessionSegmentsSummary(); });
+		connect(finishEdit, &QTimeEdit::timeChanged, this, [this]() { updateSessionSegmentsSummary(); });
+}
+
+void ArsTrackerSessionsTab::onAddSessionSegmentClicked()
+{
+		if (sessionSegmentsTable == nullptr || timeSessionStart == nullptr || timeSessionFinish == nullptr)
+		{
+				return;
+		}
+		const QTime plannedStart = timeSessionStart->time();
+		const QTime plannedFinish = timeSessionFinish->time();
+
+		// New segment starts where the last one ends, so filling a session in order needs no time editing.
+		QTime start = plannedStart;
+		for (const ArsSessionSegment &existing : readSessionSegmentsFromUi())
+		{
+				if (existing.endTime > start)
+				{
+						start = existing.endTime;
+				}
+		}
+		if (start >= plannedFinish)
+		{
+				start = plannedStart;
+		}
+		QTime finish = start.addSecs(kDefaultSegmentDurationMin * 60);
+		if (finish <= start || finish > plannedFinish)
+		{
+				finish = plannedFinish;
+		}
+
+		ArsSessionSegment segment;
+		segment.name = QString("Segment %1").arg(sessionSegmentsTable->rowCount() + 1);
+		segment.startTime = start;
+		segment.endTime = finish;
+		addSessionSegmentRow(segment);
+		updateSessionSegmentsSummary();
+		qDebug() << "Sessions tab segment added"
+						 << "name=" << segment.name
+						 << "start=" << segment.startTime.toString("HH:mm:ss")
+						 << "finish=" << segment.endTime.toString("HH:mm:ss");
+}
+
+void ArsTrackerSessionsTab::onRemoveSessionSegmentClicked()
+{
+		if (sessionSegmentsTable == nullptr)
+		{
+				return;
+		}
+		const int row = sessionSegmentsTable->currentRow();
+		if (row < 0)
+		{
+				if (sessionSegmentsStatusLabel != nullptr)
+				{
+						sessionSegmentsStatusLabel->setText("Select a segment row to remove");
+				}
+				return;
+		}
+		sessionSegmentsTable->removeRow(row);
+		updateSessionSegmentsSummary();
+}
+
+QList<ArsSessionSegment> ArsTrackerSessionsTab::readSessionSegmentsFromUi() const
+{
+		QList<ArsSessionSegment> segments;
+		if (sessionSegmentsTable == nullptr)
+		{
+				return segments;
+		}
+		for (int row = 0; row < sessionSegmentsTable->rowCount(); ++row)
+		{
+				QTimeEdit *startEdit = qobject_cast<QTimeEdit *>(sessionSegmentsTable->cellWidget(row, kSegmentColumnStart));
+				QTimeEdit *finishEdit = qobject_cast<QTimeEdit *>(sessionSegmentsTable->cellWidget(row, kSegmentColumnFinish));
+				if (startEdit == nullptr || finishEdit == nullptr)
+				{
+						qWarning() << "Sessions tab segment row has no time editors" << "row=" << row;
+						continue;
+				}
+				const QTableWidgetItem *nameItem = sessionSegmentsTable->item(row, kSegmentColumnName);
+				ArsSessionSegment segment;
+				segment.name = nameItem != nullptr ? nameItem->text().trimmed() : QString();
+				segment.startTime = startEdit->time();
+				segment.endTime = finishEdit->time();
+				segments.append(segment);
+		}
+		return segments;
+}
+
+void ArsTrackerSessionsTab::applySessionSegmentsToUi(const QList<ArsSessionSegment> &segments)
+{
+		if (sessionSegmentsTable == nullptr)
+		{
+				return;
+		}
+		{
+				const QSignalBlocker blocker(sessionSegmentsTable);
+				sessionSegmentsTable->setRowCount(0);
+		}
+		for (const ArsSessionSegment &segment : segments)
+		{
+				addSessionSegmentRow(segment);
+		}
+		updateSessionSegmentsSummary();
+}
+
+bool ArsTrackerSessionsTab::validateSessionSegments(const QList<ArsSessionSegment> &segments,
+																										const QTime &plannedStart,
+																										const QTime &plannedFinish,
+																										QStringList *problems) const
+{
+		bool ok = true;
+		auto reportProblem = [&](const QString &text) {
+				ok = false;
+				if (problems != nullptr)
+				{
+						problems->append(text);
+				}
+		};
+
+		QList<ArsSessionSegment> sorted = segments;
+		std::sort(sorted.begin(), sorted.end(), [](const ArsSessionSegment &a, const ArsSessionSegment &b) {
+				return a.startTime < b.startTime;
+		});
+
+		QStringList usedNames;
+		QTime previousFinish;
+		QString previousName;
+		for (int i = 0; i < sorted.size(); ++i)
+		{
+				const ArsSessionSegment &segment = sorted.at(i);
+				const QString label = segment.name.isEmpty()
+															? QString("Segment %1").arg(i + 1)
+															: QString("Segment \"%1\"").arg(segment.name);
+				if (segment.name.isEmpty())
+				{
+						reportProblem(QString("%1: name must not be empty.").arg(label));
+				}
+				// Report pages match player metrics to a segment by name, so names have to be unique.
+				else if (usedNames.contains(segment.name, Qt::CaseInsensitive))
+				{
+						reportProblem(QString("%1: duplicate segment name.").arg(label));
+				}
+				else
+				{
+						usedNames.append(segment.name);
+				}
+				if (segment.endTime <= segment.startTime)
+				{
+						reportProblem(QString("%1: finish time must be later than start time.").arg(label));
+				}
+				if (segment.startTime < plannedStart || segment.endTime > plannedFinish)
+				{
+						reportProblem(QString("%1: %2-%3 is outside the planned session period %4-%5.")
+															.arg(label,
+																	 segment.startTime.toString("HH:mm"),
+																	 segment.endTime.toString("HH:mm"),
+																	 plannedStart.toString("HH:mm"),
+																	 plannedFinish.toString("HH:mm")));
+				}
+				if (previousFinish.isValid() && segment.startTime < previousFinish)
+				{
+						reportProblem(QString("%1 overlaps with segment \"%2\".").arg(label, previousName));
+				}
+				if (!previousFinish.isValid() || segment.endTime > previousFinish)
+				{
+						previousFinish = segment.endTime;
+						previousName = segment.name;
+				}
+		}
+		return ok;
+}
+
+void ArsTrackerSessionsTab::updateSessionSegmentsSummary()
+{
+		if (sessionSegmentsStatusLabel == nullptr)
+		{
+				return;
+		}
+		const QList<ArsSessionSegment> segments = readSessionSegmentsFromUi();
+		if (segments.isEmpty())
+		{
+				sessionSegmentsStatusLabel->setText("No segments: the report contains session totals only.");
+				return;
+		}
+
+		qint64 coveredMs = 0;
+		for (const ArsSessionSegment &segment : segments)
+		{
+				if (segment.endTime > segment.startTime)
+				{
+						coveredMs += static_cast<qint64>(segment.startTime.secsTo(segment.endTime)) * 1000;
+				}
+		}
+		QString text = QString("%1 segment(s), %2 covered").arg(segments.size()).arg(formatDurationMs(coveredMs));
+		QStringList problems;
+		if (timeSessionStart != nullptr && timeSessionFinish != nullptr)
+		{
+				validateSessionSegments(segments, timeSessionStart->time(), timeSessionFinish->time(), &problems);
+		}
+		if (!problems.isEmpty())
+		{
+				text += "\n" + problems.join("\n");
+		}
+		sessionSegmentsStatusLabel->setText(text);
+}
+
 ArsSessionInfo ArsTrackerSessionsTab::readSessionInfoFromUi() const
 {
 		ArsSessionInfo info;
@@ -1435,6 +1698,7 @@ ArsSessionInfo ArsTrackerSessionsTab::readSessionInfoFromUi() const
 						info.parameters.goals.append(trimmed);
 				}
 		}
+		info.segments = readSessionSegmentsFromUi();
 		const ArsSessionTargetSettings t = readTargetSettingsFromUi();
 		info.plannedMetrics.distanceKm = t.targetDistanceKm;
 		info.plannedMetrics.accelerationDistanceM = t.targetAccelerationDistanceM;
@@ -1459,7 +1723,7 @@ bool ArsTrackerSessionsTab::validateSessionInfo(const ArsSessionInfo &info, QStr
 				}
 				return false;
 		}
-		return true;
+		return validateSessionSegments(info.segments, info.parameters.startTime, info.parameters.endTime, problems);
 }
 
 void ArsTrackerSessionsTab::resetSessionInformationFieldsToDefaults()
@@ -1469,6 +1733,7 @@ void ArsTrackerSessionsTab::resetSessionInformationFieldsToDefaults()
 		timeSessionFinish->setTime(kDefaultPlannedFinish);
 		editSessionLocation->clear();
 		editSessionGoals->clear();
+		applySessionSegmentsToUi(QList<ArsSessionSegment>());
 		spinTargetDistanceKm->setValue(0.0);
 		spinTargetAccelerationDistanceM->setValue(0);
 		spinTargetFootload10_3g->setValue(0);
@@ -1512,6 +1777,7 @@ void ArsTrackerSessionsTab::applySessionInfoToUi(const ArsSessionInfo &info)
 		}
 		editSessionLocation->setText(info.parameters.location);
 		editSessionGoals->setPlainText(info.parameters.goals.join("\n"));
+		applySessionSegmentsToUi(info.segments);
 
 		m_sessionTargetOverrides.clear();
 		for (auto it = info.targetsByPosition.cbegin(); it != info.targetsByPosition.cend(); ++it)
@@ -2161,19 +2427,65 @@ void ArsTrackerSessionsTab::startSessionProcessingFlow()
 		m_postprocessRequest.timeRange.finishTimestamp100ms = static_cast<uint32_t>(std::max<qint64>(0, finish100ms));
 		m_postprocessRequest.timeRange.plannedStartTimeText = plannedStart.toString("HH:mm:ss");
 		m_postprocessRequest.timeRange.plannedFinishTimeText = plannedFinish.toString("HH:mm:ss");
+
+		// Segment windows use the same zero point as the session window: the session folder timestamp.
+		m_postprocessRequest.segments.clear();
+		for (const ArsSessionSegment &segment : m_pendingProcessSessionInfo.segments)
+		{
+				const int segmentStartSec = sessionStart.secsTo(segment.startTime);
+				const int segmentFinishSec = sessionStart.secsTo(segment.endTime);
+				if (segmentFinishSec <= 0 || segmentFinishSec <= segmentStartSec)
+				{
+						m_processProblems.append(QString("Segment \"%1\": %2-%3 is not a valid session period.")
+																				 .arg(segment.name,
+																							segment.startTime.toString("HH:mm"),
+																							segment.endTime.toString("HH:mm")));
+						continue;
+				}
+				ArsSessionSegmentRange range;
+				range.name = segment.name;
+				range.startTimestamp100ms = static_cast<uint32_t>(std::max(0, segmentStartSec) * 10);
+				range.finishTimestamp100ms = static_cast<uint32_t>(segmentFinishSec * 10);
+				range.startTimeText = segment.startTime.toString("HH:mm:ss");
+				range.finishTimeText = segment.endTime.toString("HH:mm:ss");
+				m_postprocessRequest.segments.append(range);
+		}
+
 		qDebug() << "Sessions tab postprocessing begin"
 						 << "sessionPath=" << sessionPath
 						 << "outputPath=" << outputPath
 						 << "plannedStart=" << m_postprocessRequest.timeRange.plannedStartTimeText
 						 << "plannedFinish=" << m_postprocessRequest.timeRange.plannedFinishTimeText
 						 << "start100ms=" << m_postprocessRequest.timeRange.startTimestamp100ms
-						 << "finish100ms=" << m_postprocessRequest.timeRange.finishTimestamp100ms;
+						 << "finish100ms=" << m_postprocessRequest.timeRange.finishTimestamp100ms
+						 << "segments=" << m_postprocessRequest.segments.size();
 
 		if (m_processProblems.isEmpty())
 		{
 				if (!QDir().mkpath(outputPath))
 				{
 						m_processProblems.append(QString("Failed to create postprocessed directory: %1").arg(outputPath));
+				}
+		}
+
+		if (m_processProblems.isEmpty())
+		{
+				// Segment results are matched to segments by index, so results of removed or renamed
+				// segments must not survive into the next report.
+				QDir segmentsDir(QDir(outputPath).filePath(kArsSegmentsFolderName));
+				if (segmentsDir.exists())
+				{
+						const QStringList staleFiles = segmentsDir.entryList(QStringList() << "*.json" << "touchIntensity_*.csv", QDir::Files);
+						for (const QString &staleFile : staleFiles)
+						{
+								if (!segmentsDir.remove(staleFile))
+								{
+										m_processProblems.append(QString("Failed to remove stale segment result: %1").arg(staleFile));
+								}
+						}
+						qDebug() << "Sessions tab stale segment results removed"
+										 << "path=" << segmentsDir.absolutePath()
+										 << "count=" << staleFiles.size();
 				}
 		}
 
@@ -2329,6 +2641,32 @@ void ArsTrackerSessionsTab::processNextSessionPair()
 										 << "serial=" << pairInput.pairSerial
 										 << "json=" << postResult.jsonPath
 										 << "csv=" << postResult.touchIntensityCsvPath;
+				}
+
+				// Segments reuse the already parsed pair data, so this costs no extra file reads.
+				int segmentsDone = 0;
+				for (const ArsPairPostprocessResult &segmentResult : ArsSessionPostprocessor::processPairSegments(m_postprocessRequest, pair))
+				{
+						if (segmentResult.ok)
+						{
+								++segmentsDone;
+								continue;
+						}
+						for (const QString &p : segmentResult.problems)
+						{
+								m_processProblems.append(p);
+						}
+						qWarning() << "Sessions tab segment postprocessing failed"
+											 << "serial=" << pairInput.pairSerial
+											 << "segment=" << segmentResult.segmentName
+											 << "errors=" << segmentResult.problems;
+				}
+				if (segmentsDone > 0)
+				{
+						m_processSuccesses.append(QString("%1: %2 of %3 segment(s) processed")
+																					.arg(pairInput.pairSerial)
+																					.arg(segmentsDone)
+																					.arg(m_postprocessRequest.segments.size()));
 				}
 		}
 

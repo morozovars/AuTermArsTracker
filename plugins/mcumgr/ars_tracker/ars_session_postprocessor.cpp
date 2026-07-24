@@ -1,5 +1,6 @@
 #include "ars_session_postprocessor.h"
 
+#include <QChar>
 #include <QDir>
 #include <QDebug>
 #include <QFile>
@@ -129,17 +130,40 @@ QString range_to_text(const std::vector<T> &items, F valueFn)
     }
     return QString("[%1..%2]").arg(minValue).arg(maxValue);
 }
+
+// One postprocessing window: either the whole planned session period or a single session segment.
+struct ArsPostprocessWindow
+{
+    QString sessionName;
+    QString outputPath;
+    QString fileSuffix;    // empty for the session window, "__segNN" for a segment
+    QString segmentName;   // empty for the session window
+    int segmentIndex = -1; // -1 for the session window
+    uint32_t startTimestamp100ms = 0;
+    uint32_t finishTimestamp100ms = 0;
+    QString startTimeText;
+    QString finishTimeText;
+};
+
+QString window_label(const ArsPostprocessWindow &window, const QString &pairSerial)
+{
+    return window.segmentIndex < 0
+               ? QString("pair %1").arg(pairSerial)
+               : QString("pair %1 segment \"%2\"").arg(pairSerial, window.segmentName);
 }
 
-ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPostprocessRequest &request,
-                                                              const ArsPairProcessedData &pairData)
+ArsPairPostprocessResult run_postprocess_window(const ArsPostprocessWindow &window,
+                                                const ArsPairProcessedData &pairData)
 {
     ArsPairPostprocessResult out;
     out.pairSerial = pairData.pairSerial;
+    out.segmentIndex = window.segmentIndex;
+    out.segmentName = window.segmentName;
+    const QString label = window_label(window, pairData.pairSerial);
 
     if (!pairData.left.has_value() || !pairData.right.has_value())
     {
-        out.problems.append(QString("pair %1: missing left/right tracker data").arg(pairData.pairSerial));
+        out.problems.append(QString("%1: missing left/right tracker data").arg(label));
         return out;
     }
 
@@ -151,13 +175,13 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
     // - integralState.timestamp is timestamp100ms,
     // - splash.timestamp/tPeak is milliseconds (session-relative), same as ALGA splash logic expects.
     // Therefore splash filtering must use ms window derived from 100ms request bounds.
-    const uint32_t splashWindowStartMs = request.timeRange.startTimestamp100ms * 100u;
-    const uint32_t splashWindowFinishMs = request.timeRange.finishTimestamp100ms * 100u;
+    const uint32_t splashWindowStartMs = window.startTimestamp100ms * 100u;
+    const uint32_t splashWindowFinishMs = window.finishTimestamp100ms * 100u;
 
     const std::vector<IntegralState> leftFiltered =
-        filter_integral_by_timestamp(leftData.integralStates, request.timeRange.startTimestamp100ms, request.timeRange.finishTimestamp100ms);
+        filter_integral_by_timestamp(leftData.integralStates, window.startTimestamp100ms, window.finishTimestamp100ms);
     const std::vector<IntegralState> rightFiltered =
-        filter_integral_by_timestamp(rightData.integralStates, request.timeRange.startTimestamp100ms, request.timeRange.finishTimestamp100ms);
+        filter_integral_by_timestamp(rightData.integralStates, window.startTimestamp100ms, window.finishTimestamp100ms);
     const std::vector<SplashData> leftSplashFiltered =
         filter_splash_by_timestamp(leftData.splashRecords, splashWindowStartMs, splashWindowFinishMs);
     const std::vector<SplashData> rightSplashFiltered =
@@ -166,8 +190,8 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
     qDebug().noquote()
         << QString("ArsPostProcessSplash pair=%1 window100ms=[%2,%3) windowMs=[%4,%5) leftIntegralRange100ms=%6 rightIntegralRange100ms=%7 leftSplashRangeMs=%8 rightSplashRangeMs=%9")
                .arg(pairData.pairSerial)
-               .arg(request.timeRange.startTimestamp100ms)
-               .arg(request.timeRange.finishTimestamp100ms)
+               .arg(window.startTimestamp100ms)
+               .arg(window.finishTimestamp100ms)
                .arg(splashWindowStartMs)
                .arg(splashWindowFinishMs)
                .arg(range_to_text(leftData.integralStates, [](const IntegralState &s) { return s.timestamp; }))
@@ -177,7 +201,8 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
 
     qDebug() << "Sessions tab postprocessing pair filtered"
              << "serial=" << pairData.pairSerial
-             << "range=[" << request.timeRange.startTimestamp100ms << "," << request.timeRange.finishTimestamp100ms << ")"
+             << "segment=" << (window.segmentIndex < 0 ? QString("session") : window.segmentName)
+             << "range=[" << window.startTimestamp100ms << "," << window.finishTimestamp100ms << ")"
              << "leftIntegral=" << leftData.integralStates.size() << "/" << leftFiltered.size()
              << "rightIntegral=" << rightData.integralStates.size() << "/" << rightFiltered.size()
              << "leftSplash=" << leftData.splashRecords.size() << "/" << leftSplashFiltered.size()
@@ -185,7 +210,8 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
 
     if (leftFiltered.empty() && rightFiltered.empty() && leftSplashFiltered.empty() && rightSplashFiltered.empty())
     {
-        out.problems.append(QString("pair %1: no data in planned session period").arg(pairData.pairSerial));
+        out.problems.append(QString("%1: no data in %2")
+                                .arg(label, window.segmentIndex < 0 ? QString("planned session period") : QString("segment period")));
         return out;
     }
 
@@ -211,18 +237,18 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
     }
     catch (const std::exception &e)
     {
-        out.problems.append(QString("pair %1: PostProcessing failed: %2").arg(pairData.pairSerial, QString::fromUtf8(e.what())));
+        out.problems.append(QString("%1: PostProcessing failed: %2").arg(label, QString::fromUtf8(e.what())));
         return out;
     }
     catch (...)
     {
-        out.problems.append(QString("pair %1: PostProcessing failed with unknown exception").arg(pairData.pairSerial));
+        out.problems.append(QString("%1: PostProcessing failed with unknown exception").arg(label));
         return out;
     }
 
-    const QString safePair = sanitize_file_stem(pairData.pairSerial);
-    out.jsonPath = QDir(request.outputPath).filePath(QString("%1.json").arg(safePair));
-    out.touchIntensityCsvPath = QDir(request.outputPath).filePath(QString("touchIntensity_%1.csv").arg(safePair));
+    const QString safePair = sanitize_file_stem(pairData.pairSerial) + window.fileSuffix;
+    out.jsonPath = QDir(window.outputPath).filePath(QString("%1.json").arg(safePair));
+    out.touchIntensityCsvPath = QDir(window.outputPath).filePath(QString("touchIntensity_%1.csv").arg(safePair));
 
     const PostProcessingSummary summary = pp.buildSummary();
     const std::vector<TouchIntensityPoint> touchIntensity = pp.buildTouchIntensityPerMinute();
@@ -253,14 +279,19 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
 
     QJsonObject root;
     root["pairSerial"] = pairData.pairSerial;
-    root["sessionName"] = request.sessionName;
+    root["sessionName"] = window.sessionName;
     root["status"] = "ok";
+    if (window.segmentIndex >= 0)
+    {
+        root["segmentIndex"] = window.segmentIndex;
+        root["segmentName"] = window.segmentName;
+    }
 
     QJsonObject rangeObj;
-    rangeObj["plannedStartTime"] = request.timeRange.plannedStartTimeText;
-    rangeObj["plannedFinishTime"] = request.timeRange.plannedFinishTimeText;
-    rangeObj["startTimestamp100ms"] = static_cast<qint64>(request.timeRange.startTimestamp100ms);
-    rangeObj["finishTimestamp100ms"] = static_cast<qint64>(request.timeRange.finishTimestamp100ms);
+    rangeObj["plannedStartTime"] = window.startTimeText;
+    rangeObj["plannedFinishTime"] = window.finishTimeText;
+    rangeObj["startTimestamp100ms"] = static_cast<qint64>(window.startTimestamp100ms);
+    rangeObj["finishTimestamp100ms"] = static_cast<qint64>(window.finishTimestamp100ms);
     root["timeRange"] = rangeObj;
 
     QJsonObject inputObj;
@@ -281,7 +312,7 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
     QString writeError;
     if (!write_text_file(out.jsonPath, QString::fromUtf8(jsonDoc.toJson(QJsonDocument::Indented)), &writeError))
     {
-        out.problems.append(QString("pair %1: failed to write JSON: %2").arg(pairData.pairSerial, writeError));
+        out.problems.append(QString("%1: failed to write JSON: %2").arg(label, writeError));
         return out;
     }
 
@@ -296,10 +327,67 @@ ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPo
     }
     if (!write_text_file(out.touchIntensityCsvPath, csv, &writeError))
     {
-        out.problems.append(QString("pair %1: failed to write touchIntensity CSV: %2").arg(pairData.pairSerial, writeError));
+        out.problems.append(QString("%1: failed to write touchIntensity CSV: %2").arg(label, writeError));
         return out;
     }
 
     out.ok = true;
     return out;
+}
+} // namespace
+
+ArsPairPostprocessResult ArsSessionPostprocessor::processPair(const ArsSessionPostprocessRequest &request,
+                                                              const ArsPairProcessedData &pairData)
+{
+    ArsPostprocessWindow window;
+    window.sessionName = request.sessionName;
+    window.outputPath = request.outputPath;
+    window.startTimestamp100ms = request.timeRange.startTimestamp100ms;
+    window.finishTimestamp100ms = request.timeRange.finishTimestamp100ms;
+    window.startTimeText = request.timeRange.plannedStartTimeText;
+    window.finishTimeText = request.timeRange.plannedFinishTimeText;
+    return run_postprocess_window(window, pairData);
+}
+
+QList<ArsPairPostprocessResult> ArsSessionPostprocessor::processPairSegments(const ArsSessionPostprocessRequest &request,
+                                                                            const ArsPairProcessedData &pairData)
+{
+    QList<ArsPairPostprocessResult> results;
+    if (request.segments.isEmpty())
+    {
+        return results;
+    }
+
+    // Segment results live in a subfolder: the report builder scans postprocessed/*.json for pair files.
+    const QString segmentsPath = QDir(request.outputPath).filePath(kArsSegmentsFolderName);
+    if (!QDir().mkpath(segmentsPath))
+    {
+        ArsPairPostprocessResult failed;
+        failed.pairSerial = pairData.pairSerial;
+        failed.problems.append(QString("pair %1: failed to create segments folder: %2").arg(pairData.pairSerial, segmentsPath));
+        results.append(failed);
+        return results;
+    }
+
+    for (int i = 0; i < request.segments.size(); ++i)
+    {
+        const ArsSessionSegmentRange &segment = request.segments.at(i);
+        ArsPostprocessWindow window;
+        window.sessionName = request.sessionName;
+        window.outputPath = segmentsPath;
+        window.fileSuffix = QString("__seg%1").arg(i + 1, 2, 10, QChar('0'));
+        window.segmentName = segment.name;
+        window.segmentIndex = i;
+        window.startTimestamp100ms = segment.startTimestamp100ms;
+        window.finishTimestamp100ms = segment.finishTimestamp100ms;
+        window.startTimeText = segment.startTimeText;
+        window.finishTimeText = segment.finishTimeText;
+        qDebug() << "Sessions tab segment postprocessing begin"
+                 << "pair=" << pairData.pairSerial
+                 << "segmentIndex=" << i
+                 << "name=" << segment.name
+                 << "range=[" << segment.startTimestamp100ms << "," << segment.finishTimestamp100ms << ")";
+        results.append(run_postprocess_window(window, pairData));
+    }
+    return results;
 }

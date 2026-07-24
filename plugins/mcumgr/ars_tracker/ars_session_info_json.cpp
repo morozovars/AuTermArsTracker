@@ -77,6 +77,69 @@ bool load_session_info_root(const QString &filePath,
 		return true;
 }
 
+QJsonArray segments_to_json(const QList<ArsSessionSegment> &segments, const QJsonValue &storedValue)
+{
+		// Session segments are stored as SessionInfo.json "exercises". Only name/startTime/endTime are edited
+		// in AuTerm, so extra keys of already stored entries (skill, instructions, targetMetrics) are kept.
+		QMap<QString, QJsonObject> storedByName;
+		for (const QJsonValue &v : storedValue.toArray())
+		{
+				const QJsonObject o = v.toObject();
+				const QString name = o.value("name").toString().trimmed();
+				if (!name.isEmpty() && !storedByName.contains(name))
+				{
+						storedByName.insert(name, o);
+				}
+		}
+
+		QJsonArray out;
+		for (const ArsSessionSegment &segment : segments)
+		{
+				QJsonObject o = storedByName.value(segment.name.trimmed());
+				o["name"] = segment.name;
+				o["startTime"] = segment.startTime.toString("HH:mm:ss");
+				o["endTime"] = segment.endTime.toString("HH:mm:ss");
+				out.append(o);
+		}
+		return out;
+}
+
+QList<ArsSessionSegment> segments_from_json(const QJsonValue &value)
+{
+		QList<ArsSessionSegment> segments;
+		if (!value.isArray())
+		{
+				return segments;
+		}
+		int index = 0;
+		for (const QJsonValue &v : value.toArray())
+		{
+				const QJsonObject o = v.toObject();
+				++index;
+				bool startOk = false;
+				bool endOk = false;
+				ArsSessionSegment segment;
+				segment.name = o.value("name").toString().trimmed();
+				segment.startTime = parse_time_value(o.value("startTime"), &startOk);
+				segment.endTime = parse_time_value(o.value("endTime"), &endOk);
+				if (!startOk || !endOk)
+				{
+						qWarning() << "Sessions tab SessionInfo.json segment skipped, invalid time"
+											 << "index=" << index
+											 << "name=" << segment.name
+											 << "startTime=" << o.value("startTime").toString()
+											 << "endTime=" << o.value("endTime").toString();
+						continue;
+				}
+				if (segment.name.isEmpty())
+				{
+						segment.name = QString("Segment %1").arg(index);
+				}
+				segments.append(segment);
+		}
+		return segments;
+}
+
 QJsonObject assignment_to_json(const ArsSessionPairAssignment &assignment)
 {
 		QJsonObject o;
@@ -140,6 +203,7 @@ bool ArsSessionInfoJson::saveSessionInfoJson(const QString &sessionPath,
 
 		root["plannedMetrics"] = planned;
 		root["targetsByPosition"] = arsTargetsByPositionToJson(info.targetsByPosition);
+		root["exercises"] = segments_to_json(info.segments, root.value("exercises"));
 		root["startTime"] = info.parameters.startTime.toString("HH:mm:ss");
 		root["endTime"] = info.parameters.endTime.toString("HH:mm:ss");
 		// TODO: rename root startTime/endTime to plannedStartTime/plannedEndTime in a future schema migration.
@@ -313,6 +377,8 @@ bool ArsSessionInfoJson::loadSessionInfoJson(const QString &sessionPath,
 						info.targetsByPosition.insert(it.key(), m);
 				}
 		}
+
+		info.segments = segments_from_json(root.value("exercises"));
 
 		const QJsonObject actual = root.value("actualTime").toObject();
 		const QString actualStart = actual.value("startTime").toString().trimmed();

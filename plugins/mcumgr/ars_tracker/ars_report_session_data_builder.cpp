@@ -186,6 +186,28 @@ QJsonObject defaultCalculationSettings()
                         { "allowedShotsPassesImbalancePercent", 20.0 } };
 }
 
+// Session segments are stored as SessionInfo.json "exercises" and are rendered as report exercise pages.
+QJsonArray parseSessionSegments(const QJsonValue &value)
+{
+    QJsonArray out;
+    if (!value.isArray()) return out;
+    for (const QJsonValue &v : value.toArray())
+    {
+        const QJsonObject src = v.toObject();
+        const QString startTime = normalizeTime(asString(src, "startTime"));
+        const QString endTime = normalizeTime(asString(src, "endTime"));
+        if (startTime.isEmpty() || endTime.isEmpty()) continue;
+        QJsonObject segment{ { "name", asString(src, "name") },
+                             { "skill", asString(src, "skill") },
+                             { "instructions", asString(src, "instructions") },
+                             { "startTime", startTime },
+                             { "endTime", endTime },
+                             { "targetMetrics", src.value("targetMetrics").toObject() } };
+        out.append(segment);
+    }
+    return out;
+}
+
 QJsonObject buildSessionObject(const QString &sessionPath,
                                const QJsonObject &sessionInfoRoot,
                                const ArsTeam *teamForDefaults)
@@ -236,6 +258,7 @@ QJsonObject buildSessionObject(const QString &sessionPath,
     session["teamId"] = teamId;
     session["location"] = location;
     session["goals"] = parseGoals(sessionInfoRoot.value("goals"));
+    session["exercises"] = parseSessionSegments(sessionInfoRoot.value("exercises"));
 
     QJsonObject planned = sessionInfoRoot.value("plannedMetrics").toObject();
     if (planned.isEmpty() && teamForDefaults != nullptr)
@@ -406,6 +429,36 @@ QJsonArray loadTouchIntensity(const QString &csvPath, QStringList *warnings, con
     return out;
 }
 
+// pairId -> segmentIndex -> ALGA metrics of that segment, produced by the Process step.
+QMap<QString, QMap<int, QJsonObject>> loadSegmentMetricsByPair(const QString &postprocessedPath, QStringList *warnings)
+{
+    QMap<QString, QMap<int, QJsonObject>> out;
+    const QString segmentsPath = QDir(postprocessedPath).filePath("segments");
+    if (!QDir(segmentsPath).exists()) return out;
+
+    const QFileInfoList segmentFiles = QDir(segmentsPath).entryInfoList(QStringList() << "*.json", QDir::Files, QDir::Name);
+    for (const QFileInfo &segmentFile : segmentFiles)
+    {
+        QString error;
+        const QJsonDocument doc = readJsonDocument(segmentFile.absoluteFilePath(), &error);
+        if (!doc.isObject())
+        {
+            if (warnings != nullptr) warnings->append(QString("Skip invalid segment JSON %1: %2").arg(segmentFile.fileName(), error));
+            continue;
+        }
+        const QJsonObject obj = doc.object();
+        const QString pairId = sanitizePairId(asString(obj, "pairSerial"));
+        const int segmentIndex = obj.value("segmentIndex").toInt(-1);
+        if (pairId.isEmpty() || segmentIndex < 0)
+        {
+            if (warnings != nullptr) warnings->append(QString("Skip segment JSON without pairSerial/segmentIndex: %1").arg(segmentFile.fileName()));
+            continue;
+        }
+        out[pairId].insert(segmentIndex, obj.value("metrics").toObject());
+    }
+    return out;
+}
+
 void mapMetrics(const QJsonObject &pairMetrics, QJsonObject *dst)
 {
     if (dst == nullptr) return;
@@ -444,6 +497,37 @@ void mapMetrics(const QJsonObject &pairMetrics, QJsonObject *dst)
     }
     if (pairMetrics.value("ballDistanceM").isDouble()) (*dst)["ballDistanceM"] = pairMetrics.value("ballDistanceM").toDouble();
     if (pairMetrics.value("ballTimeSec").isDouble()) (*dst)["ballTimeSec"] = pairMetrics.value("ballTimeSec").toDouble();
+}
+
+// One entry per session segment, in session order, so report pages can match segments by name.
+QJsonArray buildExerciseStatsForPair(const QJsonArray &segments, const QMap<int, QJsonObject> &segmentMetrics)
+{
+    QJsonArray stats;
+    for (int i = 0; i < segments.size(); ++i)
+    {
+        QJsonObject item = segments.at(i).toObject();
+        if (segmentMetrics.contains(i))
+        {
+            QJsonObject metrics;
+            mapMetrics(segmentMetrics.value(i), &metrics);
+            // Team exercise table reads distance in km while per-player tables use the mapped metrics as is.
+            if (metrics.value("distanceM").isDouble())
+            {
+                metrics["distanceKm"] = metrics.value("distanceM").toDouble() / 1000.0;
+            }
+            item.insert("status", "ok");
+            item.insert("error", "");
+            item.insert("metrics", metrics);
+        }
+        else
+        {
+            item.insert("status", "notAvailable");
+            item.insert("error", "Segment metrics are not available for this player");
+            item.insert("metrics", QJsonObject());
+        }
+        stats.append(item);
+    }
+    return stats;
 }
 } // namespace
 
@@ -528,6 +612,9 @@ ArsReportSessionDataBuildResult buildArsReportSessionDataJson(const QString sess
     ArsPlayerRepository playerRepository(workspaceRoot);
 
     const QFileInfoList pairFiles = QDir(postprocessedPath).entryInfoList(QStringList() << "*.json", QDir::Files, QDir::Name);
+    const QJsonArray sessionSegments = sessionObject.value("exercises").toArray();
+    const QMap<QString, QMap<int, QJsonObject>> segmentMetricsByPair = loadSegmentMetricsByPair(postprocessedPath, &result.warnings);
+    QMap<int, int> playersWithSegmentMetrics;
     QJsonArray playersArray;
     QJsonArray resultsArray;
     QMap<QString, QJsonObject> playersById;
@@ -649,6 +736,16 @@ ArsReportSessionDataBuildResult buildArsReportSessionDataJson(const QString sess
             result.warnings.append(QString("Pair %1: %2").arg(pairId, error));
         }
 
+        const QMap<int, QJsonObject> pairSegmentMetrics = segmentMetricsByPair.value(pairId);
+        for (auto it = pairSegmentMetrics.cbegin(); it != pairSegmentMetrics.cend(); ++it)
+        {
+            playersWithSegmentMetrics[it.key()] += 1;
+        }
+        if (!sessionSegments.isEmpty() && pairSegmentMetrics.isEmpty())
+        {
+            result.warnings.append(QString("Pair %1: no segment metrics found; run Process after editing session segments.").arg(pairId));
+        }
+
         QJsonObject resultObj{
             {"playerId", playerId},
             {"trackerL", asString(pairObj.value("input").toObject(), "leftTracker")},
@@ -660,7 +757,7 @@ ArsReportSessionDataBuildResult buildArsReportSessionDataJson(const QString sess
             {"finishingDribbles", QJsonArray()},
             {"possessionEvents", QJsonArray()},
             {"shotEvents", QJsonArray()},
-            {"exerciseStats", QJsonArray()}};
+            {"exerciseStats", buildExerciseStatsForPair(sessionSegments, pairSegmentMetrics)}};
         resultsArray.append(resultObj);
     }
 
@@ -680,6 +777,22 @@ ArsReportSessionDataBuildResult buildArsReportSessionDataJson(const QString sess
         playersArray.append(it.value());
     }
 
+    // Session-level segment list: report pages take names and targets from here and player rows from results.
+    QJsonArray sessionExerciseStats;
+    for (int i = 0; i < sessionSegments.size(); ++i)
+    {
+        QJsonObject item = sessionSegments.at(i).toObject();
+        const int playersWithMetrics = playersWithSegmentMetrics.value(i, 0);
+        item.insert("status", playersWithMetrics > 0 ? QString("ok") : QString("notAvailable"));
+        item.insert("error", playersWithMetrics > 0
+                                 ? QString()
+                                 : QString("Segment metrics are not available for current input data"));
+        item.insert("metrics", QJsonObject());
+        sessionExerciseStats.append(item);
+        qDebug() << "ArsReport: segment" << item.value("name").toString()
+                 << "players with metrics=" << playersWithMetrics;
+    }
+
     QJsonArray processingErrors;
     for (const QString &w : result.warnings) processingErrors.append(w);
 
@@ -690,7 +803,7 @@ ArsReportSessionDataBuildResult buildArsReportSessionDataJson(const QString sess
         {"players", playersArray},
         {"results", resultsArray},
         {"processingErrors", processingErrors},
-        {"exerciseStats", QJsonArray()}};
+        {"exerciseStats", sessionExerciseStats}};
 
     QString writeError;
     if (!writeJsonObject(sessionDataPath, root, &writeError))

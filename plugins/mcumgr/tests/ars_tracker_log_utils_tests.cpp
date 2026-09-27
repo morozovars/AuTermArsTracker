@@ -15,12 +15,18 @@ class ArsTrackerLogUtilsTests : public QObject
 private slots:
     void shellResultRequiresCompleteValidZeroRet();
     void supportCheckStateAndDeferral();
+    void supportProbeSuccessfulSequence();
+    void supportProbeStopsWhenInitialResetFails();
+    void supportProbeStopsWhenLogsDirectoryFails();
+    void supportProbeContinuesWhenFinalResetFails();
+    void supportProbeKeepsAvailableWhenPrepareFails();
+    void supportProbeRejectsDisconnectedOrStaleContext();
+    void loadPreparesFreshLogsBeforeListing();
     void supportContextRejectsLateGeneration();
     void emptyMeasLsIsValid();
     void parsesModernAndLegacyShellReturnCodes();
     void shellReturnCodeDoesNotLeakAcrossResponses();
     void distinguishesNestedAndLegacyManagementErrors();
-    void supportCheckLegacyScenarios();
     void parsesRealListingAndFiltersEntries();
     void rejectsInvalidListing();
     void ordersPlainAndWrappedSequences();
@@ -44,15 +50,111 @@ void ArsTrackerLogUtilsTests::shellResultRequiresCompleteValidZeroRet()
 
 void ArsTrackerLogUtilsTests::supportCheckStateAndDeferral()
 {
-    QCOMPARE(ars_tracker_log_utils::support_state_after_cd(true, true, 0), 1);
-    QCOMPARE(ars_tracker_log_utils::support_state_after_cd(true, true, -1), 2);
-    QCOMPARE(ars_tracker_log_utils::support_state_after_cd(true, false, 0), 0);
-    QCOMPARE(ars_tracker_log_utils::support_state_after_cd(false, true, 0), 0);
     QVERIFY(ars_tracker_log_utils::support_check_should_defer(true, false, false, false));
     QVERIFY(ars_tracker_log_utils::support_check_should_defer(false, true, false, false));
     QVERIFY(ars_tracker_log_utils::support_check_should_defer(false, false, true, false));
     QVERIFY(ars_tracker_log_utils::support_check_should_defer(false, false, false, true));
     QVERIFY(!ars_tracker_log_utils::support_check_should_defer(false, false, false, false));
+}
+
+void ArsTrackerLogUtilsTests::supportProbeSuccessfulSequence()
+{
+    using namespace ars_tracker_log_utils;
+    support_flow_transition_t step = support_flow_after_callback(
+            SUPPORT_FLOW_RESET_CWD_BEFORE_PROBE, true);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_CHECK_LOGS_DIRECTORY);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_CHECK_LOGS_DIRECTORY);
+    QVERIFY(!step.mark_available);
+
+    step = support_flow_after_callback(step.next_state, true);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_RESET_CWD_AFTER_PROBE);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_RESET_CWD_AFTER_PROBE);
+    QVERIFY(step.mark_available);
+
+    step = support_flow_after_callback(step.next_state, true);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_PREPARE_LOGS);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_PREPARE_LOGS);
+    QVERIFY(step.mark_available);
+
+    step = support_flow_after_callback(step.next_state, true);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_FINISHED);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_NONE);
+    QVERIFY(step.mark_available);
+}
+
+void ArsTrackerLogUtilsTests::supportProbeStopsWhenInitialResetFails()
+{
+    using namespace ars_tracker_log_utils;
+    const bool reset_ok = shell_result_is_success(false, true, 0);
+    const support_flow_transition_t step = support_flow_after_callback(
+            SUPPORT_FLOW_RESET_CWD_BEFORE_PROBE, reset_ok);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_FINISHED);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_NONE);
+    QVERIFY(step.mark_unsupported);
+}
+
+void ArsTrackerLogUtilsTests::supportProbeStopsWhenLogsDirectoryFails()
+{
+    using namespace ars_tracker_log_utils;
+    const smp_shell_execute_response_t legacy_error =
+            smp_shell_response_parser::parse_execute_response(
+                    cbor({{QStringLiteral("o"), QStringLiteral("not found")},
+                          {QStringLiteral("rc"), -2}}));
+    const bool cd_ok = shell_result_is_success(
+            true, legacy_error.ret_valid, legacy_error.ret);
+    const support_flow_transition_t step = support_flow_after_callback(
+            SUPPORT_FLOW_CHECK_LOGS_DIRECTORY, cd_ok);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_FINISHED);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_NONE);
+    QVERIFY(step.mark_unsupported);
+}
+
+void ArsTrackerLogUtilsTests::supportProbeContinuesWhenFinalResetFails()
+{
+    using namespace ars_tracker_log_utils;
+    const support_flow_transition_t step = support_flow_after_callback(
+            SUPPORT_FLOW_RESET_CWD_AFTER_PROBE, false);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_PREPARE_LOGS);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_PREPARE_LOGS);
+    QVERIFY(step.mark_available);
+    QVERIFY(!step.mark_unsupported);
+}
+
+void ArsTrackerLogUtilsTests::supportProbeKeepsAvailableWhenPrepareFails()
+{
+    using namespace ars_tracker_log_utils;
+    const support_flow_transition_t step = support_flow_after_callback(
+            SUPPORT_FLOW_PREPARE_LOGS, false);
+    QCOMPARE(step.next_state, SUPPORT_FLOW_FINISHED);
+    QCOMPARE(step.next_command, SUPPORT_COMMAND_NONE);
+    QVERIFY(step.mark_available);
+    QVERIFY(!step.mark_unsupported);
+}
+
+void ArsTrackerLogUtilsTests::supportProbeRejectsDisconnectedOrStaleContext()
+{
+    using namespace ars_tracker_log_utils;
+    const QList<support_flow_state_t> states = {
+        SUPPORT_FLOW_RESET_CWD_BEFORE_PROBE,
+        SUPPORT_FLOW_CHECK_LOGS_DIRECTORY,
+        SUPPORT_FLOW_RESET_CWD_AFTER_PROBE,
+        SUPPORT_FLOW_PREPARE_LOGS,
+    };
+    for (support_flow_state_t state : states)
+    {
+        const support_flow_transition_t step = support_flow_after_callback(state, true, false);
+        QCOMPARE(step.next_state, SUPPORT_FLOW_FINISHED);
+        QCOMPARE(step.next_command, SUPPORT_COMMAND_NONE);
+        QVERIFY(!step.mark_available);
+        QVERIFY(!step.mark_unsupported);
+    }
+}
+
+void ArsTrackerLogUtilsTests::loadPreparesFreshLogsBeforeListing()
+{
+    QVERIFY(ars_tracker_log_utils::load_should_start_listing(true, true));
+    QVERIFY(!ars_tracker_log_utils::load_should_start_listing(false, true));
+    QVERIFY(!ars_tracker_log_utils::load_should_start_listing(true, false));
 }
 
 void ArsTrackerLogUtilsTests::supportContextRejectsLateGeneration()
@@ -155,44 +257,6 @@ void ArsTrackerLogUtilsTests::distinguishesNestedAndLegacyManagementErrors()
             SMP_OP_WRITE_RESPONSE, 0, &error));
     QCOMPARE(error.type, SMP_ERROR_RC);
     QCOMPARE(error.rc, 5);
-}
-
-void ArsTrackerLogUtilsTests::supportCheckLegacyScenarios()
-{
-    const smp_shell_execute_response_t pwd_root =
-            smp_shell_response_parser::parse_execute_response(
-                    cbor({{QStringLiteral("o"), QStringLiteral("/\r\n")},
-                          {QStringLiteral("rc"), 0}}));
-    QCOMPARE(ars_tracker_log_utils::extract_absolute_cwd(pwd_root.output),
-             QStringLiteral("/"));
-    const smp_shell_execute_response_t cd_ok =
-            smp_shell_response_parser::parse_execute_response(
-                    cbor({{QStringLiteral("o"), QString()},
-                          {QStringLiteral("rc"), 0}}));
-    QCOMPARE(ars_tracker_log_utils::support_state_after_cd(
-                     true, cd_ok.ret_valid, cd_ok.ret), 1);
-    const smp_shell_execute_response_t restore_ok =
-            smp_shell_response_parser::parse_execute_response(
-                    cbor({{QStringLiteral("o"), QString()},
-                          {QStringLiteral("rc"), 0}}));
-    QVERIFY(restore_ok.valid);
-    QVERIFY(restore_ok.ret_valid);
-    QCOMPARE(restore_ok.ret, 0);
-
-    const smp_shell_execute_response_t pwd_logs =
-            smp_shell_response_parser::parse_execute_response(
-                    cbor({{QStringLiteral("o"),
-                           QStringLiteral("\x1b[32m/NAND:/logs\x1b[0m\r\n")},
-                          {QStringLiteral("rc"), 0}}));
-    QCOMPARE(ars_tracker_log_utils::extract_absolute_cwd(pwd_logs.output),
-             QStringLiteral("/NAND:/logs"));
-
-    const smp_shell_execute_response_t cd_missing =
-            smp_shell_response_parser::parse_execute_response(
-                    cbor({{QStringLiteral("o"), QStringLiteral("not found")},
-                          {QStringLiteral("rc"), -2}}));
-    QCOMPARE(ars_tracker_log_utils::support_state_after_cd(
-                     true, cd_missing.ret_valid, cd_missing.ret), 2);
 }
 
 void ArsTrackerLogUtilsTests::parsesRealListingAndFiltersEntries()

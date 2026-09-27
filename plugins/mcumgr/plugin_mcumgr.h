@@ -169,9 +169,11 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_FIRMWARE_ERASE,
     ACTION_ARS_TRACKER_SHELL_COMMAND,
     ACTION_ARS_TRACKER_LIGHT_TELEMETRY,
-    ACTION_ARS_TRACKER_LOG_SUPPORT_PWD,
+    ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE,
     ACTION_ARS_TRACKER_LOG_SUPPORT_CD,
-    ACTION_ARS_TRACKER_LOG_SUPPORT_RESTORE,
+    ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER,
+    ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE,
+    ACTION_ARS_TRACKER_LOG_LOAD_PREPARE,
     ACTION_ARS_TRACKER_LOG_LIST,
     ACTION_ARS_TRACKER_LOG_DOWNLOAD,
     ACTION_ARS_TRACKERS_MULTI_SESSION_LIST,
@@ -201,6 +203,15 @@ enum ars_tracker_log_support_state_t : uint8_t {
     ARS_TRACKER_LOG_SUPPORT_CHECKING,
     ARS_TRACKER_LOG_SUPPORT_AVAILABLE,
     ARS_TRACKER_LOG_SUPPORT_UNAVAILABLE,
+};
+
+enum ars_tracker_log_support_flow_state_t : uint8_t {
+    ARS_TRACKER_LOG_FLOW_IDLE = 0,
+    ARS_TRACKER_LOG_FLOW_RESET_CWD_BEFORE_PROBE,
+    ARS_TRACKER_LOG_FLOW_CHECK_LOGS_DIRECTORY,
+    ARS_TRACKER_LOG_FLOW_RESET_CWD_AFTER_PROBE,
+    ARS_TRACKER_LOG_FLOW_PREPARE_LOGS,
+    ARS_TRACKER_LOG_FLOW_FINISHED,
 };
 
 struct ars_tracker_port_scan_result_t {
@@ -670,6 +681,7 @@ private:
                                              mcumgr_action_t action,
                                              const QStringList &arguments);
     void start_ars_tracker_log_load();
+    bool start_ars_tracker_log_listing(ars_tracker_device_t *device);
     void start_next_ars_tracker_log_download();
     void handle_ars_tracker_log_download_status(ars_tracker_device_t *device,
                                                 group_status status,
@@ -1312,10 +1324,11 @@ private:
     QString ars_tracker_persistent_shell_command_port;
     QString ars_tracker_persistent_firmware_port;
     QString ars_tracker_log_support_port;
-    QString ars_tracker_log_support_saved_cwd;
+    QString ars_tracker_log_support_serial;
     quint64 ars_tracker_log_support_connection_generation = 0;
     int ars_tracker_log_support_generation = 0;
-    bool ars_tracker_log_support_cd_ok = false;
+    ars_tracker_log_support_flow_state_t ars_tracker_log_support_flow_state =
+            ARS_TRACKER_LOG_FLOW_IDLE;
     bool ars_tracker_log_load_active = false;
     bool ars_tracker_log_load_cancelled = false;
     int ars_tracker_log_load_generation = 0;

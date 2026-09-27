@@ -28,13 +28,50 @@ bool shell_result_is_success(bool status_complete, bool ret_valid, qint32 ret)
     return status_complete && ret_valid && ret == 0;
 }
 
-int support_state_after_cd(bool status_complete, bool ret_valid, qint32 ret)
+support_flow_transition_t support_flow_after_callback(support_flow_state_t state,
+                                                      bool command_success,
+                                                      bool context_valid)
 {
-    if (!status_complete || !ret_valid)
+    support_flow_transition_t result;
+    if (!context_valid)
     {
-        return 0; // Unknown/transient.
+        return result;
     }
-    return ret == 0 ? 1 : 2; // Available / unavailable.
+    switch (state)
+    {
+    case SUPPORT_FLOW_RESET_CWD_BEFORE_PROBE:
+        result.mark_unsupported = !command_success;
+        if (command_success)
+        {
+            result.next_state = SUPPORT_FLOW_CHECK_LOGS_DIRECTORY;
+            result.next_command = SUPPORT_COMMAND_CHECK_LOGS_DIRECTORY;
+        }
+        return result;
+    case SUPPORT_FLOW_CHECK_LOGS_DIRECTORY:
+        result.mark_available = command_success;
+        result.mark_unsupported = !command_success;
+        if (command_success)
+        {
+            result.next_state = SUPPORT_FLOW_RESET_CWD_AFTER_PROBE;
+            result.next_command = SUPPORT_COMMAND_RESET_CWD_AFTER_PROBE;
+        }
+        return result;
+    case SUPPORT_FLOW_RESET_CWD_AFTER_PROBE:
+        result.mark_available = true;
+        result.next_state = SUPPORT_FLOW_PREPARE_LOGS;
+        result.next_command = SUPPORT_COMMAND_PREPARE_LOGS;
+        return result;
+    case SUPPORT_FLOW_PREPARE_LOGS:
+        result.mark_available = true;
+        return result;
+    default:
+        return result;
+    }
+}
+
+bool load_should_start_listing(bool prepare_success, bool context_valid)
+{
+    return prepare_success && context_valid;
 }
 
 bool support_check_should_defer(bool processor_busy, bool telemetry_busy,
@@ -50,22 +87,6 @@ bool support_context_matches(const QString &port, const QString &serial,
     return port.compare(expected_port, Qt::CaseInsensitive) == 0 &&
            serial.compare(expected_serial, Qt::CaseInsensitive) == 0 &&
            generation == expected_generation;
-}
-
-QString extract_absolute_cwd(const QString &shell_output)
-{
-    const QString cleaned = without_ansi(shell_output);
-    const QStringList rows = cleaned.split(QRegularExpression(QStringLiteral("[\r\n]+")),
-                                           Qt::SkipEmptyParts);
-    for (QString row : rows)
-    {
-        row = row.trimmed();
-        if (row.startsWith('/') && !row.contains(QRegularExpression(QStringLiteral("\\s"))))
-        {
-            return row;
-        }
-    }
-    return QString();
 }
 
 QStringList order_log_files(const QStringList &file_names)

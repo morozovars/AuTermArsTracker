@@ -9468,6 +9468,8 @@ void plugin_mcumgr::release_ars_tracker_device_resources(ars_tracker_device_t *d
 		if (ars_tracker_log_support_port.compare(device->portName, Qt::CaseInsensitive) == 0)
 		{
 				ars_tracker_log_support_port.clear();
+				ars_tracker_log_support_serial.clear();
+				ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_IDLE;
 		}
 		device->logSupportState = ARS_TRACKER_LOG_SUPPORT_UNKNOWN;
 		device->logOperationActive = false;
@@ -16002,9 +16004,28 @@ QString ars_tracker_log_support_state_name(ars_tracker_log_support_state_t state
 		case ARS_TRACKER_LOG_SUPPORT_AVAILABLE:
 				return QStringLiteral("Available");
 		case ARS_TRACKER_LOG_SUPPORT_UNAVAILABLE:
-				return QStringLiteral("Unavailable");
+				return QStringLiteral("Unsupported");
 		default:
 				return QStringLiteral("Unknown");
+		}
+}
+
+QString ars_tracker_log_support_flow_state_name(ars_tracker_log_support_flow_state_t state)
+{
+		switch (state)
+		{
+		case ARS_TRACKER_LOG_FLOW_RESET_CWD_BEFORE_PROBE:
+				return QStringLiteral("ResetCwdBeforeProbe");
+		case ARS_TRACKER_LOG_FLOW_CHECK_LOGS_DIRECTORY:
+				return QStringLiteral("CheckLogsDirectory");
+		case ARS_TRACKER_LOG_FLOW_RESET_CWD_AFTER_PROBE:
+				return QStringLiteral("ResetCwdAfterProbe");
+		case ARS_TRACKER_LOG_FLOW_PREPARE_LOGS:
+				return QStringLiteral("PrepareLogs");
+		case ARS_TRACKER_LOG_FLOW_FINISHED:
+				return QStringLiteral("Finished");
+		default:
+				return QStringLiteral("Idle");
 		}
 }
 
@@ -16014,12 +16035,16 @@ QString ars_tracker_action_name(uint8_t action)
 		{
 		case ACTION_ARS_TRACKER_LIGHT_TELEMETRY:
 				return QStringLiteral("lightweight telemetry");
-		case ACTION_ARS_TRACKER_LOG_SUPPORT_PWD:
-				return QStringLiteral("device logs support pwd");
+		case ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE:
+				return QStringLiteral("device logs reset cwd before probe");
 		case ACTION_ARS_TRACKER_LOG_SUPPORT_CD:
 				return QStringLiteral("device logs support cd");
-		case ACTION_ARS_TRACKER_LOG_SUPPORT_RESTORE:
-				return QStringLiteral("device logs support cwd restore");
+		case ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER:
+				return QStringLiteral("device logs reset cwd after probe");
+		case ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE:
+				return QStringLiteral("device logs prepare");
+		case ACTION_ARS_TRACKER_LOG_LOAD_PREPARE:
+				return QStringLiteral("device logs prepare before load");
 		case ACTION_ARS_TRACKER_LOG_LIST:
 				return QStringLiteral("device logs listing");
 		case ACTION_ARS_TRACKER_LOG_DOWNLOAD:
@@ -16246,21 +16271,23 @@ bool plugin_mcumgr::start_ars_tracker_log_support_check(ars_tracker_device_t *de
 		device->logOperationActive = true;
 		device->logSupportAttemptedGeneration = device->connectionGeneration;
 		ars_tracker_log_support_port = device->portName;
+		ars_tracker_log_support_serial = device->serialNumber;
 		ars_tracker_log_support_connection_generation = device->connectionGeneration;
-		ars_tracker_log_support_saved_cwd.clear();
-		ars_tracker_log_support_cd_ok = false;
+		ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_RESET_CWD_BEFORE_PROBE;
 		++ars_tracker_log_support_generation;
 		update_ars_tracker_log_controls();
 		if (!start_ars_tracker_log_shell_command(
-					device, ACTION_ARS_TRACKER_LOG_SUPPORT_PWD, QStringList() << "fs" << "pwd"))
+					device, ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE, QStringList() << "fs" << "cd"))
 		{
-				log_warning() << "ArsTracker device logs support check pwd start failed"
+				log_warning() << "ArsTracker device logs reset cwd before probe start failed"
 								<< "port=" << device->portName;
-				device->logSupportState = ARS_TRACKER_LOG_SUPPORT_UNKNOWN;
+				device->logSupportState = ARS_TRACKER_LOG_SUPPORT_UNAVAILABLE;
 				device->logOperationActive = false;
+				ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_FINISHED;
 				ars_tracker_log_support_port.clear();
+				ars_tracker_log_support_serial.clear();
 				update_ars_tracker_log_controls();
-				return false;
+				return true;
 		}
 		log_debug() << "ArsTracker device logs support check marked busy"
 					<< "port=" << device->portName << "generation=" << device->connectionGeneration
@@ -16276,13 +16303,65 @@ void plugin_mcumgr::handle_ars_tracker_log_shell_status(
 		{
 				return;
 		}
+		const bool ok = device->shell != nullptr &&
+				ars_tracker_log_utils::shell_result_is_success(
+						status == STATUS_COMPLETE, device->shell->last_execute_ret_valid(),
+						device->shellRc);
+		QString callback_next_state = QStringLiteral("Finished");
+		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE && ok)
+				callback_next_state = QStringLiteral("CheckLogsDirectory");
+		else if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_CD && ok)
+				callback_next_state = QStringLiteral("ResetCwdAfterProbe");
+		else if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER)
+				callback_next_state = QStringLiteral("PrepareLogs");
+		else if (user_data == ACTION_ARS_TRACKER_LOG_LOAD_PREPARE && ok)
+				callback_next_state = QStringLiteral("Listing");
+		else if (user_data == ACTION_ARS_TRACKER_LOG_LIST && ok)
+				callback_next_state = QStringLiteral("Downloading");
 		log_debug() << "ArsTracker device logs shell callback"
 					<< "port=" << device->portName << "serial=" << device->serialNumber
 					<< "generation=" << device->connectionGeneration
 					<< "action=" << int(user_data) << "purpose=" << ars_tracker_action_name(user_data)
 					<< "status=" << ars_tracker_utils::scan_status_to_string(status)
 					<< "retValid=" << (device->shell != nullptr && device->shell->last_execute_ret_valid())
-					<< "ret=" << device->shellRc << "output=" << response;
+					<< "ret=" << device->shellRc << "output=" << response
+					<< "state=" << ars_tracker_log_support_flow_state_name(
+							ars_tracker_log_support_flow_state)
+					<< "nextState=" << callback_next_state;
+
+		if (user_data == ACTION_ARS_TRACKER_LOG_LOAD_PREPARE)
+		{
+				const bool load_context_valid = ars_tracker_log_context_matches(device);
+				if (!load_context_valid)
+				{
+						log_debug() << "ArsTracker device logs prepare-before-load callback ignored: stale context"
+									<< "port=" << device->portName << "serial=" << device->serialNumber
+									<< "generation=" << device->connectionGeneration;
+						return;
+				}
+				if (!ars_tracker_log_utils::load_should_start_listing(ok, load_context_valid))
+				{
+						log_warning() << "ArsTracker device logs prepare before load failed"
+									<< "port=" << device->portName << "serial=" << device->serialNumber
+									<< "generation=" << device->connectionGeneration
+									<< "status=" << ars_tracker_utils::scan_status_to_string(status)
+									<< "retValid=" << device->shell->last_execute_ret_valid()
+									<< "ret=" << device->shellRc << "output=" << response
+									<< "nextState=Finished";
+						finish_ars_tracker_log_load(status == STATUS_CANCELLED,
+								QStringLiteral("Could not prepare current device logs. Please try again."));
+						return;
+				}
+				log_debug() << "ArsTracker device logs prepare before load succeeded"
+								<< "port=" << device->portName << "serial=" << device->serialNumber
+								<< "generation=" << device->connectionGeneration
+								<< "nextState=Listing";
+				if (!start_ars_tracker_log_listing(device))
+				{
+						finish_ars_tracker_log_load(false, "Could not start device log listing");
+				}
+				return;
+		}
 
 		if (user_data == ACTION_ARS_TRACKER_LOG_LIST)
 		{
@@ -16318,140 +16397,153 @@ void plugin_mcumgr::handle_ars_tracker_log_shell_status(
 				return;
 		}
 
-		if (ars_tracker_log_support_port.compare(device->portName, Qt::CaseInsensitive) != 0 ||
-				ars_tracker_log_support_connection_generation != device->connectionGeneration)
+		if (!device->connected || !ars_tracker_log_utils::support_context_matches(
+				device->portName, device->serialNumber, device->connectionGeneration,
+				ars_tracker_log_support_port, ars_tracker_log_support_serial,
+				ars_tracker_log_support_connection_generation))
 		{
+				log_debug() << "ArsTracker device logs support callback ignored: stale context"
+								<< "port=" << device->portName << "serial=" << device->serialNumber
+								<< "generation=" << device->connectionGeneration;
 				return;
 		}
-		auto finish_transient = [this](ars_tracker_device_t *transient_device,
-											 const QString &reason) {
-			log_warning() << "ArsTracker device logs support check transient failure"
-							<< "port=" << transient_device->portName
-							<< "generation=" << transient_device->connectionGeneration
-							<< "reason=" << reason
-							<< "retryCount=" << transient_device->logSupportRetryCount;
-			transient_device->logSupportState = ARS_TRACKER_LOG_SUPPORT_UNKNOWN;
-			transient_device->logOperationActive = false;
-			ars_tracker_log_support_port.clear();
-			update_ars_tracker_log_controls();
-			if (transient_device->active && transient_device->connected &&
-					transient_device->logSupportRetryCount < 12)
-			{
-				++transient_device->logSupportRetryCount;
-				schedule_ars_tracker_log_support_check(
-						transient_device->portName, transient_device->connectionGeneration,
-						ars_tracker_log_support_retry_delay_ms(
-								transient_device->logSupportRetryCount), true);
-			}
-			else
-			{
-				log_warning() << "ArsTracker device logs support check will not retry"
-								<< "port=" << transient_device->portName
-								<< "retryCount=" << transient_device->logSupportRetryCount;
-			}
+		const bool expected_step =
+				(user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE &&
+				 ars_tracker_log_support_flow_state == ARS_TRACKER_LOG_FLOW_RESET_CWD_BEFORE_PROBE) ||
+				(user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_CD &&
+				 ars_tracker_log_support_flow_state == ARS_TRACKER_LOG_FLOW_CHECK_LOGS_DIRECTORY) ||
+				(user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER &&
+				 ars_tracker_log_support_flow_state == ARS_TRACKER_LOG_FLOW_RESET_CWD_AFTER_PROBE) ||
+				(user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE &&
+				 ars_tracker_log_support_flow_state == ARS_TRACKER_LOG_FLOW_PREPARE_LOGS);
+		if (!expected_step)
+		{
+				log_debug() << "ArsTracker device logs support callback ignored: unexpected flow step"
+								<< "port=" << device->portName << "action=" << int(user_data)
+								<< "state=" << ars_tracker_log_support_flow_state_name(
+										ars_tracker_log_support_flow_state);
+				return;
+		}
+		auto finish_support_flow = [this](ars_tracker_device_t *flow_device) {
+				flow_device->logOperationActive = false;
+				ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_FINISHED;
+				ars_tracker_log_support_port.clear();
+				ars_tracker_log_support_serial.clear();
+				update_ars_tracker_log_controls();
 		};
-		const bool ok = device->shell != nullptr &&
-				ars_tracker_log_utils::shell_result_is_success(
-						status == STATUS_COMPLETE, device->shell->last_execute_ret_valid(),
-						device->shellRc);
+		auto finish_unsupported = [this, &finish_support_flow](
+				ars_tracker_device_t *flow_device, const QString &reason) {
+				flow_device->logSupportState = ARS_TRACKER_LOG_SUPPORT_UNAVAILABLE;
+				log_warning() << "ArsTracker device logs support check failed"
+								<< "port=" << flow_device->portName
+								<< "serial=" << flow_device->serialNumber
+								<< "generation=" << flow_device->connectionGeneration
+								<< "reason=" << reason << "nextState=Finished";
+				finish_support_flow(flow_device);
+		};
 
-		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_PWD)
+		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE)
 		{
 				if (!ok)
 				{
-					finish_transient(device, QStringLiteral("fs pwd failed or returned no valid rc/ret"));
+						finish_unsupported(device,
+								QStringLiteral("fs cd reset before probe failed or returned invalid/nonzero rc/ret"));
 					return;
 				}
-				const QString cwd = ars_tracker_log_utils::extract_absolute_cwd(response);
-				ars_tracker_log_support_saved_cwd = cwd.isEmpty() ? QStringLiteral("/") : cwd;
-				log_debug() << "ArsTracker device logs support pwd accepted/fallback"
-								<< "port=" << device->portName << "savedCwd="
-								<< ars_tracker_log_support_saved_cwd << "pwdOutput=" << response;
+				ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_CHECK_LOGS_DIRECTORY;
+				log_debug() << "ArsTracker device logs support transition"
+								<< "port=" << device->portName << "nextState=CheckLogsDirectory";
 				if (!start_ars_tracker_log_shell_command(
 								device, ACTION_ARS_TRACKER_LOG_SUPPORT_CD,
-								QStringList() << "fs" << "cd" << "/NAND:/logs"))
+								QStringList() << "fs" << "cd" << "NAND:/logs"))
 				{
-						finish_transient(device, QStringLiteral("failed to start fs cd /NAND:/logs"));
+						finish_unsupported(device, QStringLiteral("failed to start fs cd NAND:/logs"));
 				}
 				return;
 		}
 
 		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_CD)
 		{
-				ars_tracker_log_support_cd_ok = ok;
 				if (!ok)
 				{
-						const int support_state = ars_tracker_log_utils::support_state_after_cd(
-								status == STATUS_COMPLETE,
-								device->shell != nullptr && device->shell->last_execute_ret_valid(),
-								device->shellRc);
-						device->logSupportState = support_state == 2 ?
-								ARS_TRACKER_LOG_SUPPORT_UNAVAILABLE : ARS_TRACKER_LOG_SUPPORT_UNKNOWN;
-						log_debug() << "ArsTracker device logs support cd result"
-									<< "port=" << device->portName << "state="
-									<< ars_tracker_log_support_state_name(device->logSupportState)
-									<< "stateCode=" << support_state;
-						if (support_state == 2)
-						{
-							device->logOperationActive = false;
-							ars_tracker_log_support_port.clear();
-							update_ars_tracker_log_controls();
-						}
-						else
-						{
-							finish_transient(device,
-									QStringLiteral("fs cd returned no valid rc/ret or transport failed"));
-						}
+						finish_unsupported(device,
+								QStringLiteral("fs cd NAND:/logs failed or returned invalid/nonzero rc/ret"));
 						return;
 				}
-				if (ars_tracker_log_support_saved_cwd == QStringLiteral("/NAND:/logs"))
-				{
-						device->logSupportState = ARS_TRACKER_LOG_SUPPORT_AVAILABLE;
-						device->logOperationActive = false;
-						ars_tracker_log_support_port.clear();
-						log_debug() << "ArsTracker device logs support check finished"
-										<< "port=" << device->portName
-										<< "state=Available restore=no-op";
-						update_ars_tracker_log_controls();
-						return;
-				}
+				device->logSupportState = ARS_TRACKER_LOG_SUPPORT_AVAILABLE;
+				device->logOperationActive = false;
+				ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_RESET_CWD_AFTER_PROBE;
+				log_debug() << "ArsTracker device logs support state=Available"
+								<< "port=" << device->portName << "serial=" << device->serialNumber
+								<< "generation=" << device->connectionGeneration
+								<< "nextState=ResetCwdAfterProbe";
+				update_ars_tracker_log_controls();
 				if (!start_ars_tracker_log_shell_command(
-								device, ACTION_ARS_TRACKER_LOG_SUPPORT_RESTORE,
-								QStringList() << "fs" << "cd" << ars_tracker_log_support_saved_cwd))
+								device, ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER,
+								QStringList() << "fs" << "cd"))
 				{
-						device->logSupportState = ARS_TRACKER_LOG_SUPPORT_AVAILABLE;
-						device->logOperationActive = false;
-						ars_tracker_log_support_port.clear();
-						log_warning() << "ArsTracker device logs cwd restore failed to start"
-										<< "port=" << device->portName
-										<< "savedCwd=" << ars_tracker_log_support_saved_cwd
-										<< "supportState=Available";
-						update_ars_tracker_log_controls();
+						log_warning() << "ArsTracker device logs reset cwd after probe failed to start"
+										<< "port=" << device->portName << "supportState=Available";
+						ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_PREPARE_LOGS;
+						if (!start_ars_tracker_log_shell_command(
+									device, ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE,
+									QStringList() << "log" << "r"))
+						{
+								log_warning() << "ArsTracker device logs prepare failed to start"
+												<< "port=" << device->portName << "supportState=Available";
+								finish_support_flow(device);
+						}
 				}
 				return;
 		}
 
-		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESTORE)
+		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER)
 		{
-				device->logSupportState = ars_tracker_log_support_cd_ok ?
-						ARS_TRACKER_LOG_SUPPORT_AVAILABLE : ARS_TRACKER_LOG_SUPPORT_UNKNOWN;
 				if (!ok)
 				{
-					log_warning() << "ArsTracker device logs cwd restore failed"
+					log_warning() << "ArsTracker device logs reset cwd after probe failed"
 								<< "port=" << device->portName
-								<< "savedCwd=" << ars_tracker_log_support_saved_cwd
-								<< "supportState="
-								<< ars_tracker_log_support_state_name(device->logSupportState);
+								<< "serial=" << device->serialNumber
+								<< "generation=" << device->connectionGeneration
+								<< "status=" << ars_tracker_utils::scan_status_to_string(status)
+								<< "retValid=" << device->shell->last_execute_ret_valid()
+								<< "ret=" << device->shellRc << "output=" << response
+								<< "supportState=Available nextState=PrepareLogs";
 				}
-				log_debug() << "ArsTracker device logs support check finished"
-							<< "port=" << device->portName << "serial=" << device->serialNumber
-							<< "generation=" << device->connectionGeneration
-							<< "state=" << ars_tracker_log_support_state_name(device->logSupportState)
-							<< "cdOk=" << ars_tracker_log_support_cd_ok
-							<< "restoreOk=" << ok;
-				device->logOperationActive = false;
-				ars_tracker_log_support_port.clear();
-				update_ars_tracker_log_controls();
+				ars_tracker_log_support_flow_state = ARS_TRACKER_LOG_FLOW_PREPARE_LOGS;
+				if (!start_ars_tracker_log_shell_command(
+								device, ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE,
+								QStringList() << "log" << "r"))
+				{
+						log_warning() << "ArsTracker device logs prepare failed to start"
+									<< "port=" << device->portName << "serial=" << device->serialNumber
+									<< "generation=" << device->connectionGeneration
+									<< "supportState=Available nextState=Finished";
+						finish_support_flow(device);
+				}
+				return;
+		}
+
+		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE)
+		{
+				if (!ok)
+				{
+						log_warning() << "ArsTracker device logs prepare failed"
+									<< "port=" << device->portName << "serial=" << device->serialNumber
+									<< "generation=" << device->connectionGeneration
+									<< "status=" << ars_tracker_utils::scan_status_to_string(status)
+									<< "retValid=" << device->shell->last_execute_ret_valid()
+									<< "ret=" << device->shellRc << "output=" << response
+									<< "supportState=Available nextState=Finished";
+				}
+				else
+				{
+						log_debug() << "ArsTracker device logs prepare completed"
+									<< "port=" << device->portName << "serial=" << device->serialNumber
+									<< "generation=" << device->connectionGeneration
+									<< "nextState=Finished";
+				}
+				finish_support_flow(device);
 		}
 }
 
@@ -16505,16 +16597,33 @@ void plugin_mcumgr::start_ars_tracker_log_load()
 		ars_tracker_log_load_attempt = 0;
 		ars_tracker_log_load_success_count = 0;
 		device->logOperationActive = true;
-		lbl_ars_tracker_progress->setText("Listing device logs...");
-		lbl_ars_tracker_status->setText("Loading device logs...");
+		lbl_ars_tracker_progress->setText("Preparing current device logs...");
+		lbl_ars_tracker_status->setText("Preparing logs for download...");
 		set_ars_tracker_controls_loading(ars_tracker_any_loading());
 
 		if (!start_ars_tracker_log_shell_command(
-					device, ACTION_ARS_TRACKER_LOG_LIST,
-					QStringList() << "fs" << "ls" << "/NAND:/logs"))
+					device, ACTION_ARS_TRACKER_LOG_LOAD_PREPARE,
+					QStringList() << "log" << "r"))
 		{
-				finish_ars_tracker_log_load(false, "Could not start device log listing");
+				log_warning() << "ArsTracker device logs prepare before load failed to start"
+								<< "port=" << device->portName << "serial=" << device->serialNumber
+								<< "generation=" << device->connectionGeneration;
+				finish_ars_tracker_log_load(false,
+						QStringLiteral("Could not prepare current device logs. Please try again."));
 		}
+}
+
+bool plugin_mcumgr::start_ars_tracker_log_listing(ars_tracker_device_t *device)
+{
+		if (!ars_tracker_log_context_matches(device))
+		{
+				return false;
+		}
+		lbl_ars_tracker_progress->setText("Listing device logs...");
+		lbl_ars_tracker_status->setText("Loading device logs...");
+		return start_ars_tracker_log_shell_command(
+				device, ACTION_ARS_TRACKER_LOG_LIST,
+				QStringList() << "fs" << "ls" << "/NAND:/logs");
 }
 
 void plugin_mcumgr::start_next_ars_tracker_log_download()
@@ -18439,9 +18548,11 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				user_data != ACTION_ARS_TRACKER_DELETE_SESSION &&
 				user_data != ACTION_ARS_TRACKER_SHELL_COMMAND &&
 				user_data != ACTION_ARS_TRACKER_LIGHT_TELEMETRY &&
-				user_data != ACTION_ARS_TRACKER_LOG_SUPPORT_PWD &&
+				user_data != ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE &&
 				user_data != ACTION_ARS_TRACKER_LOG_SUPPORT_CD &&
-				user_data != ACTION_ARS_TRACKER_LOG_SUPPORT_RESTORE &&
+				user_data != ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER &&
+				user_data != ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE &&
+				user_data != ACTION_ARS_TRACKER_LOG_LOAD_PREPARE &&
 				user_data != ACTION_ARS_TRACKER_LOG_LIST &&
 				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_LIST &&
 				user_data != ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE &&
@@ -18468,9 +18579,11 @@ void plugin_mcumgr::handle_ars_tracker_persistent_shell_status(uint8_t user_data
 				return;
 		}
 
-		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_PWD ||
+		if (user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_BEFORE ||
 				user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_CD ||
-				user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESTORE ||
+				user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_RESET_AFTER ||
+				user_data == ACTION_ARS_TRACKER_LOG_SUPPORT_PREPARE ||
+				user_data == ACTION_ARS_TRACKER_LOG_LOAD_PREPARE ||
 				user_data == ACTION_ARS_TRACKER_LOG_LIST)
 		{
 				handle_ars_tracker_log_shell_status(device, user_data, status, error_string);

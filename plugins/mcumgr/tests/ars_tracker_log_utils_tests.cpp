@@ -1,9 +1,11 @@
 #include <QtTest>
 #include <QCborMap>
 #include <QCborValue>
+#include <algorithm>
 
 #include "../ars_tracker_log_utils.h"
 #include "../ars_tracker_parser.h"
+#include "../ars_tracker_utils.h"
 #include "../smp_message.h"
 #include "../smp_response_error_decoder.h"
 #include "../smp_shell_response_parser.h"
@@ -33,7 +35,29 @@ private slots:
     void ordersMoreThanTenSparseFiles();
     void preservesBytesAcrossFileBoundaries();
     void marksPartialHistory();
+    void sortsEmptyAndSingleTrackerLists();
+    void sortsTrackersByPairAndSide();
+    void sortsNumericPairIdsNumerically();
+    void sortsInvalidTrackersByFallback();
 };
+
+struct tracker_sort_test_item_t
+{
+    QString name;
+    QString serial;
+    QString port;
+};
+
+static void sort_trackers(QList<tracker_sort_test_item_t> *items)
+{
+    std::stable_sort(items->begin(), items->end(),
+                     [](const tracker_sort_test_item_t &left,
+                        const tracker_sort_test_item_t &right) {
+        return ars_tracker_utils::tracker_pair_less(
+                left.name, left.serial, left.port,
+                right.name, right.serial, right.port);
+    });
+}
 
 static QByteArray cbor(const QCborMap &map)
 {
@@ -345,6 +369,68 @@ void ArsTrackerLogUtilsTests::marksPartialHistory()
             &history, QByteArray("right"), {"log.0041", "log.0042"});
     QVERIFY(history.startsWith("left\n[Incomplete log history: missing log.0041, log.0042]\n"));
     QVERIFY(history.endsWith("right"));
+}
+
+void ArsTrackerLogUtilsTests::sortsTrackersByPairAndSide()
+{
+    QList<tracker_sort_test_item_t> items = {
+        {"00038L", "ARS.1.2.00038", "COM4"},
+        {"00033L", "ARS.1.2.00033", "COM2"},
+        {"00038R", "ARS.1.1.00038", "COM3"},
+        {"00033R", "ARS.1.1.00033", "COM1"},
+    };
+    sort_trackers(&items);
+    QCOMPARE(items.at(0).name, QString("00033R"));
+    QCOMPARE(items.at(1).name, QString("00033L"));
+    QCOMPARE(items.at(2).name, QString("00038R"));
+    QCOMPARE(items.at(3).name, QString("00038L"));
+}
+
+void ArsTrackerLogUtilsTests::sortsEmptyAndSingleTrackerLists()
+{
+    QList<tracker_sort_test_item_t> items;
+    sort_trackers(&items);
+    QVERIFY(items.isEmpty());
+
+    items.append({"00007R", "ARS.1.1.00007", "COM7"});
+    sort_trackers(&items);
+    QCOMPARE(items.size(), 1);
+    QCOMPARE(items.constFirst().port, QString("COM7"));
+}
+
+void ArsTrackerLogUtilsTests::sortsNumericPairIdsNumerically()
+{
+    QList<tracker_sort_test_item_t> items = {
+        {"10L", "ARS.1.2.10", "COM4"},
+        {"2L", "ARS.1.2.2", "COM2"},
+        {"00010R", "ARS.1.1.00010", "COM3"},
+        {"00002R", "ARS.1.1.00002", "COM1"},
+    };
+    sort_trackers(&items);
+    QCOMPARE(items.at(0).name, QString("00002R"));
+    QCOMPARE(items.at(1).name, QString("2L"));
+    QCOMPARE(items.at(2).name, QString("00010R"));
+    QCOMPARE(items.at(3).name, QString("10L"));
+}
+
+void ArsTrackerLogUtilsTests::sortsInvalidTrackersByFallback()
+{
+    QList<tracker_sort_test_item_t> items = {
+        {"Zulu", QString(), "COM9"},
+        {"Alpha", "invalid-b", "COM8"},
+        {"Alpha", "invalid-a", "COM9"},
+        {"Alpha", "invalid-b", "COM7"},
+        {"Only right", "ARS.1.1.5", "COM7"},
+        {"Beta", "ARS.1.9.1", "COM6"},
+    };
+    sort_trackers(&items);
+    QCOMPARE(items.at(0).name, QString("Only right"));
+    QCOMPARE(items.at(1).name, QString("Alpha"));
+    QCOMPARE(items.at(1).serial, QString("invalid-a"));
+    QCOMPARE(items.at(2).port, QString("COM7"));
+    QCOMPARE(items.at(3).port, QString("COM8"));
+    QCOMPARE(items.at(4).name, QString("Beta"));
+    QCOMPARE(items.at(5).name, QString("Zulu"));
 }
 
 QTEST_APPLESS_MAIN(ArsTrackerLogUtilsTests)

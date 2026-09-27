@@ -8,14 +8,195 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QStyle>
+#include <QStyleOptionButton>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include "ars_tracker_bulk_fw_update_worker.h"
 #include "plugin_mcumgr.h"
+
+ArsTrackerCheckBoxHeader::ArsTrackerCheckBoxHeader(QWidget *parent)
+    : QHeaderView(Qt::Horizontal, parent)
+{
+    setHighlightSections(false);
+    setMouseTracking(true);
+}
+
+void ArsTrackerCheckBoxHeader::setCheckState(Qt::CheckState state)
+{
+    if (check_state != state)
+    {
+        check_state = state;
+        updateCheckBox();
+    }
+}
+
+void ArsTrackerCheckBoxHeader::setCheckBoxEnabled(bool enabled)
+{
+    if (check_box_enabled != enabled)
+    {
+        check_box_enabled = enabled;
+        check_box_pressed = false;
+        updateCheckBox();
+    }
+}
+
+QRect ArsTrackerCheckBoxHeader::checkBoxRect(const QRect &sectionRect) const
+{
+    QStyleOptionButton option;
+    option.initFrom(viewport());
+    option.styleObject = nullptr;
+    option.rect = sectionRect;
+
+    QSize indicator_size = style()->subElementRect(QStyle::SE_CheckBoxIndicator,
+                                                   &option,
+                                                   viewport()).size();
+    if (!indicator_size.isValid() || indicator_size.isEmpty())
+    {
+        indicator_size = QSize(style()->pixelMetric(QStyle::PM_IndicatorWidth,
+                                                    &option,
+                                                    viewport()),
+                               style()->pixelMetric(QStyle::PM_IndicatorHeight,
+                                                    &option,
+                                                    viewport()));
+    }
+
+    return QStyle::alignedRect(layoutDirection(), Qt::AlignCenter,
+                               indicator_size, sectionRect);
+}
+
+QRect ArsTrackerCheckBoxHeader::checkBoxRect(int logicalIndex) const
+{
+    return checkBoxRect(QRect(sectionViewportPosition(logicalIndex), 0,
+                              sectionSize(logicalIndex), viewport()->height()));
+}
+
+void ArsTrackerCheckBoxHeader::updateCheckBox()
+{
+    updateSection(0);
+    viewport()->update(checkBoxRect(0));
+}
+
+void ArsTrackerCheckBoxHeader::paintSection(QPainter *painter, const QRect &rect,
+                                            int logicalIndex) const
+{
+    QHeaderView::paintSection(painter, rect, logicalIndex);
+    if (logicalIndex != 0)
+    {
+        return;
+    }
+
+    QStyleOptionButton option;
+    option.initFrom(viewport());
+    option.styleObject = nullptr;
+    option.rect = checkBoxRect(rect);
+    option.state &= ~(QStyle::State_On | QStyle::State_Off | QStyle::State_NoChange |
+                      QStyle::State_MouseOver | QStyle::State_Sunken);
+    option.state |= check_state == Qt::Checked ? QStyle::State_On :
+                    check_state == Qt::PartiallyChecked ? QStyle::State_NoChange :
+                                                          QStyle::State_Off;
+    if (check_box_enabled && isEnabled())
+    {
+        option.state |= QStyle::State_Enabled;
+    }
+    else
+    {
+        option.state &= ~QStyle::State_Enabled;
+    }
+    if (check_box_hovered)
+    {
+        option.state |= QStyle::State_MouseOver;
+    }
+    if (check_box_pressed)
+    {
+        option.state |= QStyle::State_Sunken;
+    }
+    painter->save();
+    painter->setClipRect(rect, Qt::IntersectClip);
+    style()->drawControl(QStyle::CE_CheckBox, &option, painter, viewport());
+    painter->restore();
+}
+
+QSize ArsTrackerCheckBoxHeader::sectionSizeFromContents(int logicalIndex) const
+{
+    QSize size = QHeaderView::sectionSizeFromContents(logicalIndex);
+    if (logicalIndex == 0)
+    {
+        QStyleOptionButton option;
+        option.initFrom(viewport());
+        option.styleObject = nullptr;
+        const int indicator_width = style()->pixelMetric(QStyle::PM_IndicatorWidth,
+                                                         &option,
+                                                         viewport());
+        const int indicator_height = style()->pixelMetric(QStyle::PM_IndicatorHeight,
+                                                          &option,
+                                                          viewport());
+        const int margin = style()->pixelMetric(QStyle::PM_HeaderMargin, nullptr, viewport());
+        size.setWidth(qMax(size.width(), indicator_width + 2 * margin));
+        size.setHeight(qMax(size.height(), indicator_height + 2 * margin));
+    }
+    return size;
+}
+
+void ArsTrackerCheckBoxHeader::mouseMoveEvent(QMouseEvent *event)
+{
+    const bool hovered = checkBoxRect(0).contains(event->position().toPoint());
+    if (check_box_hovered != hovered)
+    {
+        check_box_hovered = hovered;
+        updateCheckBox();
+    }
+    QHeaderView::mouseMoveEvent(event);
+}
+
+void ArsTrackerCheckBoxHeader::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && check_box_enabled && isEnabled() &&
+        checkBoxRect(0).contains(event->position().toPoint()))
+    {
+        check_box_pressed = true;
+        updateCheckBox();
+        event->accept();
+        return;
+    }
+    QHeaderView::mousePressEvent(event);
+}
+
+void ArsTrackerCheckBoxHeader::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && check_box_pressed)
+    {
+        const bool activate = check_box_enabled && isEnabled() &&
+                              checkBoxRect(0).contains(event->position().toPoint());
+        check_box_pressed = false;
+        updateCheckBox();
+        if (activate)
+        {
+            check_state = check_state == Qt::Checked ? Qt::Unchecked : Qt::Checked;
+            emit checkStateChanged(check_state);
+        }
+        event->accept();
+        return;
+    }
+    QHeaderView::mouseReleaseEvent(event);
+}
+
+void ArsTrackerCheckBoxHeader::leaveEvent(QEvent *event)
+{
+    if (check_box_hovered || check_box_pressed)
+    {
+        check_box_hovered = false;
+        check_box_pressed = false;
+        updateCheckBox();
+    }
+    QHeaderView::leaveEvent(event);
+}
 
 ArsTrackerBulkFwUpdateDialog::ArsTrackerBulkFwUpdateDialog(plugin_mcumgr *plugin, QWidget *parent)
     : QDialog(parent), plugin_mcumgr_instance(plugin)
@@ -26,9 +207,11 @@ ArsTrackerBulkFwUpdateDialog::ArsTrackerBulkFwUpdateDialog(plugin_mcumgr *plugin
     QVBoxLayout *main_layout = new QVBoxLayout(this);
 
     table_trackers = new QTableWidget(this);
+    check_box_header = new ArsTrackerCheckBoxHeader(table_trackers);
+    table_trackers->setHorizontalHeader(check_box_header);
     table_trackers->setColumnCount(6);
     table_trackers->setHorizontalHeaderLabels(
-        QStringList() << "Use" << "Tracker" << "Serial" << "Port" << "Current firmware" << "Status");
+        QStringList() << QString() << "Tracker" << "Serial" << "Port" << "Current firmware" << "Status");
     table_trackers->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table_trackers->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     table_trackers->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -71,6 +254,8 @@ ArsTrackerBulkFwUpdateDialog::ArsTrackerBulkFwUpdateDialog(plugin_mcumgr *plugin
     connect(btn_browse, &QPushButton::clicked, this, &ArsTrackerBulkFwUpdateDialog::onBrowseClicked);
     connect(btn_update, &QPushButton::clicked, this, &ArsTrackerBulkFwUpdateDialog::onUpdateClicked);
     connect(btn_cancel, &QPushButton::clicked, this, &ArsTrackerBulkFwUpdateDialog::onCancelClicked);
+    connect(check_box_header, &ArsTrackerCheckBoxHeader::checkStateChanged, this,
+            [this](Qt::CheckState state) { setAllTrackersChecked(state == Qt::Checked); });
     connect(worker, &ArsTrackerBulkFwUpdateWorker::trackerStatusChanged, this,
             &ArsTrackerBulkFwUpdateDialog::onTrackerStatusChanged);
     connect(worker, &ArsTrackerBulkFwUpdateWorker::trackerProgressChanged, this,
@@ -93,9 +278,11 @@ ArsTrackerBulkFwUpdateDialog::ArsTrackerBulkFwUpdateDialog(plugin_mcumgr *plugin
 void ArsTrackerBulkFwUpdateDialog::populateTrackers()
 {
     row_by_port.clear();
+    firmware_version_request_queue.clear();
     table_trackers->setRowCount(0);
     if (plugin_mcumgr_instance == nullptr)
     {
+        updateHeaderCheckState();
         return;
     }
 
@@ -109,6 +296,8 @@ void ArsTrackerBulkFwUpdateDialog::populateTrackers()
         QCheckBox *check = new QCheckBox(table_trackers);
         check->setChecked(true);
         check->setProperty("tracker_port", target.portName);
+        connect(check, &QCheckBox::toggled, this,
+                [this](bool) { updateHeaderCheckState(); });
         table_trackers->setCellWidget(i, 0, check);
         table_trackers->setItem(i, 1, new QTableWidgetItem(target.displayName));
         table_trackers->setItem(i, 2, new QTableWidgetItem(target.serialNumber));
@@ -119,6 +308,7 @@ void ArsTrackerBulkFwUpdateDialog::populateTrackers()
         firmware_version_request_queue.append(target.portName);
     }
     table_trackers->resizeRowsToContents();
+    updateHeaderCheckState();
 }
 
 void ArsTrackerBulkFwUpdateDialog::requestNextFirmwareVersion()
@@ -165,9 +355,55 @@ QVector<ArsTrackerBulkFwTarget> ArsTrackerBulkFwUpdateDialog::selectedTargets() 
 void ArsTrackerBulkFwUpdateDialog::setControlsEnabled(bool enabled)
 {
     table_trackers->setEnabled(enabled);
+    if (check_box_header != nullptr)
+    {
+        check_box_header->setCheckBoxEnabled(enabled);
+    }
     edit_firmware_file->setEnabled(enabled);
     btn_browse->setEnabled(enabled);
     btn_update->setEnabled(enabled);
+}
+
+void ArsTrackerBulkFwUpdateDialog::setAllTrackersChecked(bool checked)
+{
+    tracker_checkboxes_updating = true;
+    for (int row = 0; row < table_trackers->rowCount(); ++row)
+    {
+        QCheckBox *check = qobject_cast<QCheckBox *>(table_trackers->cellWidget(row, 0));
+        if (check != nullptr)
+        {
+            check->setChecked(checked);
+        }
+    }
+    tracker_checkboxes_updating = false;
+    updateHeaderCheckState();
+}
+
+void ArsTrackerBulkFwUpdateDialog::updateHeaderCheckState()
+{
+    if (tracker_checkboxes_updating || check_box_header == nullptr)
+    {
+        return;
+    }
+    int checked_count = 0;
+    for (int row = 0; row < table_trackers->rowCount(); ++row)
+    {
+        const QCheckBox *check = qobject_cast<QCheckBox *>(table_trackers->cellWidget(row, 0));
+        if (check != nullptr && check->isChecked())
+        {
+            ++checked_count;
+        }
+    }
+    Qt::CheckState state = Qt::Unchecked;
+    if (table_trackers->rowCount() > 0 && checked_count == table_trackers->rowCount())
+    {
+        state = Qt::Checked;
+    }
+    else if (checked_count > 0)
+    {
+        state = Qt::PartiallyChecked;
+    }
+    check_box_header->setCheckState(state);
 }
 
 int ArsTrackerBulkFwUpdateDialog::rowForPort(const QString &portName) const

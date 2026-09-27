@@ -203,6 +203,57 @@ bool ars_tracker_verbose_perf_logs_enabled()
 		static const bool enabled = (qEnvironmentVariableIntValue("ARS_TRACKER_VERBOSE_PERF_LOGS") == 1);
 		return enabled;
 }
+
+void configure_select_all_checkbox(QCheckBox *select_all,
+		const QList<QCheckBox *> &item_checks, QObject *context)
+{
+		if (select_all == nullptr || context == nullptr)
+		{
+				return;
+		}
+		select_all->setTristate(true);
+		auto sync_select_all = [select_all, item_checks]() {
+				int checked_count = 0;
+				for (QCheckBox *check : item_checks)
+				{
+						if (check != nullptr && check->isChecked())
+						{
+								++checked_count;
+						}
+				}
+				Qt::CheckState state = Qt::Unchecked;
+				if (!item_checks.isEmpty() && checked_count == item_checks.size())
+				{
+						state = Qt::Checked;
+				}
+				else if (checked_count > 0)
+				{
+						state = Qt::PartiallyChecked;
+				}
+				QSignalBlocker blocker(select_all);
+				select_all->setCheckState(state);
+		};
+		QObject::connect(select_all, &QCheckBox::clicked, context,
+				[item_checks, sync_select_all](bool checked) {
+						for (QCheckBox *check : item_checks)
+						{
+								if (check != nullptr)
+								{
+										check->setChecked(checked);
+								}
+						}
+						sync_select_all();
+				});
+		for (QCheckBox *check : item_checks)
+		{
+				if (check != nullptr)
+				{
+						QObject::connect(check, &QCheckBox::toggled, context,
+								[sync_select_all](bool) { sync_select_all(); });
+				}
+		}
+		sync_select_all();
+}
 }
 static const int ARS_TRACKERS_RESOURCE_ERROR_RESCAN_DELAY_MS = 2000;
 static const int ARS_TRACKERS_SESSION_LIST_TIMEOUT_MS = 15000;
@@ -8000,6 +8051,12 @@ QVector<ArsTrackerBulkFwTarget> plugin_mcumgr::connectedTrackersForBulkFirmwareU
 				t.portName = device.portName;
 				targets.append(t);
 		}
+		std::stable_sort(targets.begin(), targets.end(),
+				[](const ArsTrackerBulkFwTarget &left, const ArsTrackerBulkFwTarget &right) {
+						return ars_tracker_utils::tracker_pair_less(
+								left.displayName, left.serialNumber, left.portName,
+								right.displayName, right.serialNumber, right.portName);
+				});
 		return targets;
 }
 
@@ -10147,6 +10204,21 @@ void plugin_mcumgr::populate_ars_tracker_serial_ports(
 
 		QStringList new_item_texts;
 		QStringList new_item_ports;
+		QList<ars_tracker_port_scan_result_t> sorted_ports = ports;
+		if (placeholder_text.isEmpty())
+		{
+				std::stable_sort(sorted_ports.begin(), sorted_ports.end(),
+						[](const ars_tracker_port_scan_result_t &left,
+							 const ars_tracker_port_scan_result_t &right) {
+								return ars_tracker_utils::tracker_pair_less(
+										ars_tracker_utils::device_display_text(
+												left.serial_number, left.port_name, false),
+										left.serial_number, left.port_name,
+										ars_tracker_utils::device_display_text(
+												right.serial_number, right.port_name, false),
+										right.serial_number, right.port_name);
+						});
+		}
 		if (placeholder_text.isEmpty() == false)
 		{
 				new_item_texts.append(placeholder_text);
@@ -10154,7 +10226,7 @@ void plugin_mcumgr::populate_ars_tracker_serial_ports(
 		}
 		else
 		{
-				for (const ars_tracker_port_scan_result_t &port : ports)
+				for (const ars_tracker_port_scan_result_t &port : sorted_ports)
 				{
 						new_item_texts.append(
 								ars_tracker_port_display_text(port.port_name, port.serial_number));
@@ -10212,7 +10284,7 @@ void plugin_mcumgr::populate_ars_tracker_serial_ports(
 		}
 		else
 		{
-				for (const ars_tracker_port_scan_result_t &port : ports)
+				for (const ars_tracker_port_scan_result_t &port : sorted_ports)
 				{
 						QString display_text =
 								ars_tracker_port_display_text(port.port_name, port.serial_number);
@@ -12201,6 +12273,8 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 		layout->addLayout(name_row);
 
 		layout->addWidget(new QLabel("Pairs:", &dlg));
+		QCheckBox *check_select_all = new QCheckBox("Select all", &dlg);
+		layout->addWidget(check_select_all);
 		QList<QCheckBox *> pair_checks;
 		for (const pair_pick_t &p : pairs)
 		{
@@ -12210,6 +12284,7 @@ void plugin_mcumgr::on_btn_ars_trackers_start_session_clicked()
 				layout->addWidget(cb);
 				pair_checks.append(cb);
 		}
+		configure_select_all_checkbox(check_select_all, pair_checks, &dlg);
 		QHBoxLayout *btns = new QHBoxLayout();
 		QPushButton *btn_start = new QPushButton("Start", &dlg);
 		QPushButton *btn_cancel = new QPushButton("Cancel", &dlg);
@@ -12384,6 +12459,8 @@ void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 		dlg.setWindowTitle("Stop session");
 		QVBoxLayout *layout = new QVBoxLayout(&dlg);
 		layout->addWidget(new QLabel("Select tracker pairs to stop session:", &dlg));
+		QCheckBox *check_select_all = new QCheckBox("Select all", &dlg);
+		layout->addWidget(check_select_all);
 		QList<QCheckBox *> pair_checks;
 		for (const pair_pick_t &p : pairs)
 		{
@@ -12393,6 +12470,7 @@ void plugin_mcumgr::on_btn_ars_trackers_stop_session_clicked()
 				layout->addWidget(cb);
 				pair_checks.append(cb);
 		}
+		configure_select_all_checkbox(check_select_all, pair_checks, &dlg);
 		QHBoxLayout *btns = new QHBoxLayout();
 		QPushButton *btn_stop = new QPushButton("Stop selected", &dlg);
 		QPushButton *btn_cancel = new QPushButton("Cancel", &dlg);

@@ -35,6 +35,11 @@ QString compact_telemetry_text(const QString &raw_text);
 QString format_battery_compact(const QString &raw_text);
 QString format_memory_compact(const QString &raw_text);
 serial_parts_t parse_serial_parts(const QString &serial);
+// Orders recognized trackers by pair (numeric IDs numerically), then R before L.
+// Unrecognized trackers follow with a deterministic display/serial/port fallback.
+bool tracker_pair_less(const QString &left_display_name, const QString &left_serial,
+                       const QString &left_port, const QString &right_display_name,
+                       const QString &right_serial, const QString &right_port);
 QString format_session_display_name(const QString &raw_name);
 void append_size_abbreviation(uint32_t size, QString *output);
 }

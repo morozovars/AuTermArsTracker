@@ -4,6 +4,79 @@
 #include <QtMath>
 #include "ars_tracker_parser.h"
 
+namespace
+{
+bool is_decimal_id(const QString &value)
+{
+    if (value.isEmpty())
+    {
+        return false;
+    }
+    for (const QChar ch : value)
+    {
+        if (!ch.isDigit())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+QString normalized_decimal_id(const QString &value)
+{
+    int first_non_zero = 0;
+    while (first_non_zero < value.size() - 1 && value.at(first_non_zero) == QLatin1Char('0'))
+    {
+        ++first_non_zero;
+    }
+    return value.mid(first_non_zero);
+}
+
+int compare_text(const QString &left, const QString &right)
+{
+    const int insensitive = QString::compare(left, right, Qt::CaseInsensitive);
+    return insensitive != 0 ? insensitive : QString::compare(left, right, Qt::CaseSensitive);
+}
+
+int compare_pair_ids(const QString &left, const QString &right)
+{
+    const bool left_numeric = is_decimal_id(left);
+    const bool right_numeric = is_decimal_id(right);
+    if (left_numeric != right_numeric)
+    {
+        return left_numeric ? -1 : 1;
+    }
+    if (!left_numeric)
+    {
+        return compare_text(left, right);
+    }
+
+    const QString normalized_left = normalized_decimal_id(left);
+    const QString normalized_right = normalized_decimal_id(right);
+    if (normalized_left.size() != normalized_right.size())
+    {
+        return normalized_left.size() < normalized_right.size() ? -1 : 1;
+    }
+    return QString::compare(normalized_left, normalized_right, Qt::CaseSensitive);
+}
+
+int compare_tracker_fallback(const QString &left_display_name, const QString &left_serial,
+                             const QString &left_port, const QString &right_display_name,
+                             const QString &right_serial, const QString &right_port)
+{
+    int result = compare_text(left_display_name, right_display_name);
+    if (result == 0)
+    {
+        result = compare_text(left_serial, right_serial);
+    }
+    if (result == 0)
+    {
+        result = compare_text(left_port, right_port);
+    }
+    return result;
+}
+}
+
 namespace ars_tracker_utils
 {
 QString scan_status_to_string(group_status status)
@@ -294,6 +367,36 @@ serial_parts_t parse_serial_parts(const QString &serial)
         parts.sideName = "Unknown";
     }
     return parts;
+}
+
+bool tracker_pair_less(const QString &left_display_name, const QString &left_serial,
+                       const QString &left_port, const QString &right_display_name,
+                       const QString &right_serial, const QString &right_port)
+{
+    const serial_parts_t left_parts = parse_serial_parts(left_serial);
+    const serial_parts_t right_parts = parse_serial_parts(right_serial);
+    const bool left_recognized = left_parts.valid && (left_parts.isRight || left_parts.isLeft);
+    const bool right_recognized = right_parts.valid && (right_parts.isRight || right_parts.isLeft);
+    if (left_recognized != right_recognized)
+    {
+        return left_recognized;
+    }
+    if (left_recognized)
+    {
+        const int pair_comparison = compare_pair_ids(left_parts.pairId, right_parts.pairId);
+        if (pair_comparison != 0)
+        {
+            return pair_comparison < 0;
+        }
+        const int left_side_order = left_parts.isRight ? 0 : 1;
+        const int right_side_order = right_parts.isRight ? 0 : 1;
+        if (left_side_order != right_side_order)
+        {
+            return left_side_order < right_side_order;
+        }
+    }
+    return compare_tracker_fallback(left_display_name, left_serial, left_port,
+                                    right_display_name, right_serial, right_port) < 0;
 }
 
 QString format_session_display_name(const QString &raw_name)

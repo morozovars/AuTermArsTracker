@@ -23,6 +23,7 @@
 
 #include "smp_processor.h"
 #include "smp_group.h"
+#include "smp_response_error_decoder.h"
 
 static uint16_t smp_header_len_host(const smp_hdr *header)
 {
@@ -390,10 +391,9 @@ void smp_processor::message_received(smp_message *response)
             }
         }
 
-        QCborStreamReader cbor_reader(response->contents());
         smp_error_t error;
-        error.type = SMP_ERROR_NONE;
-        bool parsed = decode_message(cbor_reader, version, 0, nullptr, &error);
+        bool parsed = smp_response_error_decoder::decode(
+                response->contents(), version, group, op, command, &error);
 
         if (!parsed)
         {
@@ -438,106 +438,6 @@ void smp_processor::message_received(smp_message *response)
     }
 
     custom_message = false;
-}
-
-bool smp_processor::decode_message(QCborStreamReader &reader, uint8_t version, uint16_t level, QString *parent, smp_error_t *error)
-{
-    QString key = "";
-    bool keyset = true;
-
-    while (!reader.lastError() && reader.hasNext())
-    {
-        if (keyset == false && !key.isEmpty())
-        {
-            key = "";
-        }
-
-        keyset = false;
-
-        switch (reader.type())
-        {
-            case QCborStreamReader::UnsignedInteger:
-            case QCborStreamReader::NegativeInteger:
-            {
-                if (key == "rc" && version == 1 && level == 2 && parent != nullptr && *parent == "err")
-                {
-                    error->rc = reader.toUnsignedInteger();
-                    error->type = SMP_ERROR_RET;
-                }
-                else if (key == "group" && version == 1 && level == 2 && parent != nullptr && *parent == "err")
-                {
-                    error->group = reader.toUnsignedInteger();
-                    error->type = SMP_ERROR_RET;
-                }
-                else if (key == "rc" && level == 1)
-                {
-                    error->rc = reader.toInteger();
-                    error->type = SMP_ERROR_RC;
-                }
-
-                reader.next();
-                break;
-            }
-            case QCborStreamReader::String:
-            {
-                QString data;
-                auto r = reader.readString();
-                while (r.status == QCborStreamReader::Ok)
-                {
-                    data.append(r.data);
-                    r = reader.readString();
-                }
-
-                if (r.status == QCborStreamReader::Error)
-                {
-                    data.clear();
-                    log_error() << "Error decoding string";
-                }
-                else
-                {
-                    if (key.isEmpty())
-                    {
-                        key = data;
-                        keyset = true;
-                    }
-                }
-                break;
-            }
-            case QCborStreamReader::Array:
-            case QCborStreamReader::Map:
-            {
-                reader.enterContainer();
-                while (reader.lastError() == QCborError::NoError && reader.hasNext())
-                {
-                    decode_message(reader, version, (level + 1), &key, error);
-                }
-                if (reader.lastError() == QCborError::NoError)
-                {
-                    reader.leaveContainer();
-                }
-                break;
-            }
-            default:
-            {
-                reader.next();
-                break;
-            }
-        }
-    }
-
-    if (reader.lastError())
-    {
-        log_error() << "Failed to parse CBOR message: " << reader.lastError().toString();
-        return false;
-    }
-
-    //Check if an error was received with value 0, which is not an error and is a success code
-    if (level == 0 && error->type != SMP_ERROR_NONE && error->rc == 0)
-    {
-        error->type = SMP_ERROR_NONE;
-    }
-
-    return true;
 }
 
 void smp_processor::set_transport(smp_transport *transport_object)

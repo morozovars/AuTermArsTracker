@@ -47,6 +47,7 @@ SOURCES += \
     ars_tracker_sessions_tab.cpp \
     ../../AuTerm/AutEscape.cpp \
     ars_tracker_backend.cpp \
+    ars_tracker_log_utils.cpp \
     ars_tracker_utils.cpp \
     ars_tracker_parser.cpp \
     crc16.cpp \
@@ -59,11 +60,13 @@ SOURCES += \
     smp_group_os_mgmt.cpp \
     smp_group_settings_mgmt.cpp \
     smp_group_shell_mgmt.cpp \
+    smp_shell_response_parser.cpp \
     smp_group_stat_mgmt.cpp \
     smp_group_zephyr_mgmt.cpp \
     smp_json.cpp \
     smp_message.cpp \
     smp_processor.cpp \
+    smp_response_error_decoder.cpp \
     smp_uart_auterm.cpp \
     smp_group_img_mgmt.cpp \
     ../../src/ars/workspace/ArsLocalWorkspace.cpp \
@@ -101,6 +104,7 @@ HEADERS += \
     ars_tracker_sessions_tab.h \
     ../../AuTerm/AutEscape.h \
     ars_tracker_backend.h \
+    ars_tracker_log_utils.h \
     ars_tracker_utils.h \
     ars_tracker_parser.h \
     crc16.h \
@@ -114,11 +118,13 @@ HEADERS += \
     smp_group_os_mgmt.h \
     smp_group_settings_mgmt.h \
     smp_group_shell_mgmt.h \
+    smp_shell_response_parser.h \
     smp_group_stat_mgmt.h \
     smp_group_zephyr_mgmt.h \
     smp_json.h \
     smp_message.h \
     smp_processor.h \
+    smp_response_error_decoder.h \
     smp_transport.h \
     smp_uart_auterm.h \
     smp_group.h \

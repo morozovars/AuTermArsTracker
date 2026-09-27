@@ -118,6 +118,10 @@ bool ars_tracker_parser::parse_meas_ls_output(const QString &shell_output,
                                               QString *error_message)
 {
     sessions->clear();
+    if (error_message != nullptr)
+    {
+        error_message->clear();
+    }
 
     // Assumption: `meas ls` returns one session name/path per line, e.g.:
     // sessionA\nsessionB\n...
@@ -149,7 +153,7 @@ bool ars_tracker_parser::parse_meas_ls_output(const QString &shell_output,
         sessions->append(session);
     }
 
-    if (sessions->isEmpty())
+    if (sessions->isEmpty() && shell_output.trimmed().isEmpty() == false)
     {
         if (error_message != nullptr)
         {

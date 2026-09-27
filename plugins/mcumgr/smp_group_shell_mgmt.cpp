@@ -25,6 +25,7 @@
 // Include Files
 /******************************************************************************/
 #include "smp_group_shell_mgmt.h"
+#include "smp_shell_response_parser.h"
 
 /******************************************************************************/
 // Enum typedefs
@@ -59,105 +60,6 @@ smp_group_shell_mgmt::smp_group_shell_mgmt(smp_processor *parent) : smp_group(pa
     mode = MODE_IDLE;
 }
 
-bool smp_group_shell_mgmt::parse_execute_response(QCborStreamReader &reader, int32_t *ret, QString *response)
-{
-    //    qDebug() << reader.lastError() << reader.hasNext();
-
-    QString key = "";
-    bool keyset = true;
-
-    *ret = 0;
-
-    while (!reader.lastError() && reader.hasNext())
-    {
-        if (keyset == false && !key.isEmpty())
-        {
-            key.clear();
-        }
-
-        keyset = false;
-
-        switch (reader.type())
-        {
-            case QCborStreamReader::UnsignedInteger:
-            case QCborStreamReader::NegativeInteger:
-            {
-                if (key == "ret")
-                {
-                    *ret = (int32_t)reader.toInteger();
-                }
-
-                reader.next();
-                break;
-            }
-            case QCborStreamReader::ByteArray:
-            {
-                auto r = reader.readByteArray();
-                while (r.status == QCborStreamReader::Ok)
-                {
-                    r = reader.readByteArray();
-                }
-
-                break;
-            }
-            case QCborStreamReader::String:
-            {
-                QString data;
-                auto r = reader.readString();
-                while (r.status == QCborStreamReader::Ok)
-                {
-                    data.append(r.data);
-                    r = reader.readString();
-                }
-
-                if (r.status == QCborStreamReader::Error)
-                {
-                    data.clear();
-                    log_error() << "Error decoding string";
-                }
-                else
-                {
-                    if (key.isEmpty())
-                    {
-                        key = data;
-                        keyset = true;
-                    }
-                    else if (key == "o")
-                    {
-                        response->append(data);
-                    }
-                }
-
-                break;
-            }
-            case QCborStreamReader::Array:
-            case QCborStreamReader::Map:
-            {
-                reader.enterContainer();
-
-                while (reader.lastError() == QCborError::NoError && reader.hasNext())
-                {
-                    parse_execute_response(reader, ret, response);
-                }
-
-                if (reader.lastError() == QCborError::NoError)
-                {
-                    reader.leaveContainer();
-                }
-
-                break;
-            }
-            default:
-            {
-                reader.next();
-                continue;
-            }
-        };
-    }
-
-    return true;
-}
-
 void smp_group_shell_mgmt::receive_ok(uint8_t version, uint8_t op, uint16_t group, uint8_t command, QByteArray data)
 {
     Q_UNUSED(op);
@@ -188,11 +90,20 @@ void smp_group_shell_mgmt::receive_ok(uint8_t version, uint8_t op, uint16_t grou
         if (finished_mode == MODE_EXECUTE && command == COMMAND_EXECUTE)
         {
             //Response to execute
-            QString response;
-            QCborStreamReader cbor_reader(data);
-            bool good = parse_execute_response(cbor_reader, return_ret, &response);
+            const smp_shell_execute_response_t response =
+                    smp_shell_response_parser::parse_execute_response(data);
+            execute_ret_valid = response.valid && response.ret_valid;
+            *return_ret = response.ret_valid ? response.ret : 0;
 
-            emit status(smp_user_data, STATUS_COMPLETE, response);
+            if (response.valid)
+            {
+                emit status(smp_user_data, STATUS_COMPLETE, response.output);
+            }
+            else
+            {
+                emit status(smp_user_data, STATUS_ERROR,
+                            QStringLiteral("Invalid shell management response"));
+            }
         }
         else
         {
@@ -263,6 +174,7 @@ bool smp_group_shell_mgmt::start_execute(QStringList *arguments, int32_t *ret)
 
     return_ret = ret;
     *return_ret = 0;
+    execute_ret_valid = false;
     mode = MODE_EXECUTE;
 
     //	    qDebug() << "len: " << message.length();
@@ -273,6 +185,11 @@ bool smp_group_shell_mgmt::start_execute(QStringList *arguments, int32_t *ret)
     }
 
     return handle_transport_error(processor->send(tmp_message, smp_timeout, smp_retries, true));
+}
+
+bool smp_group_shell_mgmt::last_execute_ret_valid() const
+{
+    return execute_ret_valid;
 }
 
 QString smp_group_shell_mgmt::mode_to_string(uint8_t mode)

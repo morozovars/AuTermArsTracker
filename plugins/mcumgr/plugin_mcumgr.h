@@ -57,6 +57,7 @@
 class ArsTrackerSessionsTab;
 class ArsTrackerTeamTab;
 class ArsTrackerPlayersTab;
+class QTemporaryDir;
 
 class QSerialPort;
 
@@ -168,6 +169,11 @@ enum mcumgr_action_t {
     ACTION_ARS_TRACKER_FIRMWARE_ERASE,
     ACTION_ARS_TRACKER_SHELL_COMMAND,
     ACTION_ARS_TRACKER_LIGHT_TELEMETRY,
+    ACTION_ARS_TRACKER_LOG_SUPPORT_PWD,
+    ACTION_ARS_TRACKER_LOG_SUPPORT_CD,
+    ACTION_ARS_TRACKER_LOG_SUPPORT_RESTORE,
+    ACTION_ARS_TRACKER_LOG_LIST,
+    ACTION_ARS_TRACKER_LOG_DOWNLOAD,
     ACTION_ARS_TRACKERS_MULTI_SESSION_LIST,
     ACTION_ARS_TRACKERS_MULTI_SESSION_DELETE,
     ACTION_ARS_TRACKERS_MULTI_SESSION_START,
@@ -188,6 +194,13 @@ enum ars_tracker_ui_state_t : uint8_t {
     ARS_TRACKER_UI_STATE_CONNECTING,
     ARS_TRACKER_UI_STATE_CONNECTED,
     ARS_TRACKER_UI_STATE_DISCONNECTING,
+};
+
+enum ars_tracker_log_support_state_t : uint8_t {
+    ARS_TRACKER_LOG_SUPPORT_UNKNOWN = 0,
+    ARS_TRACKER_LOG_SUPPORT_CHECKING,
+    ARS_TRACKER_LOG_SUPPORT_AVAILABLE,
+    ARS_TRACKER_LOG_SUPPORT_UNAVAILABLE,
 };
 
 struct ars_tracker_port_scan_result_t {
@@ -211,6 +224,13 @@ struct ars_tracker_device_t {
     int32_t shellRc = 0;
     QList<image_state_t> imageStateList;
     QByteArray deviceLogBuffer;
+    QByteArray downloadedLogHistory;
+    ars_tracker_log_support_state_t logSupportState = ARS_TRACKER_LOG_SUPPORT_UNKNOWN;
+    quint64 connectionGeneration = 0;
+    bool logOperationActive = false;
+    quint64 logSupportAttemptedGeneration = 0;
+    int logSupportRetryCount = 0;
+    bool logSupportCheckPending = false;
     QSerialPort *serialPort = nullptr;
     smp_uart_auterm *transport = nullptr;
     smp_processor *processor = nullptr;
@@ -638,6 +658,27 @@ private:
     void refresh_ars_tracker_device_logs_view(ars_tracker_device_t *device);
     void clear_ars_tracker_device_logs_view();
     void buffer_ars_tracker_device_log(ars_tracker_device_t *device, const QByteArray &data);
+    void update_ars_tracker_log_controls();
+    void schedule_ars_tracker_log_support_check(const QString &port_name,
+                                                quint64 connection_generation,
+                                                int delay_ms = 0,
+                                                bool retry = false);
+    bool start_ars_tracker_log_support_check(ars_tracker_device_t *device);
+    void handle_ars_tracker_log_shell_status(ars_tracker_device_t *device, uint8_t user_data,
+                                             group_status status, const QString &response);
+    bool start_ars_tracker_log_shell_command(ars_tracker_device_t *device,
+                                             mcumgr_action_t action,
+                                             const QStringList &arguments);
+    void start_ars_tracker_log_load();
+    void start_next_ars_tracker_log_download();
+    void handle_ars_tracker_log_download_status(ars_tracker_device_t *device,
+                                                group_status status,
+                                                const QString &error_string);
+    void handle_ars_tracker_log_download_progress(ars_tracker_device_t *device,
+                                                  uint8_t percent);
+    void finish_ars_tracker_log_load(bool cancelled, const QString &error_message = QString());
+    void cancel_ars_tracker_log_operation(const QString &reason);
+    bool ars_tracker_log_context_matches(const ars_tracker_device_t *device) const;
     void handle_ars_tracker_persistent_non_smp_bytes(const QString &port_name,
                                                      const QByteArray &data);
     bool ars_tracker_port_in_probe_backoff(const QString &port_name,
@@ -1128,6 +1169,7 @@ private:
     QGridLayout *gridLayout_ars_tracker_device_logs;
     AutScrollEdit *text_ars_tracker_device_logs;
     QPushButton *button_ars_tracker_device_logs_clear;
+    QPushButton *button_ars_tracker_device_logs_load;
     QHBoxLayout *horizontalLayout_ars_tracker_actions;
     QSpacerItem *horizontalSpacer_ars_tracker_actions;
     QPushButton *btn_ars_tracker_delete;
@@ -1269,6 +1311,26 @@ private:
     QString ars_tracker_persistent_export_port;
     QString ars_tracker_persistent_shell_command_port;
     QString ars_tracker_persistent_firmware_port;
+    QString ars_tracker_log_support_port;
+    QString ars_tracker_log_support_saved_cwd;
+    quint64 ars_tracker_log_support_connection_generation = 0;
+    int ars_tracker_log_support_generation = 0;
+    bool ars_tracker_log_support_cd_ok = false;
+    bool ars_tracker_log_load_active = false;
+    bool ars_tracker_log_load_cancelled = false;
+    int ars_tracker_log_load_generation = 0;
+    QString ars_tracker_log_load_port;
+    QString ars_tracker_log_load_serial;
+    quint64 ars_tracker_log_load_connection_generation = 0;
+    QStringList ars_tracker_log_load_files;
+    QStringList ars_tracker_log_load_skipped;
+    QStringList ars_tracker_log_load_pending_missing;
+    QByteArray ars_tracker_log_load_bytes;
+    int ars_tracker_log_load_index = 0;
+    int ars_tracker_log_load_attempt = 0;
+    int ars_tracker_log_load_success_count = 0;
+    QString ars_tracker_log_load_local_file;
+    QTemporaryDir *ars_tracker_log_load_temp_dir = nullptr;
     QString ars_tracker_pending_active_refresh_port;
     uint32_t ars_tracker_active_refresh_generation = 0;
     QByteArray ars_tracker_scan_probe_log_buffer;

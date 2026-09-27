@@ -47,6 +47,7 @@ public:
     void receive_error(uint8_t version, uint8_t op, uint16_t group, uint8_t command, smp_error_t error) override;
     void cancel() override;
     bool start_execute(QStringList *arguments, int32_t *ret);
+    bool last_execute_ret_valid() const;
 
 protected:
     void cleanup() override;
@@ -56,10 +57,9 @@ protected:
 private:
     static bool error_lookup(int32_t rc, QString *error);
     static bool error_define_lookup(int32_t rc, QString *error);
-    bool parse_execute_response(QCborStreamReader &reader, int32_t *ret, QString *response);
-
     //
     int32_t *return_ret;
+    bool execute_ret_valid = false;
 };
 
 #endif // SMP_GROUP_SHELL_MGMT_H

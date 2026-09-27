@@ -80,8 +80,6 @@ public:
 
 private:
     void cleanup();
-    bool decode_message(QCborStreamReader &reader, uint8_t version, uint16_t level, QString *parent, smp_error_t *error);
-
 public slots:
     void message_timeout();
     void message_received(smp_message *message);

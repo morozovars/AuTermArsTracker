@@ -86,7 +86,9 @@ void ArsTrackerCheckBoxHeader::updateCheckBox()
 void ArsTrackerCheckBoxHeader::paintSection(QPainter *painter, const QRect &rect,
                                             int logicalIndex) const
 {
+    painter->save();
     QHeaderView::paintSection(painter, rect, logicalIndex);
+    painter->restore();
     if (logicalIndex != 0)
     {
         return;
@@ -119,7 +121,7 @@ void ArsTrackerCheckBoxHeader::paintSection(QPainter *painter, const QRect &rect
     }
     painter->save();
     painter->setClipRect(rect, Qt::IntersectClip);
-    style()->drawControl(QStyle::CE_CheckBox, &option, painter, viewport());
+    style()->drawPrimitive(QStyle::PE_IndicatorCheckBox, &option, painter, this);
     painter->restore();
 }
 

@@ -19,6 +19,8 @@ struct battery_info_t {
     int availableCap_mAh;
     int temp;
     int cycles;
+    bool chargerConnectedKnown;
+    bool chargerConnected;
 };
 
 struct memory_usage_t {

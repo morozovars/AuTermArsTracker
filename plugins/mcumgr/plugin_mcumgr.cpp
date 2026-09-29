@@ -22,6 +22,7 @@
 **
 *******************************************************************************/
 #include <QFileDialog>
+#include <QMessageBox>
 #include <QStandardItemModel>
 #include <QRegularExpression>
 #include <QClipboard>
@@ -2510,7 +2511,14 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		button_ars_tracker_device_logs_load->setObjectName("button_ars_tracker_device_logs_load");
 		button_ars_tracker_device_logs_load->setVisible(false);
 		gridLayout_ars_tracker_device_logs->addWidget(button_ars_tracker_device_logs_load, 0, 1, 1, 1,
-																									 Qt::AlignLeft);
+																		 Qt::AlignLeft);
+
+		button_ars_tracker_device_logs_save = new QPushButton(group_ars_tracker_device_logs);
+		button_ars_tracker_device_logs_save->setObjectName("button_ars_tracker_device_logs_save");
+		button_ars_tracker_device_logs_save->setVisible(false);
+		button_ars_tracker_device_logs_save->setEnabled(false);
+		gridLayout_ars_tracker_device_logs->addWidget(button_ars_tracker_device_logs_save, 0, 2, 1, 1,
+																		 Qt::AlignLeft);
 
 		text_ars_tracker_device_logs = new AutScrollEdit(group_ars_tracker_device_logs);
 		text_ars_tracker_device_logs->setObjectName("text_ars_tracker_device_logs");
@@ -2518,8 +2526,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 		text_ars_tracker_device_logs->setUndoRedoEnabled(false);
 		text_ars_tracker_device_logs->setReadOnly(true);
 		text_ars_tracker_device_logs->setMinimumHeight(160);
-		gridLayout_ars_tracker_device_logs->addWidget(text_ars_tracker_device_logs, 1, 0, 1, 2);
-		gridLayout_ars_tracker_device_logs->setColumnStretch(1, 1);
+		gridLayout_ars_tracker_device_logs->addWidget(text_ars_tracker_device_logs, 1, 0, 1, 3);
+		gridLayout_ars_tracker_device_logs->setColumnStretch(2, 1);
 
 		gridLayout_ars_tracker->addWidget(group_ars_tracker_device_logs, 3, 0, 1, 3);
 
@@ -3061,6 +3069,8 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 				QCoreApplication::translate("Form", "Clear logs", nullptr));
 		button_ars_tracker_device_logs_load->setText(
 				QCoreApplication::translate("Form", "Load logs", nullptr));
+		button_ars_tracker_device_logs_save->setText(
+				QCoreApplication::translate("Form", "Save to file", nullptr));
 		btn_ars_tracker_delete->setText(
 				QCoreApplication::translate("Form", "Delete session", nullptr));
 		btn_ars_tracker_download->setText(
@@ -3326,9 +3336,12 @@ void plugin_mcumgr::setup(QMainWindow *main_window)
 						text_ars_tracker_device_logs->update_display();
 						log_debug() << "ArsTracker device logs cleared";
 				}
+				update_ars_tracker_log_controls();
 		});
 		connect(button_ars_tracker_device_logs_load, &QPushButton::clicked, this,
 						&plugin_mcumgr::start_ars_tracker_log_load);
+		connect(button_ars_tracker_device_logs_save, &QPushButton::clicked, this,
+						&plugin_mcumgr::save_ars_tracker_device_logs);
 		connect(ars_tracker_log_monitor_transport, &smp_uart_auterm::non_smp_uart_data_received, this,
 						&plugin_mcumgr::append_ars_tracker_device_log);
 		connect(edit_ars_tracker_shell_command, &QLineEdit::returnPressed, this,
@@ -15967,18 +15980,27 @@ void plugin_mcumgr::append_ars_tracker_device_log(const QByteArray &data)
 
 		text_ars_tracker_device_logs->add_dat_in_text(data);
 		text_ars_tracker_device_logs->update_display();
+		ars_tracker_device_t *device = active_ars_tracker_device();
+		if (device != nullptr &&
+				device->logSupportState == ARS_TRACKER_LOG_SUPPORT_AVAILABLE &&
+				button_ars_tracker_device_logs_save != nullptr &&
+				button_ars_tracker_device_logs_save->isEnabled() == false)
+		{
+				update_ars_tracker_log_controls();
+		}
 }
 
 void plugin_mcumgr::clear_ars_tracker_device_logs_view()
 {
-		update_ars_tracker_log_controls();
 		if (text_ars_tracker_device_logs == nullptr)
 		{
+				update_ars_tracker_log_controls();
 				return;
 		}
 
 		text_ars_tracker_device_logs->clear_dat_in();
 		text_ars_tracker_device_logs->update_display();
+		update_ars_tracker_log_controls();
 }
 
 void plugin_mcumgr::refresh_ars_tracker_device_logs_view(ars_tracker_device_t *device)
@@ -15999,6 +16021,7 @@ void plugin_mcumgr::refresh_ars_tracker_device_logs_view(ars_tracker_device_t *d
 				text_ars_tracker_device_logs->add_dat_in_text(combined_history);
 				text_ars_tracker_device_logs->update_display();
 		}
+		update_ars_tracker_log_controls();
 
 		log_debug() << "ArsTracker device log view switched port=" << device->portName
 								<< "fileBytes=" << device->downloadedLogHistory.size()
@@ -16007,6 +16030,71 @@ void plugin_mcumgr::refresh_ars_tracker_device_logs_view(ars_tracker_device_t *d
 		log_debug() << "ArsTracker active device changed, restoring log buffer port="
 								<< device->portName << "chars="
 								<< text_ars_tracker_device_logs->toPlainText().length();
+}
+
+QString plugin_mcumgr::current_ars_tracker_device_logs_text() const
+{
+		return text_ars_tracker_device_logs != nullptr ?
+				text_ars_tracker_device_logs->toPlainText() : QString();
+}
+
+void plugin_mcumgr::save_ars_tracker_device_logs()
+{
+		const QString display_text = current_ars_tracker_device_logs_text();
+		ars_tracker_device_t *device = active_ars_tracker_device();
+		if (device == nullptr || !device->connected ||
+				device->logSupportState != ARS_TRACKER_LOG_SUPPORT_AVAILABLE ||
+				ars_tracker_log_load_active || display_text.isEmpty())
+		{
+				update_ars_tracker_log_controls();
+				return;
+		}
+
+		const QString default_name = ars_tracker_log_utils::device_logs_default_file_name(
+				device->serialNumber, QDateTime::currentDateTime());
+
+		QString directory = ars_tracker_logs_save_directory;
+		if (directory.isEmpty())
+		{
+				directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+		}
+		if (directory.isEmpty())
+		{
+				directory = QDir::homePath();
+		}
+
+		QString selected_filter = ars_tracker_log_utils::device_logs_log_filter();
+		QString file_name = QFileDialog::getSaveFileName(
+				parent_window, tr("Save device logs"), QDir(directory).filePath(default_name),
+				ars_tracker_log_utils::device_logs_save_filters(), &selected_filter);
+		if (file_name.isEmpty())
+		{
+				return;
+		}
+		file_name = ars_tracker_log_utils::ensure_device_logs_file_extension(
+				file_name, selected_filter);
+
+		ars_tracker_logs_save_directory = QFileInfo(file_name).absolutePath();
+		const QString text = ars_tracker_log_utils::text_document_to_ansi(
+				text_ars_tracker_device_logs->document());
+		const ars_tracker_log_utils::save_text_result_t result =
+				ars_tracker_log_utils::save_text_utf8(file_name, text);
+		if (result.status != ars_tracker_log_utils::SAVE_TEXT_SUCCESS)
+		{
+				const QString reason = result.error_message.isEmpty() ?
+						tr("Unknown file error") : result.error_message;
+				QMessageBox::critical(
+						parent_window, tr("Save device logs"),
+						tr("Could not save device logs to:\n%1\n\n%2")
+								.arg(QDir::toNativeSeparators(file_name), reason));
+				return;
+		}
+
+		if (lbl_ars_tracker_status != nullptr)
+		{
+				lbl_ars_tracker_status->setText(
+						tr("Device logs saved to %1").arg(QDir::toNativeSeparators(file_name)));
+		}
 }
 
 void plugin_mcumgr::handle_ars_tracker_persistent_non_smp_bytes(const QString &port_name,
@@ -16142,6 +16230,7 @@ static int ars_tracker_log_support_retry_delay_ms(int retry_count)
 void plugin_mcumgr::update_ars_tracker_log_controls()
 {
 		if (button_ars_tracker_device_logs_load == nullptr ||
+				button_ars_tracker_device_logs_save == nullptr ||
 				button_ars_tracker_device_logs_clear == nullptr)
 		{
 				return;
@@ -16153,22 +16242,33 @@ void plugin_mcumgr::update_ars_tracker_log_controls()
 		const bool busy = device != nullptr &&
 				(device->logOperationActive || (device->processor != nullptr && device->processor->is_busy()) ||
 				 is_ars_trackers_download_active_for_port(device->portName));
-		const bool load_enabled = supported && !busy && !ars_tracker_log_load_active;
 		const bool selected_device_log_load_active = device != nullptr &&
 				ars_tracker_log_load_active &&
 				ars_tracker_log_load_port.compare(device->portName, Qt::CaseInsensitive) == 0;
-		const bool clear_enabled = device != nullptr && !selected_device_log_load_active;
-		if (button_ars_tracker_device_logs_load->isHidden() == supported)
+		const ars_tracker_log_utils::controls_state_t state =
+				ars_tracker_log_utils::controls_state(
+						device != nullptr, supported, busy, ars_tracker_log_load_active,
+						selected_device_log_load_active,
+						current_ars_tracker_device_logs_text().isEmpty() == false);
+		if (button_ars_tracker_device_logs_load->isHidden() == state.load_visible)
 		{
-			button_ars_tracker_device_logs_load->setVisible(supported);
+				button_ars_tracker_device_logs_load->setVisible(state.load_visible);
 		}
-		if (button_ars_tracker_device_logs_load->isEnabled() != load_enabled)
+		if (button_ars_tracker_device_logs_save->isHidden() == state.save_visible)
 		{
-			button_ars_tracker_device_logs_load->setEnabled(load_enabled);
+				button_ars_tracker_device_logs_save->setVisible(state.save_visible);
 		}
-		if (button_ars_tracker_device_logs_clear->isEnabled() != clear_enabled)
+		if (button_ars_tracker_device_logs_load->isEnabled() != state.load_enabled)
 		{
-			button_ars_tracker_device_logs_clear->setEnabled(clear_enabled);
+				button_ars_tracker_device_logs_load->setEnabled(state.load_enabled);
+		}
+		if (button_ars_tracker_device_logs_save->isEnabled() != state.save_enabled)
+		{
+				button_ars_tracker_device_logs_save->setEnabled(state.save_enabled);
+		}
+		if (button_ars_tracker_device_logs_clear->isEnabled() != state.clear_enabled)
+		{
+				button_ars_tracker_device_logs_clear->setEnabled(state.clear_enabled);
 		}
 		log_debug() << "ArsTracker device logs UI sync"
 						<< "port=" << (device != nullptr ? device->portName : QStringLiteral("<none>"))
@@ -16181,6 +16281,9 @@ void plugin_mcumgr::update_ars_tracker_log_controls()
 						<< "buttonVisible=" << button_ars_tracker_device_logs_load->isVisible()
 						<< "buttonHidden=" << button_ars_tracker_device_logs_load->isHidden()
 						<< "buttonEnabled=" << button_ars_tracker_device_logs_load->isEnabled()
+						<< "saveVisible=" << button_ars_tracker_device_logs_save->isVisible()
+						<< "saveHidden=" << button_ars_tracker_device_logs_save->isHidden()
+						<< "saveEnabled=" << button_ars_tracker_device_logs_save->isEnabled()
 						<< "clearEnabled=" << button_ars_tracker_device_logs_clear->isEnabled()
 						<< "groupVisible=" << group_ars_tracker_device_logs->isVisible()
 						<< "parentVisible=" << button_ars_tracker_device_logs_load->parentWidget()->isVisible();

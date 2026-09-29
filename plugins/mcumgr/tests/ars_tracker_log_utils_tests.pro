@@ -1,5 +1,4 @@
-QT += core testlib
-QT -= gui
+QT += core gui testlib
 CONFIG += console testcase c++17
 DEFINES += SKIPPLUGIN_LOGGER
 TEMPLATE = app

@@ -1,7 +1,12 @@
 #include "ars_tracker_log_utils.h"
 
+#include <QFileInfo>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextFragment>
 #include <algorithm>
 
 namespace {
@@ -87,6 +92,168 @@ bool support_context_matches(const QString &port, const QString &serial,
     return port.compare(expected_port, Qt::CaseInsensitive) == 0 &&
            serial.compare(expected_serial, Qt::CaseInsensitive) == 0 &&
            generation == expected_generation;
+}
+
+controls_state_t controls_state(bool device_present, bool supported, bool busy, bool load_active,
+                                bool selected_device_load_active, bool has_text)
+{
+    controls_state_t result;
+    result.load_visible = supported;
+    result.save_visible = supported;
+    result.load_enabled = supported && !busy && !load_active;
+    result.save_enabled = supported && !load_active && has_text;
+    result.clear_enabled = device_present && !selected_device_load_active;
+    return result;
+}
+
+QString device_logs_default_file_name(const QString &serial, const QDateTime &timestamp)
+{
+    QString safe_serial = serial.trimmed();
+    safe_serial.replace(QRegularExpression(QStringLiteral("[<>:\"/\\\\|?*]+")),
+                        QStringLiteral("_"));
+    safe_serial.replace(QRegularExpression(QStringLiteral("[\\x00-\\x1F]+")),
+                        QStringLiteral("_"));
+    while (safe_serial.endsWith(' ') || safe_serial.endsWith('.'))
+    {
+        safe_serial.chop(1);
+    }
+
+    const QString prefix = safe_serial.isEmpty() ? QStringLiteral("ars_tracker_logs_") :
+                           QStringLiteral("ars_tracker_%1_logs_").arg(safe_serial);
+    return prefix + timestamp.toString(QStringLiteral("yyyy-MM-dd_HH-mm-ss")) +
+           QStringLiteral(".log");
+}
+
+QString device_logs_log_filter()
+{
+    return QStringLiteral("Log files (*.log)");
+}
+
+QString device_logs_save_filters()
+{
+    return device_logs_log_filter() + QStringLiteral(";;Text files (*.txt);;All files (*.*)");
+}
+
+QString ensure_device_logs_file_extension(const QString &file_name,
+                                          const QString &selected_filter)
+{
+    if (file_name.isEmpty() || selected_filter != device_logs_log_filter() ||
+        !QFileInfo(file_name).suffix().isEmpty())
+    {
+        return file_name;
+    }
+    return file_name + QStringLiteral(".log");
+}
+
+QString text_document_to_ansi(const QTextDocument *document)
+{
+    if (document == nullptr)
+    {
+        return QString();
+    }
+
+    QString result;
+    bool colour_active = false;
+    QColor active_foreground;
+    QColor active_background;
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next())
+    {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it)
+        {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid())
+            {
+                continue;
+            }
+
+            const QTextCharFormat format = fragment.charFormat();
+            const QBrush foreground_brush = format.foreground();
+            const QBrush background_brush = format.background();
+            const QColor foreground = foreground_brush.style() == Qt::NoBrush ?
+                                      QColor() : foreground_brush.color();
+            const QColor background = background_brush.style() == Qt::NoBrush ?
+                                      QColor() : background_brush.color();
+            const bool colours_changed = foreground != active_foreground ||
+                                         background != active_background;
+            if (colours_changed)
+            {
+                if (colour_active)
+                {
+                    result.append(QStringLiteral("\x1b[0m"));
+                }
+                if (foreground.isValid())
+                {
+                    result.append(QStringLiteral("\x1b[38;2;%1;%2;%3m")
+                                      .arg(foreground.red())
+                                      .arg(foreground.green())
+                                      .arg(foreground.blue()));
+                }
+                if (background.isValid())
+                {
+                    result.append(QStringLiteral("\x1b[48;2;%1;%2;%3m")
+                                      .arg(background.red())
+                                      .arg(background.green())
+                                      .arg(background.blue()));
+                }
+                active_foreground = foreground;
+                active_background = background;
+                colour_active = foreground.isValid() || background.isValid();
+            }
+            result.append(fragment.text());
+        }
+        if (block.next().isValid())
+        {
+            if (colour_active)
+            {
+                result.append(QStringLiteral("\x1b[0m"));
+                active_foreground = QColor();
+                active_background = QColor();
+                colour_active = false;
+            }
+            result.append('\n');
+        }
+    }
+    if (colour_active)
+    {
+        result.append(QStringLiteral("\x1b[0m"));
+    }
+    return result;
+}
+
+save_text_result_t save_text_utf8(const QString &file_name, const QString &text)
+{
+    save_text_result_t result;
+    if (file_name.isEmpty())
+    {
+        return result;
+    }
+
+    QSaveFile file(file_name);
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        result.status = SAVE_TEXT_OPEN_ERROR;
+        result.error_message = file.errorString();
+        return result;
+    }
+
+    const QByteArray bytes = text.toUtf8();
+    if (file.write(bytes) != bytes.size())
+    {
+        result.status = SAVE_TEXT_WRITE_ERROR;
+        result.error_message = file.errorString();
+        file.cancelWriting();
+        return result;
+    }
+
+    if (!file.commit())
+    {
+        result.status = SAVE_TEXT_COMMIT_ERROR;
+        result.error_message = file.errorString();
+        return result;
+    }
+
+    result.status = SAVE_TEXT_SUCCESS;
+    return result;
 }
 
 QStringList order_log_files(const QStringList &file_names)

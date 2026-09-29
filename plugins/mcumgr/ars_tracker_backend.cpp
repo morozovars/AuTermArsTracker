@@ -844,7 +844,9 @@ void ars_tracker_backend::handle_tracker_info_response(group_status   status,
                                 << "t2f=" << battery_info.t2fMin
                                 << "available=" << battery_info.availableCap_mAh
                                 << "temp=" << battery_info.temp
-                                << "cycles=" << battery_info.cycles;
+                                << "cycles=" << battery_info.cycles
+                                << "chargerKnown=" << battery_info.chargerConnectedKnown
+                                << "chargerConnected=" << battery_info.chargerConnected;
                     log_debug() << "ArsTracker bat i formatted UI value:" << parsed_value;
                 }
             } else if (step == TRACKER_INFO_STEP_MEMORY_USAGE)

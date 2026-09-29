@@ -1,6 +1,11 @@
 #include <QtTest>
 #include <QCborMap>
 #include <QCborValue>
+#include <QFile>
+#include <QRegularExpression>
+#include <QTemporaryDir>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <algorithm>
 
 #include "../ars_tracker_log_utils.h"
@@ -35,6 +40,13 @@ private slots:
     void ordersMoreThanTenSparseFiles();
     void preservesBytesAcrossFileBoundaries();
     void marksPartialHistory();
+    void parsesLegacyAndExtendedBatteryInfo();
+    void rejectsInvalidExtendedBatteryInfo();
+    void computesDeviceLogControlsState();
+    void savesDeviceLogsAsUtf8Atomically();
+    void handlesCancelledAndFailedDeviceLogSave();
+    void buildsDeviceLogFileNameAndFilters();
+    void serializesDeviceLogColoursAsAnsi();
     void sortsEmptyAndSingleTrackerLists();
     void sortsTrackersByPairAndSide();
     void sortsNumericPairIdsNumerically();
@@ -70,6 +82,208 @@ void ArsTrackerLogUtilsTests::shellResultRequiresCompleteValidZeroRet()
     QVERIFY(!ars_tracker_log_utils::shell_result_is_success(true, true, -8));
     QVERIFY(!ars_tracker_log_utils::shell_result_is_success(true, false, 0));
     QVERIFY(!ars_tracker_log_utils::shell_result_is_success(false, true, 0));
+}
+
+void ArsTrackerLogUtilsTests::parsesLegacyAndExtendedBatteryInfo()
+{
+    const QString legacy = "4100,-50,85,1000,850,120,30,900,25,42";
+    ars_tracker_parser::battery_info_t battery_info;
+    QString formatted;
+    QString error;
+
+    QVERIFY(ars_tracker_parser::parse_battery_info_output(
+        legacy, &battery_info, &formatted, &error));
+    QCOMPARE(battery_info.volt_mV, 4100);
+    QCOMPARE(battery_info.cur_mA, -50);
+    QCOMPARE(battery_info.soc, 85);
+    QCOMPARE(battery_info.fullCap_mAh, 1000);
+    QCOMPARE(battery_info.remainCap_mAh, 850);
+    QCOMPARE(battery_info.t2eMin, 120);
+    QCOMPARE(battery_info.t2fMin, 30);
+    QCOMPARE(battery_info.availableCap_mAh, 900);
+    QCOMPARE(battery_info.temp, 25);
+    QCOMPARE(battery_info.cycles, 42);
+    QVERIFY(!battery_info.chargerConnectedKnown);
+    QVERIFY(!battery_info.chargerConnected);
+    QCOMPARE(formatted, QString("4100 mV, -50 mA, 85%, full 1000 mAh"));
+
+    QVERIFY(ars_tracker_parser::parse_battery_info_output(
+        legacy + ",0", &battery_info, &formatted, &error));
+    QVERIFY(battery_info.chargerConnectedKnown);
+    QVERIFY(!battery_info.chargerConnected);
+    QCOMPARE(formatted,
+             QString("4100 mV, -50 mA, 85%, full 1000 mAh, charger not connected"));
+
+    QVERIFY(ars_tracker_parser::parse_battery_info_output(
+        legacy + ",1", &battery_info, &formatted, &error));
+    QVERIFY(battery_info.chargerConnectedKnown);
+    QVERIFY(battery_info.chargerConnected);
+    QCOMPARE(formatted,
+             QString("4100 mV, -50 mA, 85%, full 1000 mAh, charger connected"));
+    QCOMPARE(ars_tracker_utils::format_battery_compact(legacy + ",1"),
+             QString("4100 mV  85%"));
+}
+
+void ArsTrackerLogUtilsTests::rejectsInvalidExtendedBatteryInfo()
+{
+    const QString legacy = "4100,-50,85,1000,850,120,30,900,25,42";
+    ars_tracker_parser::battery_info_t battery_info;
+    QString error;
+
+    QVERIFY(!ars_tracker_parser::parse_battery_info_output(
+        legacy + ",2", &battery_info, nullptr, &error));
+    QCOMPARE(error, QString("Battery charger connection status was not 0 or 1."));
+
+    QVERIFY(!ars_tracker_parser::parse_battery_info_output(
+        legacy + ",connected", &battery_info, nullptr, &error));
+    QCOMPARE(error, QString("Battery info response contained a non-integer value."));
+
+    QVERIFY(!ars_tracker_parser::parse_battery_info_output(
+        legacy + ",1,99", &battery_info, nullptr, &error));
+    QCOMPARE(error, QString("Battery info response did not contain 10 or 11 CSV fields."));
+}
+
+void ArsTrackerLogUtilsTests::computesDeviceLogControlsState()
+{
+    using namespace ars_tracker_log_utils;
+
+    controls_state_t state = controls_state(true, false, false, false, false, false);
+    QVERIFY(!state.load_visible);
+    QVERIFY(!state.save_visible);
+
+    state = controls_state(true, false, false, false, false, true);
+    QVERIFY(!state.load_visible);
+    QVERIFY(!state.save_visible);
+
+    state = controls_state(true, true, false, false, false, false);
+    QVERIFY(state.load_visible);
+    QVERIFY(state.save_visible);
+    QVERIFY(state.load_enabled);
+    QVERIFY(!state.save_enabled);
+
+    state = controls_state(true, true, false, false, false, true);
+    QVERIFY(state.load_visible);
+    QVERIFY(state.save_visible);
+    QVERIFY(state.load_enabled);
+    QVERIFY(state.save_enabled);
+
+    state = controls_state(true, true, false, true, true, true);
+    QVERIFY(!state.load_enabled);
+    QVERIFY(!state.save_enabled);
+    QVERIFY(!state.clear_enabled);
+
+    state = controls_state(true, true, false, false, false, false);
+    QVERIFY(state.save_visible);
+    QVERIFY(!state.save_enabled);
+
+    state = controls_state(true, false, false, false, false, true);
+    QVERIFY(!state.load_visible);
+    QVERIFY(!state.save_visible);
+}
+
+void ArsTrackerLogUtilsTests::savesDeviceLogsAsUtf8Atomically()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString file_name = directory.filePath(QStringLiteral("device.log"));
+    QString text = QString::fromUtf8("history\nПривет\nlive\n");
+    text.append(QChar::Null);
+    text.append(QStringLiteral("tail"));
+
+    const ars_tracker_log_utils::save_text_result_t result =
+            ars_tracker_log_utils::save_text_utf8(file_name, text);
+    QCOMPARE(result.status, ars_tracker_log_utils::SAVE_TEXT_SUCCESS);
+
+    QFile file(file_name);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), text.toUtf8());
+}
+
+void ArsTrackerLogUtilsTests::handlesCancelledAndFailedDeviceLogSave()
+{
+    using namespace ars_tracker_log_utils;
+
+    const save_text_result_t cancelled = save_text_utf8(QString(), QStringLiteral("logs"));
+    QCOMPARE(cancelled.status, SAVE_TEXT_CANCELLED);
+    QVERIFY(cancelled.error_message.isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString preserved_file = directory.filePath(QStringLiteral("preserved.log"));
+    QFile original(preserved_file);
+    QVERIFY(original.open(QIODevice::WriteOnly));
+    QCOMPARE(original.write("original"), qint64(8));
+    original.close();
+
+    const QString invalid_target = directory.filePath(
+            QStringLiteral("missing/parent/device.log"));
+    const save_text_result_t failed = save_text_utf8(
+            invalid_target, QStringLiteral("replacement"));
+    QCOMPARE(failed.status, SAVE_TEXT_OPEN_ERROR);
+    QVERIFY(!failed.error_message.isEmpty());
+
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), QByteArray("original"));
+}
+
+void ArsTrackerLogUtilsTests::buildsDeviceLogFileNameAndFilters()
+{
+    using namespace ars_tracker_log_utils;
+
+    const QString default_name = device_logs_default_file_name(
+            QStringLiteral("serial:/invalid"),
+            QDateTime(QDate(2026, 9, 28), QTime(14, 5, 6)));
+    QCOMPARE(default_name,
+             QStringLiteral("ars_tracker_serial_invalid_logs_2026-09-28_14-05-06.log"));
+    QVERIFY(default_name.endsWith(QStringLiteral(".log")));
+
+    const QString log_filter = device_logs_log_filter();
+    QCOMPARE(log_filter, QStringLiteral("Log files (*.log)"));
+    QCOMPARE(device_logs_save_filters(),
+             QStringLiteral("Log files (*.log);;Text files (*.txt);;All files (*.*)"));
+    QVERIFY(device_logs_save_filters().startsWith(log_filter));
+
+    QCOMPARE(ensure_device_logs_file_extension(QStringLiteral("tracker"), log_filter),
+             QStringLiteral("tracker.log"));
+    QCOMPARE(ensure_device_logs_file_extension(QStringLiteral("tracker.log"), log_filter),
+             QStringLiteral("tracker.log"));
+    QCOMPARE(ensure_device_logs_file_extension(QStringLiteral("tracker.txt"), log_filter),
+             QStringLiteral("tracker.txt"));
+    QCOMPARE(ensure_device_logs_file_extension(
+                     QStringLiteral("tracker"), QStringLiteral("Text files (*.txt)")),
+             QStringLiteral("tracker"));
+    QCOMPARE(ensure_device_logs_file_extension(
+                     QStringLiteral("tracker.data"), QStringLiteral("All files (*.*)")),
+             QStringLiteral("tracker.data"));
+}
+
+void ArsTrackerLogUtilsTests::serializesDeviceLogColoursAsAnsi()
+{
+    QTextDocument document;
+    QTextCursor cursor(&document);
+    QTextCharFormat red;
+    red.setForeground(QColor(255, 0, 0));
+    QTextCharFormat green;
+    green.setForeground(QColor(0, 128, 64));
+
+    cursor.insertText(QStringLiteral("red"), red);
+    cursor.insertText(QStringLiteral("green"), green);
+    cursor.insertText(QStringLiteral(" plain"), QTextCharFormat());
+    cursor.insertBlock();
+    cursor.insertText(QString::fromUtf8("Unicode: Привет"), QTextCharFormat());
+    cursor.insertBlock();
+    cursor.insertText(QStringLiteral("tail"), red);
+
+    const QString ansi = ars_tracker_log_utils::text_document_to_ansi(&document);
+    QVERIFY(ansi.contains(QStringLiteral("\x1b[38;2;255;0;0mred")));
+    QVERIFY(ansi.contains(QStringLiteral("\x1b[38;2;0;128;64mgreen")));
+    QVERIFY(ansi.contains(QStringLiteral("green\x1b[0m plain")));
+    QVERIFY(ansi.endsWith(QStringLiteral("tail\x1b[0m")));
+
+    QString plain = ansi;
+    plain.remove(QRegularExpression(QStringLiteral("\x1b\\[[0-9;]*m")));
+    QCOMPARE(plain, document.toPlainText());
+    QVERIFY(plain.contains(QString::fromUtf8("plain\nUnicode: Привет\ntail")));
 }
 
 void ArsTrackerLogUtilsTests::supportCheckStateAndDeferral()

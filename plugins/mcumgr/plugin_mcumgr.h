@@ -668,6 +668,8 @@ private:
                                                     bool delayed_after_connect = false);
     void refresh_ars_tracker_device_logs_view(ars_tracker_device_t *device);
     void clear_ars_tracker_device_logs_view();
+    QString current_ars_tracker_device_logs_text() const;
+    void save_ars_tracker_device_logs();
     void buffer_ars_tracker_device_log(ars_tracker_device_t *device, const QByteArray &data);
     void update_ars_tracker_log_controls();
     void schedule_ars_tracker_log_support_check(const QString &port_name,
@@ -1182,6 +1184,7 @@ private:
     AutScrollEdit *text_ars_tracker_device_logs;
     QPushButton *button_ars_tracker_device_logs_clear;
     QPushButton *button_ars_tracker_device_logs_load;
+    QPushButton *button_ars_tracker_device_logs_save;
     QHBoxLayout *horizontalLayout_ars_tracker_actions;
     QSpacerItem *horizontalSpacer_ars_tracker_actions;
     QPushButton *btn_ars_tracker_delete;
@@ -1344,6 +1347,7 @@ private:
     int ars_tracker_log_load_success_count = 0;
     QString ars_tracker_log_load_local_file;
     QTemporaryDir *ars_tracker_log_load_temp_dir = nullptr;
+    QString ars_tracker_logs_save_directory;
     QString ars_tracker_pending_active_refresh_port;
     uint32_t ars_tracker_active_refresh_generation = 0;
     QByteArray ars_tracker_scan_probe_log_buffer;

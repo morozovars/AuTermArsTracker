@@ -375,11 +375,11 @@ bool ars_tracker_parser::parse_battery_info_output(const QString &shell_output,
 
     QStringList fields = payload.split(',', Qt::KeepEmptyParts);
 
-    if (fields.length() != 10)
+    if (fields.length() != 10 && fields.length() != 11)
     {
         if (error_message != nullptr)
         {
-            *error_message = QString("Battery info response did not contain 10 CSV fields.");
+            *error_message = QString("Battery info response did not contain 10 or 11 CSV fields.");
         }
 
         return false;
@@ -406,6 +406,19 @@ bool ars_tracker_parser::parse_battery_info_output(const QString &shell_output,
         values.append(value);
     }
 
+    const bool charger_connected_known = values.length() == 11;
+    const bool charger_connected = charger_connected_known && values.at(10) == 1;
+
+    if (charger_connected_known && values.at(10) != 0 && values.at(10) != 1)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = QString("Battery charger connection status was not 0 or 1.");
+        }
+
+        return false;
+    }
+
     if (battery_info != nullptr)
     {
         battery_info->volt_mV = values.at(0);
@@ -418,6 +431,8 @@ bool ars_tracker_parser::parse_battery_info_output(const QString &shell_output,
         battery_info->availableCap_mAh = values.at(7);
         battery_info->temp = values.at(8);
         battery_info->cycles = values.at(9);
+        battery_info->chargerConnectedKnown = charger_connected_known;
+        battery_info->chargerConnected = charger_connected;
     }
 
     if (formatted_value != nullptr)
@@ -426,6 +441,11 @@ bool ars_tracker_parser::parse_battery_info_output(const QString &shell_output,
                                .arg(QString::number(values.at(0)), QString::number(values.at(1)),
                                     QString::number(values.at(2)),
                                     QString::number(values.at(3)));
+        if (charger_connected_known)
+        {
+            formatted_value->append(charger_connected ? ", charger connected" :
+                                                         ", charger not connected");
+        }
     }
 
     return true;

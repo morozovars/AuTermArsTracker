@@ -91,6 +91,8 @@ private slots:
 		void onSessionAssignmentClicked();
 		void onGeneratePdfClicked();
 		void onOpenReportClicked();
+		void onAddSessionSegmentClicked();
+		void onRemoveSessionSegmentClicked();
 
 private:
 		void resizeEvent(QResizeEvent *event) override;
@@ -127,6 +129,14 @@ private:
 																							 const QList<SessionTrackerPair> &pairs,
 																							 const QList<ArsPlayer> &players) const;
 		ArsSessionTargetSettings readTargetSettingsFromUi() const;
+		void addSessionSegmentRow(const ArsSessionSegment &segment);
+		QList<ArsSessionSegment> readSessionSegmentsFromUi() const;
+		void applySessionSegmentsToUi(const QList<ArsSessionSegment> &segments);
+		bool validateSessionSegments(const QList<ArsSessionSegment> &segments,
+																 const QTime &plannedStart,
+																 const QTime &plannedFinish,
+																 QStringList *problems) const;
+		void updateSessionSegmentsSummary();
 		ArsSessionInfo readSessionInfoFromUi() const;
 		void resetSessionInformationFieldsToDefaults();
 		void applySessionInfoToUi(const ArsSessionInfo &info);
@@ -200,6 +210,10 @@ private:
 		QTimeEdit *timeSessionFinish = nullptr;
 		QLineEdit *editSessionLocation = nullptr;
 		QPlainTextEdit *editSessionGoals = nullptr;
+		QTableWidget *sessionSegmentsTable = nullptr;
+		QPushButton *addSessionSegmentButton = nullptr;
+		QPushButton *removeSessionSegmentButton = nullptr;
+		QLabel *sessionSegmentsStatusLabel = nullptr;
 		QTableWidget *sessionAssignmentsTable = nullptr;
 		QLabel *sessionAssignmentsEmptyLabel = nullptr;
 		QLabel *statusLabel = nullptr;

@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QtGlobal>
 #include <cstdint>
+#include <QList>
 #include <QMap>
 #include "ars/workspace/ArsTargetsByPosition.h"
 
@@ -33,11 +34,20 @@ struct ArsSessionParameters
 using ArsSessionPlannedMetrics = ArsPlannedMetrics;
 using ArsSessionTargetsByPosition = ArsTargetsByPosition;
 
+// Named part of the session (warm-up, exercise, game). Stored as SessionInfo.json "exercises" entry.
+struct ArsSessionSegment
+{
+		QString name;
+		QTime startTime;
+		QTime endTime;
+};
+
 struct ArsSessionInfo
 {
 		ArsSessionParameters parameters;
 		ArsSessionPlannedMetrics plannedMetrics;
 		ArsSessionTargetsByPosition targetsByPosition;
+		QList<ArsSessionSegment> segments;
 		bool hasPlannedSessionPeriod = false;
 		struct ArsSessionActualTime
 		{

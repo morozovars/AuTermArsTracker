@@ -75,7 +75,6 @@ private:
     bool parse_download_response(QCborStreamReader &reader, uint32_t *off, bool *off_found,
                                  uint32_t *len, bool *len_found, QByteArray *file_data,
                                  bool *data_found);
-    bool parse_status_response(QCborStreamReader &reader, uint32_t *len);
     bool parse_hash_checksum_response(QCborStreamReader &reader, QString *type, QByteArray *hash_checksum, uint32_t *file_size);
     bool parse_supported_hashes_checksums_response(QCborStreamReader &reader, bool in_data, QString *key_name, hash_checksum_t *current_item);
 //    bool parse_file_close_response(QCborStreamReader &reader, int32_t *ret, QString *response);

@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QPointer>
+#include <QSharedPointer>
 #include <QHash>
 #include <QStringList>
 #include <QVector>
@@ -185,7 +186,7 @@ private:
     quint64 legacyFsSequence = 0;
     QPointer<ars_tracker_backend> legacyBackend;
     QHash<QString, ArsTrackersDownloadRouteInfo> routesByPort;
-    QHash<QString, ArsTrackersDownloadFsOperationState> fsByPort;
+    QHash<QString, QSharedPointer<ArsTrackersDownloadFsOperationState>> fsByPort;
     QHash<QString, QPointer<ars_tracker_backend>> backendsByPort;
     QHash<const ars_tracker_backend*, QString> backendToPort;
     QHash<QString, ParallelContextState> contextsByPort;

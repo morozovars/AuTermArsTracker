@@ -323,7 +323,7 @@ bool ArsTrackersSessionDownloadCoordinator::beginLegacyFsOperation(const QString
     fs.supportedHashChecksumList.clear();
     fs.operationName = QString("%1:%2").arg(phaseName, remoteFile);
 
-    fsByPort.insert(route.port, fs);
+    fsByPort.insert(route.port, QSharedPointer<ArsTrackersDownloadFsOperationState>::create(fs));
     if (route.port.compare(legacyRoute.port, Qt::CaseInsensitive) == 0)
     {
         legacyFsOperation = fs;
@@ -334,7 +334,8 @@ bool ArsTrackersSessionDownloadCoordinator::beginLegacyFsOperation(const QString
 bool ArsTrackersSessionDownloadCoordinator::hasLegacyFsOperationForPort(const QString &port) const
 {
     const QString trimmedPort = port.trimmed();
-    return fsByPort.contains(trimmedPort) && fsByPort.value(trimmedPort).active;
+    return fsByPort.contains(trimmedPort) && !fsByPort.value(trimmedPort).isNull() &&
+           fsByPort.value(trimmedPort)->active;
 }
 
 ArsTrackersDownloadFsOperationState ArsTrackersSessionDownloadCoordinator::legacyFsOperationForPort(const QString &port) const
@@ -344,7 +345,8 @@ ArsTrackersDownloadFsOperationState ArsTrackersSessionDownloadCoordinator::legac
     {
         return ArsTrackersDownloadFsOperationState();
     }
-    return fsByPort.value(trimmedPort);
+    const QSharedPointer<ArsTrackersDownloadFsOperationState> state = fsByPort.value(trimmedPort);
+    return state.isNull() ? ArsTrackersDownloadFsOperationState() : *state;
 }
 
 ArsTrackersDownloadFsOperationState *ArsTrackersSessionDownloadCoordinator::legacyFsOperationMutableForPort(const QString &port)
@@ -354,7 +356,8 @@ ArsTrackersDownloadFsOperationState *ArsTrackersSessionDownloadCoordinator::lega
     {
         return nullptr;
     }
-    return &fsByPort[trimmedPort];
+    const QSharedPointer<ArsTrackersDownloadFsOperationState> state = fsByPort.value(trimmedPort);
+    return state.isNull() ? nullptr : state.data();
 }
 
 void ArsTrackersSessionDownloadCoordinator::resetLegacyFsOperation(const QString &port, const QString &reason)
@@ -368,7 +371,9 @@ void ArsTrackersSessionDownloadCoordinator::resetLegacyFsOperation(const QString
     }
 
     ArsTrackersDownloadRouteInfo route = resolveRouteForPort(trimmedPort);
-    ArsTrackersDownloadFsOperationState fs = fsByPort.value(trimmedPort);
+    const QSharedPointer<ArsTrackersDownloadFsOperationState> state = fsByPort.value(trimmedPort);
+    ArsTrackersDownloadFsOperationState fs =
+        state.isNull() ? ArsTrackersDownloadFsOperationState() : *state;
     emit logMessage(QString("TRACKERS_PARALLEL_FS_STATUS contextId=%1 port=%2 phase=%3 status=done reason=%4 remote=%5")
                         .arg(route.contextId,
                              trimmedPort,
@@ -612,6 +617,9 @@ bool ArsTrackersSessionDownloadCoordinator::createLegacyBackendForActiveRoute(QS
     }
 
     ars_tracker_backend *backend = new ars_tracker_backend(this);
+    backend->set_existing_file_check_policy(
+        ars_tracker_backend::ExistingFileCheckPolicy::SizeOnly);
+    backend->set_export_log_port(port);
     backendsByPort.insert(port, backend);
     backendToPort.insert(backend, port);
     legacyBackend = backend;

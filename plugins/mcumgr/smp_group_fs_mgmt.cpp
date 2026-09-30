@@ -25,6 +25,7 @@
 // Include Files
 /******************************************************************************/
 #include "smp_group_fs_mgmt.h"
+#include "smp_fs_status_response_parser.h"
 
 #include <QFileInfo>
 #include <limits>
@@ -351,88 +352,6 @@ bool smp_group_fs_mgmt::parse_download_response(QCborStreamReader &reader, uint3
     {
         log_error() << "Error decoding download response";
         return false;
-    }
-
-    return true;
-}
-
-bool smp_group_fs_mgmt::parse_status_response(QCborStreamReader &reader, uint32_t *len)
-{
-    //    qDebug() << reader.lastError() << reader.hasNext();
-
-    QString key = "";
-    bool keyset = true;
-
-    while (!reader.lastError() && reader.hasNext())
-    {
-        if (keyset == false && !key.isEmpty())
-        {
-                key.clear();
-        }
-
-        keyset = false;
-
-        switch (reader.type())
-        {
-            case QCborStreamReader::UnsignedInteger:
-            {
-                    if (key == "len")
-                    {
-                        *len = (uint32_t)reader.toUnsignedInteger();
-                    }
-
-                    reader.next();
-                    break;
-            }
-            case QCborStreamReader::String:
-            {
-                    QString data;
-                    auto r = reader.readString();
-                    while (r.status == QCborStreamReader::Ok)
-                    {
-                        data.append(r.data);
-                        r = reader.readString();
-                    }
-
-                    if (r.status == QCborStreamReader::Error)
-                    {
-                        data.clear();
-                        log_error() << "Error decoding string";
-                    }
-                    else
-                    {
-                        if (key.isEmpty())
-                        {
-                            key = data;
-                            keyset = true;
-                        }
-                    }
-
-                    break;
-            }
-            case QCborStreamReader::Array:
-            case QCborStreamReader::Map:
-            {
-                    reader.enterContainer();
-
-                    while (reader.lastError() == QCborError::NoError && reader.hasNext())
-                    {
-                        parse_status_response(reader, len);
-                    }
-
-                    if (reader.lastError() == QCborError::NoError)
-                    {
-                        reader.leaveContainer();
-                    }
-
-                    break;
-            }
-            default:
-            {
-                    reader.next();
-                    continue;
-            }
-        };
     }
 
     return true;
@@ -918,9 +837,19 @@ void smp_group_fs_mgmt::receive_ok(uint8_t version, uint8_t op, uint16_t group, 
         }
         else if (mode == MODE_STATUS && command == COMMAND_STATUS)
         {
-            QCborStreamReader cbor_reader(data);
-            bool good = parse_status_response(cbor_reader, file_size_object);
+            uint32_t parsed_size = 0;
+            QString parse_error;
+            const bool good = smp_fs_status_response_parser::parse_file_size(
+                data, &parsed_size, &parse_error);
+            if (!good)
+            {
+                log_error() << parse_error;
+                cleanup();
+                emit status(smp_user_data, STATUS_ERROR, parse_error);
+                return;
+            }
 
+            *file_size_object = parsed_size;
             log_debug() << "status done";
             log_debug() << "Len: " << *file_size_object;
 

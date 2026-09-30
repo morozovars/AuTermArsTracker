@@ -87,6 +87,11 @@ class ars_tracker_backend : public QObject
     Q_OBJECT
 
 public:
+    enum class ExistingFileCheckPolicy : uint8_t {
+        HashAndSize = 0,
+        SizeOnly,
+    };
+
     explicit ars_tracker_backend(QObject *parent = nullptr);
     ~ars_tracker_backend() override;
 
@@ -111,6 +116,9 @@ public:
     bool begin_session_export_explicit(const QString &session_name,
                                        const QString &destination_path,
                                        QString *error_message);
+    void set_existing_file_check_policy(ExistingFileCheckPolicy policy);
+    ExistingFileCheckPolicy existing_file_check_policy() const;
+    void set_export_log_port(const QString &port);
     void handle_export_hash_support_result(group_status status, const QString &error_message,
                                            const QList<hash_checksum_t> &supported_hashes);
     void handle_file_metadata_result(group_status status, const QString &error_message,
@@ -180,6 +188,8 @@ private:
     bool export_failed;
     bool sensors_enumeration_done;
     bool export_hash_ready;
+    ExistingFileCheckPolicy existing_file_policy;
+    QString export_log_port;
     QString active_session_id;
     QString active_session_remote_root;
     QString active_destination_path;
@@ -199,6 +209,11 @@ private:
     QString build_local_final_file_path(const QString &destination, const QString &filename) const;
     QString build_local_temp_file_path(const QString &destination, const QString &filename) const;
     bool ensure_download_temp_file(ars_tracker_download_item_t *item, QString *error_message) const;
+    bool remove_local_file_checked(const QString &file_path, QString *error_message) const;
+    bool finalize_existing_temp_file(ars_tracker_download_item_t *item, QString *error_message);
+    void log_size_only_decision(const ars_tracker_download_item_t &item,
+                                const QString &decision,
+                                qint64 local_size) const;
     QString choose_export_hash_type(const QList<hash_checksum_t> &supported_hashes,
                                     QString *error_message) const;
     bool compute_local_file_hash(const QString &file_path, const QString &hash_name,

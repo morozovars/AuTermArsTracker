@@ -233,6 +233,7 @@ ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
     active_tracker_info_step = TRACKER_INFO_STEP_NONE;
     tracker_info_session_list_failed = false;
     delete_loading           = false;
+    existing_file_policy     = ExistingFileCheckPolicy::HashAndSize;
     export_transition_sequence = 0;
     reset_tracker_info_state();
     reset_export_state();
@@ -243,6 +244,21 @@ ars_tracker_backend::ars_tracker_backend(QObject* parent) : QObject(parent)
 
 ars_tracker_backend::~ars_tracker_backend()
 {
+}
+
+void ars_tracker_backend::set_existing_file_check_policy(ExistingFileCheckPolicy policy)
+{
+    existing_file_policy = policy;
+}
+
+ars_tracker_backend::ExistingFileCheckPolicy ars_tracker_backend::existing_file_check_policy() const
+{
+    return existing_file_policy;
+}
+
+void ars_tracker_backend::set_export_log_port(const QString& port)
+{
+    export_log_port = port.trimmed();
 }
 
 void ars_tracker_backend::reset_tracker_info_state()
@@ -1536,6 +1552,65 @@ bool ars_tracker_backend::ensure_download_temp_file(ars_tracker_download_item_t*
     return false;
 }
 
+bool ars_tracker_backend::remove_local_file_checked(const QString& file_path,
+                                                    QString* error_message) const
+{
+    if (!QFileInfo::exists(file_path))
+    {
+        return true;
+    }
+
+    if (QFile::remove(file_path))
+    {
+        return true;
+    }
+
+    if (error_message != nullptr)
+    {
+        *error_message = QString("Could not remove local file: %1").arg(file_path);
+    }
+    return false;
+}
+
+void ars_tracker_backend::log_size_only_decision(const ars_tracker_download_item_t& item,
+                                                  const QString& decision,
+                                                  qint64 local_size) const
+{
+    log_debug() << "TRACKERS_FILE_CHECK"
+                << "policy=SizeOnly"
+                << "port=" << export_log_port
+                << "session=" << active_session_id
+                << "file=" << item.remote_file
+                << "remoteSize=" << item.remote_file_size
+                << "localSize=" << local_size
+                << "decision=" << decision;
+}
+
+bool ars_tracker_backend::finalize_existing_temp_file(ars_tracker_download_item_t* item,
+                                                       QString* error_message)
+{
+    if (item == nullptr)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = "No download item to finalize.";
+        }
+        return false;
+    }
+
+    QFileInfo partial_info(item->local_temp_file);
+    if (!partial_info.exists() || partial_info.size() != qint64(item->remote_file_size))
+    {
+        if (error_message != nullptr)
+        {
+            *error_message = "Partial file is missing or has an unexpected size.";
+        }
+        return false;
+    }
+
+    return finalize_downloaded_file(item, error_message);
+}
+
 QString ars_tracker_backend::choose_export_hash_type(const QList<hash_checksum_t>& supported_hashes,
                                                      QString* error_message) const
 {
@@ -1964,7 +2039,21 @@ bool ars_tracker_backend::begin_session_export_internal(const ars_tracker_sessio
     publish_progress_text();
     emit status_message(
         QString("Preparing session export for '%1'...").arg(session.display_name));
-    emit request_file_hash_support();
+    if (existing_file_policy == ExistingFileCheckPolicy::SizeOnly)
+    {
+        export_hash_name.clear();
+        export_hash_ready = true;
+        log_debug() << "TRACKERS_EXPORT_POLICY"
+                    << "policy=SizeOnly"
+                    << "port=" << export_log_port
+                    << "session=" << active_session_id;
+        emit status_message("Checking existing files by size; checksum not checked.");
+        schedule_next_download_or_finish("SizeOnly policy ready");
+    }
+    else
+    {
+        emit request_file_hash_support();
+    }
     return true;
 }
 
@@ -2012,7 +2101,10 @@ bool ars_tracker_backend::finalize_downloaded_file(ars_tracker_download_item_t* 
         return false;
     }
 
-    QFile::remove(item->local_file);
+    if (remove_local_file_checked(item->local_file, error_message) == false)
+    {
+        return false;
+    }
 
     if (QFile::rename(item->local_temp_file, item->local_file))
     {
@@ -2030,7 +2122,16 @@ bool ars_tracker_backend::finalize_downloaded_file(ars_tracker_download_item_t* 
         return false;
     }
 
-    QFile::remove(item->local_temp_file);
+    if (QFile::remove(item->local_temp_file) == false)
+    {
+        if (error_message != nullptr)
+        {
+            *error_message =
+                QString("Final file was copied, but the temp file could not be removed: %1")
+                    .arg(item->local_temp_file);
+        }
+        return false;
+    }
     return true;
 }
 
@@ -2220,8 +2321,13 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         return;
     }
 
-    log_debug() << "ArsTracker export metadata completed:" << item.remote_file
-                << "index" << current_download_index
+    const int item_index = current_download_index;
+    const QString remote_file = item.remote_file;
+    const QString display_file_name = ars_tracker_display_file_name(remote_file);
+    const bool is_sensor_file = (item.category == ARS_TRACKER_FILE_SENSOR);
+
+    log_debug() << "ArsTracker export metadata completed:" << remote_file
+                << "index" << item_index
                 << "status" << int(status)
                 << "remote size" << remote_size;
 
@@ -2243,10 +2349,10 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         {
             QFile::remove(item.local_temp_file);
 
-            if (item.category == ARS_TRACKER_FILE_SENSOR)
+            if (is_sensor_file)
             {
                 sensors_enumeration_done = true;
-                download_queue.removeAt(current_download_index);
+                download_queue.removeAt(item_index);
                 current_download_index = -1;
                 publish_export_file_rows();
                 publish_progress_text();
@@ -2262,7 +2368,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
             publish_progress_text();
             emit status_message(
                 QString("Skipping %1, remote file is empty.")
-                    .arg(ars_tracker_display_file_name(item.remote_file)));
+                    .arg(display_file_name));
             schedule_next_download_or_finish("remote file empty");
             return;
         }
@@ -2272,13 +2378,105 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
 
         if (partial_info.exists())
         {
+            const qint64 partial_size = partial_info.size();
+            if (existing_file_policy == ExistingFileCheckPolicy::SizeOnly)
+            {
+                if (partial_size == qint64(remote_size))
+                {
+                    log_size_only_decision(item, "finalize-part", partial_size);
+                    QString finalise_error;
+                    if (!finalize_existing_temp_file(&item, &finalise_error))
+                    {
+                        item.status = ARS_TRACKER_STATUS_FAILED;
+                        item.error_text = finalise_error;
+                        export_failed = true;
+                        publish_export_file_rows();
+                        finish_export(false, false, finalise_error);
+                        return;
+                    }
+                    item.status = ARS_TRACKER_STATUS_DOWNLOADED;
+                    item.bytes_completed = remote_size;
+                    item.total_bytes = remote_size;
+                    item.error_text.clear();
+                    if (is_sensor_file)
+                    {
+                        enqueue_next_sensor_candidate();
+                    }
+                    publish_export_file_rows();
+                    publish_progress_text();
+                    schedule_next_download_or_finish("full partial file finalized");
+                    return;
+                }
+
+                if (partial_size > qint64(remote_size))
+                {
+                    log_size_only_decision(item, "restart-part-from-zero", partial_size);
+                    QString remove_error;
+                    if (!remove_local_file_checked(item.local_temp_file, &remove_error))
+                    {
+                        item.status = ARS_TRACKER_STATUS_FAILED;
+                        item.error_text = remove_error;
+                        export_failed = true;
+                        publish_export_file_rows();
+                        finish_export(false, false, remove_error);
+                        return;
+                    }
+                }
+                else
+                {
+                    log_size_only_decision(item, "resume-part", partial_size);
+                }
+            }
             schedule_current_file_download("partial temp file exists after metadata");
             return;
         }
 
         if (local_info.exists() == false)
         {
+            if (existing_file_policy == ExistingFileCheckPolicy::SizeOnly)
+            {
+                log_size_only_decision(item, "download", 0);
+            }
             schedule_current_file_download("local file missing after metadata");
+            return;
+        }
+
+        if (existing_file_policy == ExistingFileCheckPolicy::SizeOnly &&
+            local_info.size() == qint64(remote_size))
+        {
+            log_size_only_decision(item, "skip-size-match", local_info.size());
+            item.status = ARS_TRACKER_STATUS_ALREADY_PRESENT;
+            item.bytes_completed = remote_size;
+            item.total_bytes = remote_size;
+            item.error_text = "Already present (size match; checksum not checked)";
+            if (is_sensor_file)
+            {
+                enqueue_next_sensor_candidate();
+            }
+            publish_export_file_rows();
+            publish_progress_text();
+            emit status_message(
+                QString("Skipping %1: size match; checksum not checked.")
+                    .arg(display_file_name));
+            schedule_next_download_or_finish("local file size matches");
+            return;
+        }
+
+        if (existing_file_policy == ExistingFileCheckPolicy::SizeOnly &&
+            local_info.size() > qint64(remote_size))
+        {
+            log_size_only_decision(item, "restart-local-from-zero", local_info.size());
+            QString remove_error;
+            if (!remove_local_file_checked(item.local_file, &remove_error))
+            {
+                item.status = ARS_TRACKER_STATUS_FAILED;
+                item.error_text = remove_error;
+                export_failed = true;
+                publish_export_file_rows();
+                finish_export(false, false, remove_error);
+                return;
+            }
+            schedule_current_file_download("oversized local file removed after metadata");
             return;
         }
 
@@ -2292,13 +2490,10 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
             {
                 emit status_message(
                     QString("Could not verify existing %1, resuming download from current file size.")
-                        .arg(ars_tracker_display_file_name(item.remote_file)));
+                        .arg(display_file_name));
             }
             else if (local_hash == remote_hash)
             {
-                const QString remote_file = item.remote_file;
-                const QString display_file_name = ars_tracker_display_file_name(remote_file);
-                const bool is_sensor_file = (item.category == ARS_TRACKER_FILE_SENSOR);
                 const int queue_size_before_enqueue = download_queue.size();
                 log_debug() << "ArsTracker export skip-identical-local start:"
                             << "remote_file=" << remote_file
@@ -2342,6 +2537,11 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
             return;
         }
 
+        if (existing_file_policy == ExistingFileCheckPolicy::SizeOnly)
+        {
+            log_size_only_decision(item, "resume-local", local_info.size());
+        }
+
         schedule_current_file_download("metadata verified");
         return;
     }
@@ -2350,10 +2550,10 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
     {
         QFile::remove(item.local_temp_file);
 
-        if (item.category == ARS_TRACKER_FILE_SENSOR)
+        if (is_sensor_file)
         {
             sensors_enumeration_done = true;
-            download_queue.removeAt(current_download_index);
+            download_queue.removeAt(item_index);
             current_download_index = -1;
             publish_export_file_rows();
             publish_progress_text();
@@ -2369,7 +2569,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         publish_progress_text();
         emit status_message(
             QString("Skipping %1, remote file is missing.")
-                .arg(ars_tracker_display_file_name(item.remote_file)));
+                .arg(display_file_name));
         schedule_next_download_or_finish("remote file missing");
         return;
     }
@@ -2378,10 +2578,10 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
     {
         QFile::remove(item.local_temp_file);
 
-        if (item.category == ARS_TRACKER_FILE_SENSOR)
+        if (is_sensor_file)
         {
             sensors_enumeration_done = true;
-            download_queue.removeAt(current_download_index);
+            download_queue.removeAt(item_index);
             current_download_index = -1;
             publish_export_file_rows();
             publish_progress_text();
@@ -2397,7 +2597,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
         publish_progress_text();
         emit status_message(
             QString("Skipping %1, remote file is empty.")
-                .arg(ars_tracker_display_file_name(item.remote_file)));
+                .arg(display_file_name));
         schedule_next_download_or_finish("remote file empty");
         return;
     }
@@ -2427,7 +2627,7 @@ void ars_tracker_backend::handle_file_metadata_result(group_status status, const
     publish_export_file_rows();
     finish_export(false, false,
                   QString("Session export failed while checking %1.")
-                      .arg(ars_tracker_display_file_name(item.remote_file)));
+                      .arg(display_file_name));
 }
 
 void ars_tracker_backend::schedule_current_file_download(const QString& reason)
@@ -2617,7 +2817,10 @@ void ars_tracker_backend::request_next_download_or_finish()
                         << "hash" << export_hash_name
                         << "partial bytes" << item.bytes_completed;
 
-            emit request_file_metadata(item.remote_file, export_hash_name);
+            const QString metadata_hash =
+                existing_file_policy == ExistingFileCheckPolicy::SizeOnly ? QString() :
+                                                                            export_hash_name;
+            emit request_file_metadata(item.remote_file, metadata_hash);
             return;
         }
     }
